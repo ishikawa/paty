@@ -23,3 +23,7 @@ jobs:
           args: -- -D warnings
       - name: Run tests
         run: cargo test --verbose
+      - name: Run integration tests
+        run: |
+          cargo build
+          ./test.sh
