@@ -20,6 +20,6 @@ jobs:
         name: Build and Lint
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
+          args: -- -D warnings
       - name: Run tests
         run: cargo test --verbose

@@ -96,7 +96,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                     .allow_trailing()
                     .delimited_by(Token::Operator('('), Token::Operator(')')),
             )
-            .map(|args| Expr::Puts(args))
+            .map(Expr::Puts)
             .labelled("puts");
 
         let call = ident
@@ -245,7 +245,7 @@ fn eval_loop<'a>(
         }
         Expr::Puts(args) => {
             // "puts" function prints each arguments and newline character.
-            for (i, arg) in args.into_iter().enumerate() {
+            for (i, arg) in args.iter().enumerate() {
                 let v = eval_loop(arg, vars, functions)?;
 
                 print!("{}", v);
@@ -253,7 +253,7 @@ fn eval_loop<'a>(
                     print!(", ");
                 }
             }
-            print!("\n");
+            println!();
 
             Ok(0) // no value
         }
