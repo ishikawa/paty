@@ -8,7 +8,6 @@ pub enum Token {
     // Operators
     Operator(char), // 1 char
     // Keywords
-    Let,
     Fn,
 }
 
@@ -19,7 +18,6 @@ impl fmt::Display for Token {
             Token::Operator(c) => write!(f, "{}", c),
             Token::Identifier(s) => write!(f, "{}", s),
             Token::Fn => write!(f, "fn"),
-            Token::Let => write!(f, "let"),
         }
     }
 }
@@ -29,7 +27,6 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let operator = one_of("+-*/=(),;").map(Token::Operator);
     let identifier = text::ident().map(|ident: String| match ident.as_str() {
         "fn" => Token::Fn,
-        "let" => Token::Let,
         _ => Token::Identifier(ident),
     });
 
@@ -77,7 +74,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
     .labelled("identifier");
 
     let expr = recursive(|expr| {
-        let val = filter_map(|span, tok| match tok {
+        let value = filter_map(|span, tok| match tok {
             Token::Integer(n) => Ok(Expr::Integer(n.parse().unwrap())),
             _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
         })
@@ -92,7 +89,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             )
             .map(|(f, args)| Expr::Call(f, args));
 
-        let atom = val
+        let atom = value
             .or(expr.delimited_by(Token::Operator('('), Token::Operator(')')))
             .or(call)
             .or(ident.map(Expr::Var));
@@ -130,8 +127,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
 
     let decl = recursive(|decl| {
         // Variable declaration
-        let r#let = just(Token::Let)
-            .ignore_then(ident)
+        let r#let = ident
             .then_ignore(op('='))
             .then(expr.clone())
             .then_ignore(op(';'))
@@ -249,5 +245,15 @@ mod tests {
         let val = eval(&ast).unwrap();
 
         assert_eq!(val, 20211231);
+    }
+
+    #[test]
+    fn variable() {
+        let src = "five = 5; five";
+        let tokens = lexer().parse(src).unwrap();
+        let ast = parser().parse(tokens).unwrap();
+        let val = eval(&ast).unwrap();
+
+        assert_eq!(val, 5);
     }
 }

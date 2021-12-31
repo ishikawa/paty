@@ -1,4 +1,4 @@
-let five = 5;
-let eight = 3 + five;
+five = 5;
 fn add x y = x + y;
+eight = 3 + five;
 add(five, eight)
