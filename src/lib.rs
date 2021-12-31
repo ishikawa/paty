@@ -33,7 +33,19 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             .map(|s: String| Expr::Num(s.parse().unwrap()))
             .padded();
 
-        let atom = int.or(expr.delimited_by('(', ')')).or(ident.map(Expr::Var));
+        let call = ident
+            .then(
+                expr.clone()
+                    .separated_by(just(','))
+                    .allow_trailing() // allow trailing commas to appear in arg lists
+                    .delimited_by('(', ')'),
+            )
+            .map(|(f, args)| Expr::Call(f, args));
+
+        let atom = int
+            .or(expr.delimited_by('(', ')'))
+            .or(call)
+            .or(ident.map(Expr::Var));
 
         let op = |c| just(c).padded();
 
@@ -70,35 +82,52 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
     });
 
     let decl = recursive(|decl| {
+        // Variable declaration
         let r#let = text::keyword("let")
             .ignore_then(ident)
             .then_ignore(just('='))
             .then(expr.clone())
             .then_ignore(just(';'))
-            .then(decl)
+            .then(decl.clone())
             .map(|((name, rhs), then)| Expr::Let {
                 name,
                 rhs: Box::new(rhs),
                 then: Box::new(then),
             });
 
-        r#let
-            // Must be later in the chain than `r#let` to avoid ambiguity
-            .or(expr)
-            .padded()
+        // Function declaration
+        let r#fn = text::keyword("fn")
+            .ignore_then(ident)
+            .then(ident.repeated())
+            .then_ignore(just('='))
+            .then(expr.clone())
+            .then_ignore(just(';'))
+            .then(decl)
+            .map(|(((name, args), body), then)| Expr::Fn {
+                name,
+                args,
+                body: Box::new(body),
+                then: Box::new(then),
+            });
+
+        r#let.or(r#fn).or(expr).padded()
     });
 
     decl.then_ignore(end())
 }
 
-pub fn eval<'a>(expr: &'a Expr, vars: &mut Vec<(&'a String, f64)>) -> Result<f64, String> {
+pub fn eval<'a>(
+    expr: &'a Expr,
+    vars: &mut Vec<(&'a String, f64)>,
+    funcs: &mut Vec<(&'a String, &'a [String], &'a Expr)>,
+) -> Result<f64, String> {
     match expr {
         Expr::Num(x) => Ok(*x),
-        Expr::Neg(a) => Ok(-eval(a, vars)?),
-        Expr::Add(a, b) => Ok(eval(a, vars)? + eval(b, vars)?),
-        Expr::Sub(a, b) => Ok(eval(a, vars)? - eval(b, vars)?),
-        Expr::Mul(a, b) => Ok(eval(a, vars)? * eval(b, vars)?),
-        Expr::Div(a, b) => Ok(eval(a, vars)? / eval(b, vars)?),
+        Expr::Neg(a) => Ok(-eval(a, vars, funcs)?),
+        Expr::Add(a, b) => Ok(eval(a, vars, funcs)? + eval(b, vars, funcs)?),
+        Expr::Sub(a, b) => Ok(eval(a, vars, funcs)? - eval(b, vars, funcs)?),
+        Expr::Mul(a, b) => Ok(eval(a, vars, funcs)? * eval(b, vars, funcs)?),
+        Expr::Div(a, b) => Ok(eval(a, vars, funcs)? / eval(b, vars, funcs)?),
         Expr::Var(name) => {
             if let Some((_, val)) = vars.iter().rev().find(|(var, _)| *var == name) {
                 Ok(*val)
@@ -107,12 +136,49 @@ pub fn eval<'a>(expr: &'a Expr, vars: &mut Vec<(&'a String, f64)>) -> Result<f64
             }
         }
         Expr::Let { name, rhs, then } => {
-            let rhs = eval(rhs, vars)?;
+            let rhs = eval(rhs, vars, funcs)?;
             vars.push((name, rhs));
-            let output = eval(then, vars);
+            let output = eval(then, vars, funcs);
             vars.pop();
             output
         }
-        _ => todo!(),
+        Expr::Call(name, args) => {
+            if let Some((_, arg_names, body)) =
+                funcs.iter().rev().find(|(var, _, _)| *var == name).copied()
+            {
+                if arg_names.len() == args.len() {
+                    let mut args = args
+                        .iter()
+                        .map(|arg| eval(arg, vars, funcs))
+                        .zip(arg_names.iter())
+                        .map(|(val, name)| Ok((name, val?)))
+                        .collect::<Result<_, String>>()?;
+                    vars.append(&mut args);
+                    let output = eval(body, vars, funcs);
+                    vars.truncate(vars.len() - args.len());
+                    output
+                } else {
+                    Err(format!(
+                        "Wrong number of arguments for function `{}`: expected {}, found {}",
+                        name,
+                        arg_names.len(),
+                        args.len(),
+                    ))
+                }
+            } else {
+                Err(format!("Cannot find function `{}` in scope", name))
+            }
+        }
+        Expr::Fn {
+            name,
+            args,
+            body,
+            then,
+        } => {
+            funcs.push((name, args, body));
+            let output = eval(then, vars, funcs);
+            funcs.pop();
+            output
+        }
     }
 }

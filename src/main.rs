@@ -7,7 +7,7 @@ fn main() {
     let src = fs::read_to_string(filepath).expect("Read source code");
 
     match paty::parser().parse(src) {
-        Ok(ast) => match paty::eval(&ast, &mut Vec::new()) {
+        Ok(ast) => match paty::eval(&ast, &mut Vec::new(), &mut Vec::new()) {
             Ok(output) => println!("{}", output),
             Err(err) => println!("Evaluation error: {}", err),
         },
