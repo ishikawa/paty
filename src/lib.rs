@@ -1,8 +1,51 @@
 use chumsky::prelude::*;
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Token {
+    Integer(String),
+    Identifier(String),
+    // Operators
+    Operator(char), // 1 char
+    // Keywords
+    Let,
+    Fn,
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Token::Integer(n) => write!(f, "{}", n),
+            Token::Operator(c) => write!(f, "{}", c),
+            Token::Identifier(s) => write!(f, "{}", s),
+            Token::Fn => write!(f, "fn"),
+            Token::Let => write!(f, "let"),
+        }
+    }
+}
+
+pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
+    let integer = text::int(10).map(Token::Integer);
+    let operator = one_of("+-*/=(),;").map(Token::Operator);
+    let identifier = text::ident().map(|ident: String| match ident.as_str() {
+        "fn" => Token::Fn,
+        "let" => Token::Let,
+        _ => Token::Identifier(ident),
+    });
+
+    let token = integer
+        .or(operator)
+        .or(identifier)
+        .recover_with(skip_then_retry_until([]));
+
+    let comment = just("#").then(take_until(just('\n'))).padded();
+
+    token.padded_by(comment.repeated()).padded().repeated()
+}
 
 #[derive(Debug)]
 pub enum Expr {
-    Num(f64),
+    Integer(i64),
     Var(String),
 
     Neg(Box<Expr>),
@@ -25,29 +68,34 @@ pub enum Expr {
     },
 }
 
-pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
-    let ident = text::ident().padded();
+pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
+    let op = |c| just(Token::Operator(c));
+    let ident = filter_map(|span, tok| match tok {
+        Token::Identifier(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    })
+    .labelled("identifier");
 
     let expr = recursive(|expr| {
-        let int = text::int(10)
-            .map(|s: String| Expr::Num(s.parse().unwrap()))
-            .padded();
+        let val = filter_map(|span, tok| match tok {
+            Token::Integer(n) => Ok(Expr::Integer(n.parse().unwrap())),
+            _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+        })
+        .labelled("value");
 
         let call = ident
             .then(
                 expr.clone()
-                    .separated_by(just(','))
+                    .separated_by(op(','))
                     .allow_trailing() // allow trailing commas to appear in arg lists
-                    .delimited_by('(', ')'),
+                    .delimited_by(Token::Operator('('), Token::Operator(')')),
             )
             .map(|(f, args)| Expr::Call(f, args));
 
-        let atom = int
-            .or(expr.delimited_by('(', ')'))
+        let atom = val
+            .or(expr.delimited_by(Token::Operator('('), Token::Operator(')')))
             .or(call)
             .or(ident.map(Expr::Var));
-
-        let op = |c| just(c).padded();
 
         // unary: "-"
         let unary = op('-')
@@ -78,16 +126,17 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     .repeated(),
             )
             .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
-        sum.padded()
+
+        sum
     });
 
     let decl = recursive(|decl| {
         // Variable declaration
-        let r#let = text::keyword("let")
+        let r#let = just(Token::Let)
             .ignore_then(ident)
-            .then_ignore(just('='))
+            .then_ignore(op('='))
             .then(expr.clone())
-            .then_ignore(just(';'))
+            .then_ignore(op(';'))
             .then(decl.clone())
             .map(|((name, rhs), then)| Expr::Let {
                 name,
@@ -96,12 +145,12 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             });
 
         // Function declaration
-        let r#fn = text::keyword("fn")
+        let r#fn = just(Token::Fn)
             .ignore_then(ident)
             .then(ident.repeated())
-            .then_ignore(just('='))
+            .then_ignore(op('='))
             .then(expr.clone())
-            .then_ignore(just(';'))
+            .then_ignore(op(';'))
             .then(decl)
             .map(|(((name, args), body), then)| Expr::Fn {
                 name,
@@ -110,28 +159,28 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                 then: Box::new(then),
             });
 
-        r#let.or(r#fn).or(expr).padded()
+        r#let.or(r#fn).or(expr)
     });
 
     decl.then_ignore(end())
 }
 
-pub fn eval(expr: &Expr) -> Result<f64, String> {
+pub fn eval(expr: &Expr) -> Result<i64, String> {
     eval_loop(expr, &mut Vec::new(), &mut Vec::new())
 }
 
 fn eval_loop<'a>(
     expr: &'a Expr,
-    vars: &mut Vec<(&'a String, f64)>,
-    funcs: &mut Vec<(&'a String, &'a [String], &'a Expr)>,
-) -> Result<f64, String> {
+    vars: &mut Vec<(&'a String, i64)>,
+    functions: &mut Vec<(&'a String, &'a [String], &'a Expr)>,
+) -> Result<i64, String> {
     match expr {
-        Expr::Num(x) => Ok(*x),
-        Expr::Neg(a) => Ok(-eval_loop(a, vars, funcs)?),
-        Expr::Add(a, b) => Ok(eval_loop(a, vars, funcs)? + eval_loop(b, vars, funcs)?),
-        Expr::Sub(a, b) => Ok(eval_loop(a, vars, funcs)? - eval_loop(b, vars, funcs)?),
-        Expr::Mul(a, b) => Ok(eval_loop(a, vars, funcs)? * eval_loop(b, vars, funcs)?),
-        Expr::Div(a, b) => Ok(eval_loop(a, vars, funcs)? / eval_loop(b, vars, funcs)?),
+        Expr::Integer(x) => Ok(*x),
+        Expr::Neg(a) => Ok(-eval_loop(a, vars, functions)?),
+        Expr::Add(a, b) => Ok(eval_loop(a, vars, functions)? + eval_loop(b, vars, functions)?),
+        Expr::Sub(a, b) => Ok(eval_loop(a, vars, functions)? - eval_loop(b, vars, functions)?),
+        Expr::Mul(a, b) => Ok(eval_loop(a, vars, functions)? * eval_loop(b, vars, functions)?),
+        Expr::Div(a, b) => Ok(eval_loop(a, vars, functions)? / eval_loop(b, vars, functions)?),
         Expr::Var(name) => {
             if let Some((_, val)) = vars.iter().rev().find(|(var, _)| *var == name) {
                 Ok(*val)
@@ -140,25 +189,28 @@ fn eval_loop<'a>(
             }
         }
         Expr::Let { name, rhs, then } => {
-            let rhs = eval_loop(rhs, vars, funcs)?;
+            let rhs = eval_loop(rhs, vars, functions)?;
             vars.push((name, rhs));
-            let output = eval_loop(then, vars, funcs);
+            let output = eval_loop(then, vars, functions);
             vars.pop();
             output
         }
         Expr::Call(name, args) => {
-            if let Some((_, arg_names, body)) =
-                funcs.iter().rev().find(|(var, _, _)| *var == name).copied()
+            if let Some((_, arg_names, body)) = functions
+                .iter()
+                .rev()
+                .find(|(var, _, _)| *var == name)
+                .copied()
             {
                 if arg_names.len() == args.len() {
                     let mut args = args
                         .iter()
-                        .map(|arg| eval_loop(arg, vars, funcs))
+                        .map(|arg| eval_loop(arg, vars, functions))
                         .zip(arg_names.iter())
                         .map(|(val, name)| Ok((name, val?)))
                         .collect::<Result<_, String>>()?;
                     vars.append(&mut args);
-                    let output = eval_loop(body, vars, funcs);
+                    let output = eval_loop(body, vars, functions);
                     vars.truncate(vars.len() - args.len());
                     output
                 } else {
@@ -179,9 +231,9 @@ fn eval_loop<'a>(
             body,
             then,
         } => {
-            funcs.push((name, args, body));
-            let output = eval_loop(then, vars, funcs);
-            funcs.pop();
+            functions.push((name, args, body));
+            let output = eval_loop(then, vars, functions);
+            functions.pop();
             output
         }
     }
@@ -194,9 +246,10 @@ mod tests {
     #[test]
     fn number() {
         let src = "20211231";
-        let ast = parser().parse(src).unwrap();
+        let tokens = lexer().parse(src).unwrap();
+        let ast = parser().parse(tokens).unwrap();
         let val = eval(&ast).unwrap();
 
-        assert_eq!(val, 20211231 as f64);
+        assert_eq!(val, 20211231);
     }
 }
