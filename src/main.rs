@@ -1,4 +1,5 @@
 use chumsky::Parser;
+use paty::sem;
 use paty::syntax;
 use std::env;
 use std::fs;
@@ -17,15 +18,23 @@ fn main() {
     };
     //println!("tokens = {:?}", tokens);
 
-    let ast = match syntax::parser().parse(tokens) {
+    let expr = match syntax::parser().parse(tokens) {
         Err(err) => {
             err.into_iter()
                 .for_each(|e| eprintln!("Parse error: {}", e));
             std::process::exit(exitcode::DATAERR);
         }
-        Ok(ast) => ast,
+        Ok(expr) => expr,
     };
     //println!("ast = {:?}", ast);
+
+    let ast = match sem::analyze(&expr) {
+        Err(err) => {
+            eprintln!("Semantic error: {}", err);
+            std::process::exit(exitcode::DATAERR);
+        }
+        Ok(ast) => ast,
+    };
 
     match paty::eval(&ast) {
         Ok(_result) => {

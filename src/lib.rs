@@ -1,9 +1,8 @@
-pub mod c;
 pub mod sem;
 pub mod syntax;
 
-pub fn eval(expr: &syntax::Expr) -> Result<i64, String> {
-    eval_loop(expr, &mut Vec::new(), &mut Vec::new())
+pub fn eval(ast: &sem::SemAST) -> Result<i64, String> {
+    eval_loop(ast.expr(), &mut Vec::new(), &mut Vec::new())
 }
 
 fn eval_loop<'a>(
@@ -27,11 +26,12 @@ fn eval_loop<'a>(
             Ok(eval_loop(a, vars, functions)? / eval_loop(b, vars, functions)?)
         }
         syntax::Expr::Var(name) => {
-            if let Some((_, val)) = vars.iter().rev().find(|(var, _)| *var == name) {
-                Ok(*val)
-            } else {
-                Err(format!("Cannot find variable `{}` in scope", name))
-            }
+            let (_, val) = vars
+                .iter()
+                .rev()
+                .find(|(var, _)| *var == name)
+                .unwrap_or_else(|| panic!("var {}", name));
+            Ok(*val)
         }
         syntax::Expr::Let { name, rhs, then } => {
             let rhs = eval_loop(rhs, vars, functions)?;
@@ -41,34 +41,26 @@ fn eval_loop<'a>(
             output
         }
         syntax::Expr::Call(name, args) => {
-            if let Some((_, arg_names, body)) = functions
+            let (_, arg_names, body) = functions
                 .iter()
                 .rev()
                 .find(|(var, _, _)| *var == name)
                 .copied()
-            {
-                if arg_names.len() == args.len() {
-                    let mut args = args
-                        .iter()
-                        .map(|arg| eval_loop(arg, vars, functions))
-                        .zip(arg_names.iter())
-                        .map(|(val, name)| Ok((name, val?)))
-                        .collect::<Result<_, String>>()?;
-                    vars.append(&mut args);
-                    let output = eval_loop(body, vars, functions);
-                    vars.truncate(vars.len() - args.len());
-                    output
-                } else {
-                    Err(format!(
-                        "Wrong number of arguments for function `{}`: expected {}, found {}",
-                        name,
-                        arg_names.len(),
-                        args.len(),
-                    ))
-                }
-            } else {
-                Err(format!("Cannot find function `{}` in scope", name))
-            }
+                .expect("function");
+
+            assert_eq!(arg_names.len(), args.len(), "argument count");
+
+            let mut args = args
+                .iter()
+                .map(|arg| eval_loop(arg, vars, functions))
+                .zip(arg_names.iter())
+                .map(|(val, name)| Ok((name, val?)))
+                .collect::<Result<_, String>>()?;
+
+            vars.append(&mut args);
+            let output = eval_loop(body, vars, functions);
+            vars.truncate(vars.len() - args.len());
+            output
         }
         syntax::Expr::Puts(args) => {
             // "puts" function prints each arguments and newline character.
@@ -133,7 +125,8 @@ mod tests {
 
     fn eval_i64(src: &str) -> i64 {
         let tokens = syntax::lexer().parse(src).unwrap();
-        let ast = syntax::parser().parse(tokens).unwrap();
+        let expr = syntax::parser().parse(tokens).unwrap();
+        let ast = sem::analyze(&expr).unwrap();
 
         eval(&ast).unwrap()
     }
