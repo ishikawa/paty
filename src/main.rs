@@ -1,5 +1,16 @@
-fn main() {
-    let v = paty::parser::list("[ 100, 123,  2, 3, 5, 8 ]");
+use chumsky::Parser;
+use std::env;
+use std::fs;
 
-    println!("result = {:?}", v);
+fn main() {
+    let filepath = env::args().nth(1).expect("filename");
+    let src = fs::read_to_string(filepath).expect("Read source code");
+
+    match paty::parser().parse(src) {
+        Ok(ast) => match paty::eval(&ast) {
+            Ok(output) => println!("{}", output),
+            Err(err) => println!("Evaluation error: {}", err),
+        },
+        Err(err) => err.into_iter().for_each(|e| println!("Parse error: {}", e)),
+    }
 }
