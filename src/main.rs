@@ -36,6 +36,9 @@ fn main() {
         Ok(ast) => ast,
     };
 
+    let code = paty::c::emit(&ast);
+    println!("{}", code);
+
     let _ret = paty::eval(&ast);
     //println!("{}", result);
 }
