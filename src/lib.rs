@@ -71,7 +71,7 @@ pub enum Expr {
 pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
     let op = |c| just(Token::Operator(c));
     let ident = filter_map(|span, tok| match tok {
-        Token::Identifier(ident) => Ok(ident.clone()),
+        Token::Identifier(ident) => Ok(ident),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
     })
     .labelled("identifier");
@@ -116,7 +116,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
 
         // binary: "+", "-"
-        let sum = product
+        product
             .clone()
             .then(
                 op('+')
@@ -125,9 +125,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                     .then(product)
                     .repeated(),
             )
-            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
-
-        sum
+            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)))
     });
 
     let decl = recursive(|decl| {
