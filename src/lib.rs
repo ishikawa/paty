@@ -10,6 +10,7 @@ pub enum Token {
     // Keywords
     Def,
     End,
+    Puts,
 }
 
 impl fmt::Display for Token {
@@ -20,6 +21,7 @@ impl fmt::Display for Token {
             Token::Identifier(s) => write!(f, "{}", s),
             Token::Def => write!(f, "def"),
             Token::End => write!(f, "end"),
+            Token::Puts => write!(f, "puts"),
         }
     }
 }
@@ -30,6 +32,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let identifier = text::ident().map(|ident: String| match ident.as_str() {
         "def" => Token::Def,
         "end" => Token::End,
+        "puts" => Token::Puts,
         _ => Token::Identifier(ident),
     });
 
@@ -66,6 +69,9 @@ pub enum Expr {
         body: Box<Expr>,
         then: Box<Expr>,
     },
+
+    // Built-in functions
+    Puts(Vec<Expr>),
 }
 
 pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
@@ -225,6 +231,19 @@ fn eval_loop<'a>(
             } else {
                 Err(format!("Cannot find function `{}` in scope", name))
             }
+        }
+        Expr::Puts(args) => {
+            // "puts" function prints each arguments and newline character.
+            for (i, arg) in args.into_iter().enumerate() {
+                let v = eval_loop(arg, vars, functions)?;
+
+                print!("{}", v);
+                if i != (args.len() - 1) {
+                    print!(", ");
+                }
+            }
+
+            Ok(0) // no value
         }
         Expr::Fn {
             name,

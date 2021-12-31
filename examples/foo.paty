@@ -5,4 +5,4 @@ def add (x, y)
 end
 
 eight = 3 + five
-add(five, eight)
+puts(add(five, eight))
