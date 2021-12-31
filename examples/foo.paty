@@ -1,4 +1,8 @@
 five = 5;
-fn add x y = x + y;
+
+def add (x, y)
+  x + y
+end
+
 eight = 3 + five;
 add(five, eight)
