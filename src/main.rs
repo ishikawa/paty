@@ -27,7 +27,9 @@ fn main() {
     //println!("ast = {:?}", ast);
 
     match paty::eval(&ast) {
-        Ok(output) => println!("{}", output),
+        Ok(_result) => {
+            //println!("{}", result);
+        }
         Err(err) => {
             eprintln!("Evaluation error: {}", err);
             std::process::exit(exitcode::UNAVAILABLE);

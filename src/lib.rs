@@ -89,6 +89,16 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         })
         .labelled("value");
 
+        let puts = just(Token::Puts)
+            .ignore_then(
+                expr.clone()
+                    .separated_by(op(','))
+                    .allow_trailing()
+                    .delimited_by(Token::Operator('('), Token::Operator(')')),
+            )
+            .map(|args| Expr::Puts(args))
+            .labelled("puts");
+
         let call = ident
             .then(
                 expr.clone()
@@ -101,6 +111,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
 
         let atom = value
             .or(expr.delimited_by(Token::Operator('('), Token::Operator(')')))
+            .or(puts)
             .or(call)
             .or(ident.map(Expr::Var));
 
@@ -242,6 +253,7 @@ fn eval_loop<'a>(
                     print!(", ");
                 }
             }
+            print!("\n");
 
             Ok(0) // no value
         }
