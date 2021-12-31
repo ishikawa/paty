@@ -26,12 +26,14 @@ pub enum Expr {
 }
 
 pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
+    let ident = text::ident().padded();
+
     let expr = recursive(|expr| {
         let int = text::int(10)
             .map(|s: String| Expr::Num(s.parse().unwrap()))
             .padded();
 
-        let atom = int.or(expr.delimited_by('(', ')'));
+        let atom = int.or(expr.delimited_by('(', ')')).or(ident.map(Expr::Var));
 
         let op = |c| just(c).padded();
 
@@ -67,17 +69,50 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
         sum.padded()
     });
 
-    expr.then_ignore(end())
+    let decl = recursive(|decl| {
+        let r#let = text::keyword("let")
+            .ignore_then(ident)
+            .then_ignore(just('='))
+            .then(expr.clone())
+            .then_ignore(just(';'))
+            .then(decl)
+            .map(|((name, rhs), then)| Expr::Let {
+                name,
+                rhs: Box::new(rhs),
+                then: Box::new(then),
+            });
+
+        r#let
+            // Must be later in the chain than `r#let` to avoid ambiguity
+            .or(expr)
+            .padded()
+    });
+
+    decl.then_ignore(end())
 }
 
-pub fn eval(expr: &Expr) -> Result<f64, String> {
+pub fn eval<'a>(expr: &'a Expr, vars: &mut Vec<(&'a String, f64)>) -> Result<f64, String> {
     match expr {
-        Expr::Num(n) => Ok(*n),
-        Expr::Neg(a) => Ok(-eval(a)?),
-        Expr::Add(a, b) => Ok(eval(a)? + eval(b)?),
-        Expr::Sub(a, b) => Ok(eval(a)? - eval(b)?),
-        Expr::Mul(a, b) => Ok(eval(a)? * eval(b)?),
-        Expr::Div(a, b) => Ok(eval(a)? / eval(b)?),
-        _ => todo!(), // We'll handle other cases later
+        Expr::Num(x) => Ok(*x),
+        Expr::Neg(a) => Ok(-eval(a, vars)?),
+        Expr::Add(a, b) => Ok(eval(a, vars)? + eval(b, vars)?),
+        Expr::Sub(a, b) => Ok(eval(a, vars)? - eval(b, vars)?),
+        Expr::Mul(a, b) => Ok(eval(a, vars)? * eval(b, vars)?),
+        Expr::Div(a, b) => Ok(eval(a, vars)? / eval(b, vars)?),
+        Expr::Var(name) => {
+            if let Some((_, val)) = vars.iter().rev().find(|(var, _)| *var == name) {
+                Ok(*val)
+            } else {
+                Err(format!("Cannot find variable `{}` in scope", name))
+            }
+        }
+        Expr::Let { name, rhs, then } => {
+            let rhs = eval(rhs, vars)?;
+            vars.push((name, rhs));
+            let output = eval(then, vars);
+            vars.pop();
+            output
+        }
+        _ => todo!(),
     }
 }
