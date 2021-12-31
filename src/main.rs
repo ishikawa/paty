@@ -1,4 +1,5 @@
 use chumsky::Parser;
+use paty::syntax;
 use std::env;
 use std::fs;
 
@@ -6,7 +7,7 @@ fn main() {
     let filepath = env::args().nth(1).expect("filename");
     let src = fs::read_to_string(filepath).expect("Read source code");
 
-    let tokens = match paty::lexer().parse(src) {
+    let tokens = match syntax::lexer().parse(src) {
         Err(err) => {
             err.into_iter()
                 .for_each(|e| eprintln!("Syntax error: {}", e));
@@ -16,7 +17,7 @@ fn main() {
     };
     //println!("tokens = {:?}", tokens);
 
-    let ast = match paty::parser().parse(tokens) {
+    let ast = match syntax::parser().parse(tokens) {
         Err(err) => {
             err.into_iter()
                 .for_each(|e| eprintln!("Parse error: {}", e));
