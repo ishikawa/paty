@@ -1,8 +1,8 @@
-five = 5;
+five = 5
 
 def add (x, y)
   x + y
 end
 
-eight = 3 + five;
+eight = 3 + five
 add(five, eight)

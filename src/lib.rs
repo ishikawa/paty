@@ -26,7 +26,7 @@ impl fmt::Display for Token {
 
 pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let integer = text::int(10).map(Token::Integer);
-    let operator = one_of("+-*/=(),;").map(Token::Operator);
+    let operator = one_of("+-*/=(),").map(Token::Operator);
     let identifier = text::ident().map(|ident: String| match ident.as_str() {
         "def" => Token::Def,
         "end" => Token::End,
@@ -134,7 +134,6 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         let r#let = ident
             .then_ignore(op('='))
             .then(expr.clone())
-            .then_ignore(op(';'))
             .then(decl.clone())
             .map(|((name, rhs), then)| Expr::Let {
                 name,
@@ -253,7 +252,11 @@ mod tests {
 
     #[test]
     fn variable() {
-        let val = eval_i64("five = 5; five");
+        let val = eval_i64(
+            "
+            five = 5
+            five",
+        );
         assert_eq!(val, 5);
     }
 
