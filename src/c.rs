@@ -23,7 +23,7 @@ impl Emitter {
             "#include <stdio.h>\n\n",
             &self.functions,
             "\n",
-            "int main(int argc, char *argv[]) {\n",
+            "int main(void) {\n",
             "  ",
             &self.main,
             "  return 0;\n",

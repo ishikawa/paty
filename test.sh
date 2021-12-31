@@ -2,13 +2,16 @@
 # Borrowed from https://www.sigbus.info/compilerbook
 set -e
 
+CCFLAGS="-std=c11 -Wall -Wpedantic -Wextra"
+CCTESTFLAGS="-Werror -Wshadow"
+
 assert() {
   expected="$1"
   input="$2"
 
   echo -n "$input" > tmp.paty
   ./target/debug/paty tmp.paty > tmp.c
-  cc -std=c11 -Wall -o tmp tmp.c
+  cc ${CCFLAGS} ${CCTESTFLAGS} -o tmp tmp.c
   actual=$(./tmp)
 
   if [ "$actual" = "$expected" ]; then
