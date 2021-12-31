@@ -36,13 +36,6 @@ fn main() {
         Ok(ast) => ast,
     };
 
-    match paty::eval(&ast) {
-        Ok(_result) => {
-            //println!("{}", result);
-        }
-        Err(err) => {
-            eprintln!("Evaluation error: {}", err);
-            std::process::exit(exitcode::UNAVAILABLE);
-        }
-    };
+    let _ret = paty::eval(&ast);
+    //println!("{}", result);
 }

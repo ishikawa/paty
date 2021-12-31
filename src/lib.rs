@@ -1,7 +1,7 @@
 pub mod sem;
 pub mod syntax;
 
-pub fn eval(ast: &sem::SemAST) -> Result<i64, String> {
+pub fn eval(ast: &sem::SemAST) -> i64 {
     eval_loop(ast.expr(), &mut Vec::new(), &mut Vec::new())
 }
 
@@ -9,32 +9,24 @@ fn eval_loop<'a>(
     expr: &'a syntax::Expr,
     vars: &mut Vec<(&'a String, i64)>,
     functions: &mut Vec<(&'a String, &'a [String], &'a syntax::Expr)>,
-) -> Result<i64, String> {
+) -> i64 {
     match expr {
-        syntax::Expr::Integer(x) => Ok(*x),
-        syntax::Expr::Neg(a) => Ok(-eval_loop(a, vars, functions)?),
-        syntax::Expr::Add(a, b) => {
-            Ok(eval_loop(a, vars, functions)? + eval_loop(b, vars, functions)?)
-        }
-        syntax::Expr::Sub(a, b) => {
-            Ok(eval_loop(a, vars, functions)? - eval_loop(b, vars, functions)?)
-        }
-        syntax::Expr::Mul(a, b) => {
-            Ok(eval_loop(a, vars, functions)? * eval_loop(b, vars, functions)?)
-        }
-        syntax::Expr::Div(a, b) => {
-            Ok(eval_loop(a, vars, functions)? / eval_loop(b, vars, functions)?)
-        }
+        syntax::Expr::Integer(x) => *x,
+        syntax::Expr::Neg(a) => -eval_loop(a, vars, functions),
+        syntax::Expr::Add(a, b) => eval_loop(a, vars, functions) + eval_loop(b, vars, functions),
+        syntax::Expr::Sub(a, b) => eval_loop(a, vars, functions) - eval_loop(b, vars, functions),
+        syntax::Expr::Mul(a, b) => eval_loop(a, vars, functions) * eval_loop(b, vars, functions),
+        syntax::Expr::Div(a, b) => eval_loop(a, vars, functions) / eval_loop(b, vars, functions),
         syntax::Expr::Var(name) => {
             let (_, val) = vars
                 .iter()
                 .rev()
                 .find(|(var, _)| *var == name)
                 .unwrap_or_else(|| panic!("var {}", name));
-            Ok(*val)
+            *val
         }
         syntax::Expr::Let { name, rhs, then } => {
-            let rhs = eval_loop(rhs, vars, functions)?;
+            let rhs = eval_loop(rhs, vars, functions);
             vars.push((name, rhs));
             let output = eval_loop(then, vars, functions);
             vars.pop();
@@ -54,8 +46,8 @@ fn eval_loop<'a>(
                 .iter()
                 .map(|arg| eval_loop(arg, vars, functions))
                 .zip(arg_names.iter())
-                .map(|(val, name)| Ok((name, val?)))
-                .collect::<Result<_, String>>()?;
+                .map(|(val, name)| (name, val))
+                .collect::<_>();
 
             vars.append(&mut args);
             let output = eval_loop(body, vars, functions);
@@ -65,7 +57,7 @@ fn eval_loop<'a>(
         syntax::Expr::Puts(args) => {
             // "puts" function prints each arguments and newline character.
             for (i, arg) in args.iter().enumerate() {
-                let v = eval_loop(arg, vars, functions)?;
+                let v = eval_loop(arg, vars, functions);
 
                 print!("{}", v);
                 if i != (args.len() - 1) {
@@ -73,8 +65,7 @@ fn eval_loop<'a>(
                 }
             }
             println!();
-
-            Ok(0) // no value
+            0 // no value
         }
         syntax::Expr::Fn {
             name,
@@ -128,6 +119,6 @@ mod tests {
         let expr = syntax::parser().parse(tokens).unwrap();
         let ast = sem::analyze(&expr).unwrap();
 
-        eval(&ast).unwrap()
+        eval(&ast)
     }
 }
