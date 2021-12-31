@@ -116,18 +116,22 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
     decl.then_ignore(end())
 }
 
-pub fn eval<'a>(
+pub fn eval(expr: &Expr) -> Result<f64, String> {
+    eval_loop(expr, &mut Vec::new(), &mut Vec::new())
+}
+
+fn eval_loop<'a>(
     expr: &'a Expr,
     vars: &mut Vec<(&'a String, f64)>,
     funcs: &mut Vec<(&'a String, &'a [String], &'a Expr)>,
 ) -> Result<f64, String> {
     match expr {
         Expr::Num(x) => Ok(*x),
-        Expr::Neg(a) => Ok(-eval(a, vars, funcs)?),
-        Expr::Add(a, b) => Ok(eval(a, vars, funcs)? + eval(b, vars, funcs)?),
-        Expr::Sub(a, b) => Ok(eval(a, vars, funcs)? - eval(b, vars, funcs)?),
-        Expr::Mul(a, b) => Ok(eval(a, vars, funcs)? * eval(b, vars, funcs)?),
-        Expr::Div(a, b) => Ok(eval(a, vars, funcs)? / eval(b, vars, funcs)?),
+        Expr::Neg(a) => Ok(-eval_loop(a, vars, funcs)?),
+        Expr::Add(a, b) => Ok(eval_loop(a, vars, funcs)? + eval_loop(b, vars, funcs)?),
+        Expr::Sub(a, b) => Ok(eval_loop(a, vars, funcs)? - eval_loop(b, vars, funcs)?),
+        Expr::Mul(a, b) => Ok(eval_loop(a, vars, funcs)? * eval_loop(b, vars, funcs)?),
+        Expr::Div(a, b) => Ok(eval_loop(a, vars, funcs)? / eval_loop(b, vars, funcs)?),
         Expr::Var(name) => {
             if let Some((_, val)) = vars.iter().rev().find(|(var, _)| *var == name) {
                 Ok(*val)
@@ -136,9 +140,9 @@ pub fn eval<'a>(
             }
         }
         Expr::Let { name, rhs, then } => {
-            let rhs = eval(rhs, vars, funcs)?;
+            let rhs = eval_loop(rhs, vars, funcs)?;
             vars.push((name, rhs));
-            let output = eval(then, vars, funcs);
+            let output = eval_loop(then, vars, funcs);
             vars.pop();
             output
         }
@@ -149,12 +153,12 @@ pub fn eval<'a>(
                 if arg_names.len() == args.len() {
                     let mut args = args
                         .iter()
-                        .map(|arg| eval(arg, vars, funcs))
+                        .map(|arg| eval_loop(arg, vars, funcs))
                         .zip(arg_names.iter())
                         .map(|(val, name)| Ok((name, val?)))
                         .collect::<Result<_, String>>()?;
                     vars.append(&mut args);
-                    let output = eval(body, vars, funcs);
+                    let output = eval_loop(body, vars, funcs);
                     vars.truncate(vars.len() - args.len());
                     output
                 } else {
@@ -176,9 +180,23 @@ pub fn eval<'a>(
             then,
         } => {
             funcs.push((name, args, body));
-            let output = eval(then, vars, funcs);
+            let output = eval_loop(then, vars, funcs);
             funcs.pop();
             output
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn number() {
+        let src = "20211231";
+        let ast = parser().parse(src).unwrap();
+        let val = eval(&ast).unwrap();
+
+        assert_eq!(val, 20211231 as f64);
     }
 }
