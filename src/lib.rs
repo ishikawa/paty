@@ -8,7 +8,8 @@ pub enum Token {
     // Operators
     Operator(char), // 1 char
     // Keywords
-    Fn,
+    Def,
+    End,
 }
 
 impl fmt::Display for Token {
@@ -17,7 +18,8 @@ impl fmt::Display for Token {
             Token::Integer(n) => write!(f, "{}", n),
             Token::Operator(c) => write!(f, "{}", c),
             Token::Identifier(s) => write!(f, "{}", s),
-            Token::Fn => write!(f, "fn"),
+            Token::Def => write!(f, "def"),
+            Token::End => write!(f, "end"),
         }
     }
 }
@@ -26,7 +28,8 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let integer = text::int(10).map(Token::Integer);
     let operator = one_of("+-*/=(),;").map(Token::Operator);
     let identifier = text::ident().map(|ident: String| match ident.as_str() {
-        "fn" => Token::Fn,
+        "def" => Token::Def,
+        "end" => Token::End,
         _ => Token::Identifier(ident),
     });
 
@@ -84,10 +87,11 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .then(
                 expr.clone()
                     .separated_by(op(','))
-                    .allow_trailing() // allow trailing commas to appear in arg lists
+                    .allow_trailing()
                     .delimited_by(Token::Operator('('), Token::Operator(')')),
             )
-            .map(|(f, args)| Expr::Call(f, args));
+            .map(|(f, args)| Expr::Call(f, args))
+            .labelled("call");
 
         let atom = value
             .or(expr.delimited_by(Token::Operator('('), Token::Operator(')')))
@@ -139,12 +143,16 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             });
 
         // Function declaration
-        let r#fn = just(Token::Fn)
+        let r#fn = just(Token::Def)
             .ignore_then(ident)
-            .then(ident.repeated())
-            .then_ignore(op('='))
+            .then(
+                ident
+                    .separated_by(op(','))
+                    .allow_trailing()
+                    .delimited_by(Token::Operator('('), Token::Operator(')')),
+            )
             .then(expr.clone())
-            .then_ignore(op(';'))
+            .then_ignore(just(Token::End))
             .then(decl)
             .map(|(((name, args), body), then)| Expr::Fn {
                 name,
@@ -239,21 +247,32 @@ mod tests {
 
     #[test]
     fn number() {
-        let src = "20211231";
-        let tokens = lexer().parse(src).unwrap();
-        let ast = parser().parse(tokens).unwrap();
-        let val = eval(&ast).unwrap();
-
+        let val = eval_i64("20211231");
         assert_eq!(val, 20211231);
     }
 
     #[test]
     fn variable() {
-        let src = "five = 5; five";
+        let val = eval_i64("five = 5; five");
+        assert_eq!(val, 5);
+    }
+
+    #[test]
+    fn function() {
+        let val = eval_i64(
+            "
+            def foo(x, y)
+                x + y
+            end
+            foo(10, 20)",
+        );
+        assert_eq!(val, 30);
+    }
+
+    fn eval_i64(src: &str) -> i64 {
         let tokens = lexer().parse(src).unwrap();
         let ast = parser().parse(tokens).unwrap();
-        let val = eval(&ast).unwrap();
 
-        assert_eq!(val, 5);
+        eval(&ast).unwrap()
     }
 }
