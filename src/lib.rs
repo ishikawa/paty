@@ -1,6 +1,9 @@
 use chumsky::prelude::*;
 use std::fmt;
 
+pub mod c;
+pub mod sem;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Token {
     Integer(String),
