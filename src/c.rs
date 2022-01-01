@@ -23,7 +23,7 @@ impl Emitter {
             "#include <stdio.h>\n\n",
             &self.functions,
             "\n",
-            "int main(void) {\n",
+            "int main(void)\n{\n",
             "  ",
             &self.main,
             "  return 0;\n",
@@ -136,7 +136,7 @@ impl Emitter {
                         self.push_str(", ");
                     }
                 }
-                self.push_str(") ");
+                self.push_str(") \n");
                 self.push_str("{");
                 self.push_str("\n");
                 self.push_str("  ");
