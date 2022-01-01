@@ -297,7 +297,12 @@ fn token(kind: TokenKind) -> Token {
 }
 
 pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
-    let op = |c| just(token(TokenKind::Operator(c)));
+    // can not use "just" which outputs an argument instead of a token from the input.
+    let just_token =
+        |kind: TokenKind| filter::<Token, _, Simple<Token>>(move |t: &Token| t.kind == kind);
+
+    let op = |c| just_token(TokenKind::Operator(c));
+
     let ident = select! {
         Token{ kind: TokenKind::Identifier(ident), ..} => ident,
     }
@@ -312,7 +317,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         }
         .labelled("value");
 
-        let puts = just(token(TokenKind::Puts))
+        let puts = just_token(TokenKind::Puts)
             .ignore_then(
                 expr.clone()
                     .separated_by(op(','))
@@ -393,16 +398,14 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             });
 
         // Function declaration
-        let r#fn = 
-            // can not use "just" which outputs an argument instead of a token from the input.
-            filter(|t: &Token| t.kind == TokenKind::Def)
+        let r#fn = just_token(TokenKind::Def)
             .then(ident)
             .then(ident.separated_by(op(',')).allow_trailing().delimited_by(
                 token(TokenKind::Operator('(')),
                 token(TokenKind::Operator(')')),
             ))
             .then(expr.clone())
-            .then_ignore(just(token(TokenKind::End)))
+            .then_ignore(just_token(TokenKind::End))
             .then(decl)
             .map(|((((def_tok, name), args), body), then)| {
                 let mut expr = Expr::new(ExprKind::Fn {
