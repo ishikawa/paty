@@ -45,40 +45,40 @@ impl Emitter {
     }
 
     pub fn build(&mut self, expr: &syntax::Expr) {
-        match expr {
-            syntax::Expr::Integer(n) => {
+        match expr.kind() {
+            syntax::ExprKind::Integer(n) => {
                 // Use standard macros for integer constant expression to expand
                 // a value to the type int_least_N.
                 self.push_str(format!("INT64_C({})", n));
             }
-            syntax::Expr::Neg(a) => {
+            syntax::ExprKind::Neg(a) => {
                 self.push_str("-");
                 self.build(a);
             }
-            syntax::Expr::Add(a, b) => {
+            syntax::ExprKind::Add(a, b) => {
                 self.build(a);
                 self.push_str(" + ");
                 self.build(b);
             }
-            syntax::Expr::Sub(a, b) => {
+            syntax::ExprKind::Sub(a, b) => {
                 self.build(a);
                 self.push_str(" - ");
                 self.build(b);
             }
-            syntax::Expr::Mul(a, b) => {
+            syntax::ExprKind::Mul(a, b) => {
                 self.build(a);
                 self.push_str(" * ");
                 self.build(b);
             }
-            syntax::Expr::Div(a, b) => {
+            syntax::ExprKind::Div(a, b) => {
                 self.build(a);
                 self.push_str(" / ");
                 self.build(b);
             }
-            syntax::Expr::Var(name) => {
+            syntax::ExprKind::Var(name) => {
                 self.push_str(name);
             }
-            syntax::Expr::Call(name, args) => {
+            syntax::ExprKind::Call(name, args) => {
                 self.push_str(name);
                 self.push_str("(");
                 for (i, arg) in args.iter().enumerate() {
@@ -90,7 +90,7 @@ impl Emitter {
                 }
                 self.push_str(")");
             }
-            syntax::Expr::Puts(args) => {
+            syntax::ExprKind::Puts(args) => {
                 // "puts" function prints each arguments and newline character.
                 self.push_str("printf(\"");
                 for (i, _) in args.iter().enumerate() {
@@ -113,7 +113,7 @@ impl Emitter {
                 self.push_str(");");
                 self.push_str("\n");
             }
-            syntax::Expr::Let { name, rhs, then } => {
+            syntax::ExprKind::Let { name, rhs, then } => {
                 self.push_str("int64_t ");
                 self.push_str(name);
                 self.push_str(" = ");
@@ -123,7 +123,7 @@ impl Emitter {
                 self.push_str("  ");
                 self.build(then);
             }
-            syntax::Expr::Fn {
+            syntax::ExprKind::Fn {
                 name,
                 args,
                 body,

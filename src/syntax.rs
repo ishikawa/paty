@@ -20,6 +20,10 @@ impl Token {
         }
     }
 
+    pub fn kind(&self) -> &TokenKind {
+        &self.kind
+    }
+
     pub fn comments(&self) -> impl Iterator<Item = &str> {
         self.comments.iter().map(AsRef::as_ref)
     }
@@ -135,7 +139,38 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
 }
 
 #[derive(Debug)]
-pub enum Expr {
+pub struct Expr {
+    kind: ExprKind,
+    // comments followed by this token.
+    comments: Vec<String>,
+    // a trailing comment which follows this token.
+    trailing_comment: Option<String>,
+}
+
+impl Expr {
+    pub fn new(kind: ExprKind) -> Self {
+        Self {
+            kind,
+            comments: vec![],
+            trailing_comment: None,
+        }
+    }
+
+    pub fn kind(&self) -> &ExprKind {
+        &self.kind
+    }
+
+    pub fn comments(&self) -> impl Iterator<Item = &str> {
+        self.comments.iter().map(AsRef::as_ref)
+    }
+
+    pub fn trailing_comment(&self) -> Option<&str> {
+        self.trailing_comment.as_ref().map(AsRef::as_ref)
+    }
+}
+
+#[derive(Debug)]
+pub enum ExprKind {
     Integer(i64),
     Var(String),
 
@@ -175,7 +210,10 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
 
     let expr = recursive(|expr| {
         let value = select! {
-            Token{ kind: TokenKind::Integer(n), ..} => Expr::Integer(n.parse().unwrap()),
+            Token{ kind: TokenKind::Integer(n), ..} => {
+                let kind = ExprKind::Integer(n.parse().unwrap());
+                Expr::new(kind)
+            },
         }
         .labelled("value");
 
@@ -189,7 +227,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                         token(TokenKind::Operator(')')),
                     ),
             )
-            .map(Expr::Puts)
+            .map(|args| Expr::new(ExprKind::Puts(args)))
             .labelled("puts");
 
         let call = ident
@@ -202,7 +240,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                         token(TokenKind::Operator(')')),
                     ),
             )
-            .map(|(f, args)| Expr::Call(f, args))
+            .map(|(f, args)| Expr::new(ExprKind::Call(f, args)))
             .labelled("call");
 
         let atom = value
@@ -212,37 +250,37 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             ))
             .or(puts)
             .or(call)
-            .or(ident.map(Expr::Var));
+            .or(ident.map(|s| Expr::new(ExprKind::Var(s))));
 
         // unary: "-"
         let unary = op('-')
             .repeated()
             .then(atom)
-            .foldr(|_op, rhs| Expr::Neg(Box::new(rhs)));
+            .foldr(|_op, rhs| Expr::new(ExprKind::Neg(Box::new(rhs))));
 
         // binary: "*", "/"
         let product = unary
             .clone()
             .then(
                 op('*')
-                    .to(Expr::Mul as fn(_, _) -> _)
-                    .or(op('/').to(Expr::Div as fn(_, _) -> _))
+                    .to(ExprKind::Mul as fn(_, _) -> _)
+                    .or(op('/').to(ExprKind::Div as fn(_, _) -> _))
                     .then(unary)
                     .repeated(),
             )
-            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
 
         // binary: "+", "-"
         product
             .clone()
             .then(
                 op('+')
-                    .to(Expr::Add as fn(_, _) -> _)
-                    .or(op('-').to(Expr::Sub as fn(_, _) -> _))
+                    .to(ExprKind::Add as fn(_, _) -> _)
+                    .or(op('-').to(ExprKind::Sub as fn(_, _) -> _))
                     .then(product)
                     .repeated(),
             )
-            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)))
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))))
     });
 
     let decl = recursive(|decl| {
@@ -251,10 +289,12 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .then_ignore(op('='))
             .then(expr.clone())
             .then(decl.clone())
-            .map(|((name, rhs), then)| Expr::Let {
-                name,
-                rhs: Box::new(rhs),
-                then: Box::new(then),
+            .map(|((name, rhs), then)| {
+                Expr::new(ExprKind::Let {
+                    name,
+                    rhs: Box::new(rhs),
+                    then: Box::new(then),
+                })
             });
 
         // Function declaration
@@ -267,11 +307,13 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .then(expr.clone())
             .then_ignore(just(token(TokenKind::End)))
             .then(decl)
-            .map(|(((name, args), body), then)| Expr::Fn {
-                name,
-                args,
-                body: Box::new(body),
-                then: Box::new(then),
+            .map(|(((name, args), body), then)| {
+                Expr::new(ExprKind::Fn {
+                    name,
+                    args,
+                    body: Box::new(body),
+                    then: Box::new(then),
+                })
             });
 
         r#let.or(r#fn).or(expr)

@@ -11,14 +11,22 @@ fn eval_loop<'a>(
     vars: &mut Vec<(&'a String, i64)>,
     functions: &mut Vec<(&'a String, &'a [String], &'a syntax::Expr)>,
 ) -> i64 {
-    match expr {
-        syntax::Expr::Integer(x) => *x,
-        syntax::Expr::Neg(a) => -eval_loop(a, vars, functions),
-        syntax::Expr::Add(a, b) => eval_loop(a, vars, functions) + eval_loop(b, vars, functions),
-        syntax::Expr::Sub(a, b) => eval_loop(a, vars, functions) - eval_loop(b, vars, functions),
-        syntax::Expr::Mul(a, b) => eval_loop(a, vars, functions) * eval_loop(b, vars, functions),
-        syntax::Expr::Div(a, b) => eval_loop(a, vars, functions) / eval_loop(b, vars, functions),
-        syntax::Expr::Var(name) => {
+    match expr.kind() {
+        syntax::ExprKind::Integer(x) => *x,
+        syntax::ExprKind::Neg(a) => -eval_loop(a, vars, functions),
+        syntax::ExprKind::Add(a, b) => {
+            eval_loop(a, vars, functions) + eval_loop(b, vars, functions)
+        }
+        syntax::ExprKind::Sub(a, b) => {
+            eval_loop(a, vars, functions) - eval_loop(b, vars, functions)
+        }
+        syntax::ExprKind::Mul(a, b) => {
+            eval_loop(a, vars, functions) * eval_loop(b, vars, functions)
+        }
+        syntax::ExprKind::Div(a, b) => {
+            eval_loop(a, vars, functions) / eval_loop(b, vars, functions)
+        }
+        syntax::ExprKind::Var(name) => {
             let (_, val) = vars
                 .iter()
                 .rev()
@@ -26,14 +34,14 @@ fn eval_loop<'a>(
                 .unwrap_or_else(|| panic!("var {}", name));
             *val
         }
-        syntax::Expr::Let { name, rhs, then } => {
+        syntax::ExprKind::Let { name, rhs, then } => {
             let rhs = eval_loop(rhs, vars, functions);
             vars.push((name, rhs));
             let output = eval_loop(then, vars, functions);
             vars.pop();
             output
         }
-        syntax::Expr::Call(name, args) => {
+        syntax::ExprKind::Call(name, args) => {
             let (_, arg_names, body) = functions
                 .iter()
                 .rev()
@@ -55,7 +63,7 @@ fn eval_loop<'a>(
             vars.truncate(vars.len() - args.len());
             output
         }
-        syntax::Expr::Puts(args) => {
+        syntax::ExprKind::Puts(args) => {
             // "puts" function prints each arguments and newline character.
             for (i, arg) in args.iter().enumerate() {
                 let v = eval_loop(arg, vars, functions);
@@ -68,7 +76,7 @@ fn eval_loop<'a>(
             println!();
             0 // no value
         }
-        syntax::Expr::Fn {
+        syntax::ExprKind::Fn {
             name,
             args,
             body,
