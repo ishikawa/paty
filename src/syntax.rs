@@ -5,6 +5,7 @@ use std::fmt;
 pub enum Token {
     Integer(String),
     Identifier(String),
+    LineComment(String),
     // Operators
     Operator(char), // 1 char
     // Keywords
@@ -19,6 +20,7 @@ impl fmt::Display for Token {
             Token::Integer(n) => write!(f, "{}", n),
             Token::Operator(c) => write!(f, "{}", c),
             Token::Identifier(s) => write!(f, "{}", s),
+            Token::LineComment(s) => write!(f, "# {}", s),
             Token::Def => write!(f, "def"),
             Token::End => write!(f, "end"),
             Token::Puts => write!(f, "puts"),
@@ -36,41 +38,18 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         text::ident().map(Token::Identifier),
     ));
 
+    let comment = just("#")
+        .ignore_then(take_until(text::newline()))
+        .map(|(chars, _)| chars.iter().collect::<String>())
+        .map(Token::LineComment);
+
     let token = integer
         .or(operator)
         .or(identifier)
+        .or(comment)
         .recover_with(skip_then_retry_until([]));
 
-    // whitespace except for newlines
-    let whitespace = one_of(" \t").repeated();
-    let comment = just("#")
-        .ignore_then(take_until(text::newline()))
-        .map(|(chars, _)| Some(chars.iter().collect::<String>()));
-
-    // line comments followed by token
-    let token_with_comments = comment
-        .padded()
-        .repeated()
-        // token
-        .then(token)
-        // a trailing comment. It must exist one or not.
-        .then_ignore(whitespace)
-        .then(comment.or(empty().to(None)))
-        .map(
-            |((_comments, token), _trailing_comment): (
-                (Vec<Option<String>>, Token),
-                Option<String>,
-            )| { token },
-        )
-        .padded();
-
-    token_with_comments
-        .repeated()
-        // Ignore trailing comments of the file.
-        .then_ignore(comment.padded().repeated())
-        .then_ignore(end())
-
-    //token.padded_by(comment.repeated()).padded().repeated()
+    token.padded().repeated().then_ignore(end())
 }
 
 #[derive(Debug)]
@@ -103,17 +82,15 @@ pub enum Expr {
 
 pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
     let op = |c| just(Token::Operator(c));
-    let ident = filter_map(|span, tok| match tok {
-        Token::Identifier(ident) => Ok(ident),
-        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-    })
+    let ident = select! {
+        Token::Identifier(ident) => ident,
+    }
     .labelled("identifier");
 
     let expr = recursive(|expr| {
-        let value = filter_map(|span, tok| match tok {
-            Token::Integer(n) => Ok(Expr::Integer(n.parse().unwrap())),
-            _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-        })
+        let value = select! {
+            Token::Integer(n) => Expr::Integer(n.parse().unwrap()),
+        }
         .labelled("value");
 
         let puts = just(Token::Puts)
