@@ -27,24 +27,24 @@ fn analyze_loop<'a>(
     vars: &mut Vec<&'a String>,
     functions: &mut Vec<(&'a String, &'a [String], &'a syntax::Expr)>,
 ) -> Result<(), String> {
-    match expr {
-        syntax::Expr::Integer(_) => Ok(()),
-        syntax::Expr::Neg(a) => analyze_loop(a, vars, functions),
-        syntax::Expr::Add(a, b)
-        | syntax::Expr::Sub(a, b)
-        | syntax::Expr::Mul(a, b)
-        | syntax::Expr::Div(a, b) => {
+    match expr.kind() {
+        syntax::ExprKind::Integer(_) => Ok(()),
+        syntax::ExprKind::Neg(a) => analyze_loop(a, vars, functions),
+        syntax::ExprKind::Add(a, b)
+        | syntax::ExprKind::Sub(a, b)
+        | syntax::ExprKind::Mul(a, b)
+        | syntax::ExprKind::Div(a, b) => {
             analyze_loop(a, vars, functions)?;
             analyze_loop(b, vars, functions)
         }
-        syntax::Expr::Var(name) => {
+        syntax::ExprKind::Var(name) => {
             if vars.iter().rev().any(|var| *var == name) {
                 Ok(())
             } else {
                 Err(format!("Cannot find variable `{}` in scope", name))
             }
         }
-        syntax::Expr::Let { name, rhs, then } => {
+        syntax::ExprKind::Let { name, rhs, then } => {
             analyze_loop(rhs, vars, functions)?;
 
             vars.push(name);
@@ -52,7 +52,7 @@ fn analyze_loop<'a>(
             vars.pop();
             output
         }
-        syntax::Expr::Call(name, args) => {
+        syntax::ExprKind::Call(name, args) => {
             if let Some((_, arg_names, body)) = functions
                 .iter()
                 .rev()
@@ -83,13 +83,13 @@ fn analyze_loop<'a>(
                 Err(format!("Cannot find function `{}` in scope", name))
             }
         }
-        syntax::Expr::Puts(args) => {
+        syntax::ExprKind::Puts(args) => {
             for arg in args {
                 analyze_loop(arg, vars, functions)?;
             }
             Ok(())
         }
-        syntax::Expr::Fn {
+        syntax::ExprKind::Fn {
             name,
             args,
             body,

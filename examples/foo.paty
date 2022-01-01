@@ -1,5 +1,6 @@
 five = 5
 
+# add 2 integers
 def add (x, y)
   x + y
 end

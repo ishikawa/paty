@@ -26,7 +26,7 @@ fn main() {
         }
         Ok(expr) => expr,
     };
-    //println!("ast = {:?}", ast);
+    //println!("ast = {:?}", expr);
 
     let ast = match sem::analyze(&expr) {
         Err(err) => {
