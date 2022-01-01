@@ -29,19 +29,19 @@ impl fmt::Display for Token {
 pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let integer = text::int(10).map(Token::Integer);
     let operator = one_of("+-*/=(),").map(Token::Operator);
-    let identifier = text::ident().map(|ident: String| match ident.as_str() {
-        "def" => Token::Def,
-        "end" => Token::End,
-        "puts" => Token::Puts,
-        _ => Token::Identifier(ident),
-    });
+    let identifier = choice((
+        text::keyword("def").to(Token::Def),
+        text::keyword("end").to(Token::End),
+        text::keyword("puts").to(Token::Puts),
+        text::ident().map(Token::Identifier),
+    ));
 
     let token = integer
         .or(operator)
         .or(identifier)
         .recover_with(skip_then_retry_until([]));
 
-    let comment = just("#").then(take_until(just('\n'))).padded();
+    let comment = just("#").then(take_until(text::newline())).padded();
 
     token.padded_by(comment.repeated()).padded().repeated()
 }
