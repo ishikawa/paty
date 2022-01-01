@@ -5,18 +5,23 @@ use std::hash::{Hash, Hasher};
 #[derive(Debug, Clone, Eq)]
 pub struct Token {
     kind: TokenKind,
-    // leading comments followed by this token.
+    // Leading comments followed by this token.
+    // Limitation: we can't handle trailing comments. For example, if we have a code like below:
+    //
+    //     # comment 1
+    //     x = 1 # comment 2
+    //     y = 2
+    //
+    // The "comment 1" will be the leading comment of "x" token, and the "comment 2" will be
+    // "y" token's.
     comments: Vec<String>,
-    // a trailing comment which follows this token.
-    trailing_comment: Option<String>,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, comments: &[&str], trailing_comment: Option<&str>) -> Self {
+    pub fn new(kind: TokenKind, comments: &[&str]) -> Self {
         Self {
             kind,
             comments: comments.iter().map(ToString::to_string).collect(),
-            trailing_comment: trailing_comment.map(ToString::to_string),
         }
     }
 
@@ -26,10 +31,6 @@ impl Token {
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
         self.comments.iter().map(AsRef::as_ref)
-    }
-
-    pub fn trailing_comment(&self) -> Option<&str> {
-        self.trailing_comment.as_ref().map(AsRef::as_ref)
     }
 }
 
@@ -51,12 +52,7 @@ impl fmt::Display for Token {
         for comment in self.comments() {
             writeln!(f, "#{}", comment)?;
         }
-        write!(f, "{}", self.kind)?;
-        if let Some(comment) = self.trailing_comment() {
-            write!(f, "  #{}", comment)?;
-        }
-
-        Ok(())
+        write!(f, "{}", self.kind)
     }
 }
 
@@ -109,35 +105,22 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .or(identifier)
         .recover_with(skip_then_retry_until([]));
 
-    // whitespace except for newlines
-    let whitespace = one_of(" \t").repeated();
     let comment = just("#")
         .ignore_then(take_until(text::newline()))
         .map(|(chars, _)| Some(chars.iter().collect::<String>()));
 
-    // line comments followed by token
+    // line comments and token
     let token_with_comments = comment
-        .padded()
         .repeated()
-        // token
         .then(token)
-        // a trailing comment. It must exist one or not.
-        .then_ignore(whitespace)
-        .then(comment.or(empty().to(None)))
-        .map(
-            |((comments, kind), trailing_comment): (
-                (Vec<Option<String>>, TokenKind),
-                Option<String>,
-            )| {
-                let comments = comments
-                    .iter()
-                    .filter_map(|v| v.as_ref().map(AsRef::as_ref))
-                    .collect::<Vec<&str>>();
-                let trailing_comment = trailing_comment.as_ref().map(AsRef::as_ref);
+        .map(|(comments, kind): (Vec<Option<String>>, TokenKind)| {
+            let comments = comments
+                .iter()
+                .filter_map(|v| v.as_ref().map(AsRef::as_ref))
+                .collect::<Vec<&str>>();
 
-                Token::new(kind, &comments, trailing_comment)
-            },
-        )
+            Token::new(kind, &comments)
+        })
         .padded();
 
     token_with_comments
@@ -152,8 +135,6 @@ pub struct Expr {
     kind: ExprKind,
     // comments followed by this token.
     comments: Vec<String>,
-    // a trailing comment which follows this token.
-    trailing_comment: Option<String>,
 }
 
 impl Expr {
@@ -161,7 +142,6 @@ impl Expr {
         Self {
             kind,
             comments: vec![],
-            trailing_comment: None,
         }
     }
 
@@ -171,10 +151,6 @@ impl Expr {
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
         self.comments.iter().map(AsRef::as_ref)
-    }
-
-    pub fn trailing_comment(&self) -> Option<&str> {
-        self.trailing_comment.as_ref().map(AsRef::as_ref)
     }
 
     pub fn append_comments_from(&mut self, token: &Token) {
@@ -256,7 +232,6 @@ impl CaseArm {
 pub struct Pattern {
     kind: PatternKind,
     comments: Vec<String>,
-    trailing_comment: Option<String>,
 }
 
 impl Pattern {
@@ -264,7 +239,6 @@ impl Pattern {
         Self {
             kind,
             comments: vec![],
-            trailing_comment: None,
         }
     }
 
@@ -274,10 +248,6 @@ impl Pattern {
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
         self.comments.iter().map(AsRef::as_ref)
-    }
-
-    pub fn trailing_comment(&self) -> Option<&str> {
-        self.trailing_comment.as_ref().map(AsRef::as_ref)
     }
 
     pub fn append_comments_from(&mut self, token: &Token) {
@@ -293,7 +263,7 @@ pub enum PatternKind {
 }
 
 fn token(kind: TokenKind) -> Token {
-    Token::new(kind, &[], None)
+    Token::new(kind, &[])
 }
 
 pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
