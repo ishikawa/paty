@@ -339,7 +339,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .foldr(|_op, rhs| Expr::new(ExprKind::Neg(Box::new(rhs))));
 
         // binary: "*", "/"
-        let product = unary
+        let bin_op1 = unary
             .clone()
             .then(
                 op('*')
@@ -350,8 +350,20 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             )
             .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
 
+        // binary: "+", "-"
+        let bin_op2 = bin_op1
+            .clone()
+            .then(
+                op('+')
+                    .to(ExprKind::Add as fn(_, _) -> _)
+                    .or(op('-').to(ExprKind::Sub as fn(_, _) -> _))
+                    .then(bin_op1)
+                    .repeated(),
+            )
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
         // case
-        let _case_arm = just_token(TokenKind::When)
+        let case_arm = just_token(TokenKind::When)
             .then(pattern)
             .then(expr.clone())
             .map(|((when, pattern), body)| {
@@ -359,18 +371,24 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                 expr.append_comments_from(&when);
                 expr
             });
+        let case = just_token(TokenKind::Case)
+            .then(expr.clone())
+            .then(case_arm.repeated().at_least(1))
+            .then(just_token(TokenKind::Else).then(expr.clone()).or_not())
+            .then_ignore(just_token(TokenKind::End))
+            .map(|(((case, head), arms), else_body)| {
+                let else_body = else_body.map(|(_else_tok, expr)| Box::new(expr));
 
-        // binary: "+", "-"
-        product
-            .clone()
-            .then(
-                op('+')
-                    .to(ExprKind::Add as fn(_, _) -> _)
-                    .or(op('-').to(ExprKind::Sub as fn(_, _) -> _))
-                    .then(product)
-                    .repeated(),
-            )
-            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))))
+                let mut expr = Expr::new(ExprKind::Case {
+                    head: Box::new(head),
+                    arms,
+                    else_body,
+                });
+                expr.append_comments_from(&case);
+                expr
+            });
+
+        case.or(bin_op2)
     });
 
     let decl = recursive(|decl| {
