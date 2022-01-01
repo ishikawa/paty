@@ -20,10 +20,14 @@ impl Emitter {
 
     pub fn emit(&self) -> String {
         [
-            "#include <stdio.h>\n\n",
+            "#include <stdio.h>\n",
+            "#include <stdint.h>\n",
+            "#include <inttypes.h>\n",
+            "\n",
             &self.functions,
             "\n",
-            "int main(void)\n{\n",
+            "int main(void)\n",
+            "{\n",
             "  ",
             &self.main,
             "  return 0;\n",
@@ -42,8 +46,10 @@ impl Emitter {
 
     pub fn build(&mut self, expr: &syntax::Expr) {
         match expr {
-            syntax::Expr::Integer(x) => {
-                self.push_str(x.to_string());
+            syntax::Expr::Integer(n) => {
+                // Use standard macros for integer constant expression to expand
+                // a value to the type int_least_N.
+                self.push_str(format!("INT64_C({})", n));
             }
             syntax::Expr::Neg(a) => {
                 self.push_str("-");
@@ -88,7 +94,8 @@ impl Emitter {
                 // "puts" function prints each arguments and newline character.
                 self.push_str("printf(\"");
                 for (i, _) in args.iter().enumerate() {
-                    self.push_str("%d");
+                    // Use standard conversion specifier macros for integer types.
+                    self.push_str("%\" PRId64 \"");
 
                     if i != (args.len() - 1) {
                         self.push_str(", ");
@@ -107,7 +114,7 @@ impl Emitter {
                 self.push_str("\n");
             }
             syntax::Expr::Let { name, rhs, then } => {
-                self.push_str("int ");
+                self.push_str("int64_t ");
                 self.push_str(name);
                 self.push_str(" = ");
                 self.build(rhs);
@@ -125,11 +132,11 @@ impl Emitter {
                 let t = self.in_top_level;
                 self.in_top_level = false;
 
-                self.push_str("int ");
+                self.push_str("int64_t ");
                 self.push_str(name);
                 self.push_str("(");
                 for (i, arg) in args.iter().enumerate() {
-                    self.push_str("int ");
+                    self.push_str("int64_t ");
                     self.push_str(arg);
 
                     if i != (args.len() - 1) {
