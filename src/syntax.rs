@@ -317,6 +317,14 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         }
         .labelled("value");
 
+        let pattern = select! {
+            Token{ kind: TokenKind::Integer(n), ..} => {
+                let kind = PatternKind::Integer(n.parse().unwrap());
+                Pattern::new(kind)
+            },
+        }
+        .labelled("pattern");
+
         let puts = just_token(TokenKind::Puts)
             .ignore_then(
                 expr.clone()
@@ -344,7 +352,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .labelled("call");
 
         let atom = value
-            .or(expr.delimited_by(
+            .or(expr.clone().delimited_by(
                 token(TokenKind::Operator('(')),
                 token(TokenKind::Operator(')')),
             ))
@@ -369,6 +377,16 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                     .repeated(),
             )
             .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
+        // case
+        let _case_arm = just_token(TokenKind::When)
+            .then(pattern)
+            .then(expr.clone())
+            .map(|((when, pattern), body)| {
+                let mut expr = CaseArm::new(pattern, Box::new(body));
+                expr.append_comments_from(&when);
+                expr
+            });
 
         // binary: "+", "-"
         product
