@@ -87,6 +87,9 @@ fn eval_loop<'a>(
             functions.pop();
             output
         }
+        syntax::ExprKind::Case { .. } => {
+            todo!()
+        }
     }
 }
 

@@ -68,6 +68,9 @@ pub enum TokenKind {
     Operator(char), // 1 char
     // Keywords
     Def,
+    Case,
+    When,
+    Else,
     End,
     Puts,
 }
@@ -79,6 +82,9 @@ impl fmt::Display for TokenKind {
             TokenKind::Operator(c) => write!(f, "{}", c),
             TokenKind::Identifier(s) => write!(f, "{}", s),
             TokenKind::Def => write!(f, "def"),
+            TokenKind::Case => write!(f, "case"),
+            TokenKind::When => write!(f, "when"),
+            TokenKind::Else => write!(f, "else"),
             TokenKind::End => write!(f, "end"),
             TokenKind::Puts => write!(f, "puts"),
         }
@@ -90,6 +96,9 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let operator = one_of("+-*/=(),").map(TokenKind::Operator);
     let identifier = choice((
         text::keyword("def").to(TokenKind::Def),
+        text::keyword("case").to(TokenKind::Case),
+        text::keyword("when").to(TokenKind::When),
+        text::keyword("else").to(TokenKind::Else),
         text::keyword("end").to(TokenKind::End),
         text::keyword("puts").to(TokenKind::Puts),
         text::ident().map(TokenKind::Identifier),
@@ -198,9 +207,89 @@ pub enum ExprKind {
         body: Box<Expr>,
         then: Box<Expr>,
     },
+    Case {
+        head: Box<Expr>,
+        arms: Vec<CaseArm>,
+        else_body: Option<Box<Expr>>,
+    },
 
     // Built-in functions
     Puts(Vec<Expr>),
+}
+
+#[derive(Debug)]
+pub struct CaseArm {
+    pattern: Pattern,
+    body: Box<Expr>,
+    comments: Vec<String>,
+}
+
+impl CaseArm {
+    pub fn new(pattern: Pattern, body: Box<Expr>) -> Self {
+        Self {
+            pattern,
+            body,
+            comments: vec![],
+        }
+    }
+
+    pub fn pattern(&self) -> &Pattern {
+        &self.pattern
+    }
+
+    pub fn body(&self) -> &Expr {
+        &self.body
+    }
+
+    pub fn comments(&self) -> impl Iterator<Item = &str> {
+        self.comments.iter().map(AsRef::as_ref)
+    }
+
+    pub fn append_comments_from(&mut self, token: &Token) {
+        for comment in token.comments() {
+            self.comments.push(comment.to_string());
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Pattern {
+    kind: PatternKind,
+    comments: Vec<String>,
+    trailing_comment: Option<String>,
+}
+
+impl Pattern {
+    pub fn new(kind: PatternKind) -> Self {
+        Self {
+            kind,
+            comments: vec![],
+            trailing_comment: None,
+        }
+    }
+
+    pub fn kind(&self) -> &PatternKind {
+        &self.kind
+    }
+
+    pub fn comments(&self) -> impl Iterator<Item = &str> {
+        self.comments.iter().map(AsRef::as_ref)
+    }
+
+    pub fn trailing_comment(&self) -> Option<&str> {
+        self.trailing_comment.as_ref().map(AsRef::as_ref)
+    }
+
+    pub fn append_comments_from(&mut self, token: &Token) {
+        for comment in token.comments() {
+            self.comments.push(comment.to_string());
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum PatternKind {
+    Integer(i64),
 }
 
 fn token(kind: TokenKind) -> Token {

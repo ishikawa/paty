@@ -53,7 +53,7 @@ fn analyze_loop<'a>(
             output
         }
         syntax::ExprKind::Call(name, args) => {
-            if let Some((_, arg_names, body)) = functions
+            if let Some((_, arg_names, _)) = functions
                 .iter()
                 .rev()
                 .find(|(var, _, _)| *var == name)
@@ -72,13 +72,7 @@ fn analyze_loop<'a>(
                     analyze_loop(arg, vars, functions)?;
                 }
 
-                for arg in arg_names {
-                    vars.push(arg);
-                }
-
-                let output = analyze_loop(body, vars, functions);
-                vars.truncate(vars.len() - arg_names.len());
-                output
+                Ok(())
             } else {
                 Err(format!("Cannot find function `{}` in scope", name))
             }
@@ -95,10 +89,36 @@ fn analyze_loop<'a>(
             body,
             then,
         } => {
+            // arguments
+            for arg in args {
+                vars.push(arg);
+            }
+
+            let output = analyze_loop(body, vars, functions);
+            vars.truncate(vars.len() - args.len());
+            output?;
+
             functions.push((name, args, body));
             let output = analyze_loop(then, vars, functions);
             functions.pop();
             output
+        }
+        syntax::ExprKind::Case {
+            head,
+            arms,
+            else_body,
+        } => {
+            analyze_loop(head, vars, functions)?;
+
+            for arm in arms {
+                analyze_loop(arm.body(), vars, functions)?;
+            }
+
+            if let Some(else_body) = else_body {
+                analyze_loop(else_body, vars, functions)?;
+            }
+
+            todo!()
         }
     }
 }

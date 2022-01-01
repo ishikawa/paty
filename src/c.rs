@@ -168,6 +168,9 @@ impl Emitter {
                 self.in_top_level = t;
                 self.build(then);
             }
+            syntax::ExprKind::Case { .. } => {
+                todo!()
+            }
         }
     }
 }
