@@ -89,19 +89,17 @@ fn analyze_loop<'a>(
             body,
             then,
         } => {
-            // arguments
-            for arg in args {
-                vars.push(arg);
-            }
-
-            let output = analyze_loop(body, vars, functions);
-            vars.truncate(vars.len() - args.len());
-            output?;
-
             functions.push((name, args, body));
-            let output = analyze_loop(then, vars, functions);
+            {
+                vars.extend(args);
+                {
+                    analyze_loop(body, vars, functions)?;
+                }
+                vars.truncate(vars.len() - args.len());
+                analyze_loop(then, vars, functions)?;
+            }
             functions.pop();
-            output
+            Ok(())
         }
         syntax::ExprKind::Case {
             head,
@@ -118,7 +116,7 @@ fn analyze_loop<'a>(
                 analyze_loop(else_body, vars, functions)?;
             }
 
-            todo!()
+            Ok(())
         }
     }
 }
