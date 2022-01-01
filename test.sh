@@ -22,14 +22,27 @@ assert() {
   fi
 }
 
+# number
 assert 20211231 "puts(20211231)"
+# variable
 assert 5 "
   five = 5
   puts(five)"
+# function
 assert 30 "
   def foo(x, y)
     x + y
   end
+  puts(foo(10, 20))"
+# comments
+assert 30 "
+  # comment 1
+  def foo(x, y)
+    # comment 2
+    # comment 3
+    x + y
+  end
+  # comment 4
   puts(foo(10, 20))"
 
 echo OK

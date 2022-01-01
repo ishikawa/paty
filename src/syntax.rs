@@ -111,6 +111,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
 
     // line comments and token
     let token_with_comments = comment
+        .padded()
         .repeated()
         .then(token)
         .map(|(comments, kind): (Vec<Option<String>>, TokenKind)| {
