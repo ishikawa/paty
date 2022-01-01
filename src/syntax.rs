@@ -6,14 +6,15 @@ use std::hash::{Hash, Hasher};
 pub struct Token {
     kind: TokenKind,
     // Leading comments followed by this token.
-    // Limitation: we can't handle trailing comments. For example, if we have a code like below:
+    // For simplicity, we don't handle trailing comments. For example,
+    // if we have a code like below:
     //
     //     # comment 1
     //     x = 1 # comment 2
     //     y = 2
     //
-    // The "comment 1" will be the leading comment of "x" token, and the "comment 2" will be
-    // "y" token's.
+    // The "comment 1" will be the leading comment of "x" token, and
+    // the "comment 2" will be "y" token's.
     comments: Vec<String>,
 }
 
