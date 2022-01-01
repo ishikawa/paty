@@ -41,9 +41,36 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .or(identifier)
         .recover_with(skip_then_retry_until([]));
 
-    let comment = just("#").then(take_until(text::newline())).padded();
+    // whitespace except for newlines
+    let whitespace = one_of(" \t").repeated();
+    let comment = just("#")
+        .ignore_then(take_until(text::newline()))
+        .map(|(chars, _)| Some(chars.iter().collect::<String>()));
 
-    token.padded_by(comment.repeated()).padded().repeated()
+    // line comments followed by token
+    let token_with_comments = comment
+        .padded()
+        .repeated()
+        // token
+        .then(token)
+        // a trailing comment. It must exist one or not.
+        .then_ignore(whitespace)
+        .then(comment.or(empty().to(None)))
+        .map(
+            |((_comments, token), _trailing_comment): (
+                (Vec<Option<String>>, Token),
+                Option<String>,
+            )| { token },
+        )
+        .padded();
+
+    token_with_comments
+        .repeated()
+        // Ignore trailing comments of the file.
+        .then_ignore(comment.padded().repeated())
+        .then_ignore(end())
+
+    //token.padded_by(comment.repeated()).padded().repeated()
 }
 
 #[derive(Debug)]

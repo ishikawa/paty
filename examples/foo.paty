@@ -1,7 +1,8 @@
 five = 5
 
+# add 2 integers
 def add (x, y)
-  x + y
+  x + y # return addition
 end
 
 eight = 3 + five
