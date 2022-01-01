@@ -132,6 +132,14 @@ impl Emitter {
                 let t = self.in_top_level;
                 self.in_top_level = false;
 
+                // comments
+                // TODO: Currently, only leading comments of "def" supported.
+                for c in expr.comments() {
+                    self.push_str("//");
+                    self.push_str(c);
+                    self.push_str("\n");
+                }
+
                 self.push_str("int64_t ");
                 self.push_str(name);
                 self.push_str("(");

@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 #[derive(Debug, Clone, Eq)]
 pub struct Token {
     kind: TokenKind,
-    // comments followed by this token.
+    // leading comments followed by this token.
     comments: Vec<String>,
     // a trailing comment which follows this token.
     trailing_comment: Option<String>,
@@ -167,6 +167,12 @@ impl Expr {
     pub fn trailing_comment(&self) -> Option<&str> {
         self.trailing_comment.as_ref().map(AsRef::as_ref)
     }
+
+    pub fn append_comments_from(&mut self, token: &Token) {
+        for comment in token.comments() {
+            self.comments.push(comment.to_string());
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -298,8 +304,10 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             });
 
         // Function declaration
-        let r#fn = just(token(TokenKind::Def))
-            .ignore_then(ident)
+        let r#fn = 
+            // can not use "just" which outputs an argument instead of a token from the input.
+            filter(|t: &Token| t.kind == TokenKind::Def)
+            .then(ident)
             .then(ident.separated_by(op(',')).allow_trailing().delimited_by(
                 token(TokenKind::Operator('(')),
                 token(TokenKind::Operator(')')),
@@ -307,13 +315,16 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .then(expr.clone())
             .then_ignore(just(token(TokenKind::End)))
             .then(decl)
-            .map(|(((name, args), body), then)| {
-                Expr::new(ExprKind::Fn {
+            .map(|((((def_tok, name), args), body), then)| {
+                let mut expr = Expr::new(ExprKind::Fn {
                     name,
                     args,
                     body: Box::new(body),
                     then: Box::new(then),
-                })
+                });
+                // Copy leading comments from "def" token
+                expr.append_comments_from(&def_tok);
+                expr
             });
 
         r#let.or(r#fn).or(expr)
