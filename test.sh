@@ -5,25 +5,31 @@ set -e
 CCFLAGS="-std=c11 -Wall -Wpedantic -Wextra"
 CCTESTFLAGS="-Werror -Wshadow"
 
+i=0
 assert() {
   expected="$1"
   input="$2"
 
-  echo -n "$input" > tmp.paty
-  ./target/debug/paty tmp.paty > tmp.c
-  cc ${CCFLAGS} ${CCTESTFLAGS} -o tmp tmp.c
-  actual=$(./tmp)
+  echo -n "$input" > tmp${i}.paty
+  ./target/debug/paty tmp${i}.paty > tmp${i}.c
+  cc ${CCFLAGS} ${CCTESTFLAGS} -o tmp${i} tmp${i}.c
+  actual=$(./tmp${i})
 
   if [ "$actual" = "$expected" ]; then
-    echo "$input => $actual"
+    echo "$i: $input => $actual"
   else
-    echo "$input => $expected expected, but got $actual"
+    echo "$i: $input => $expected expected, but got $actual"
     exit 1
   fi
+
+  i=$((i+1))
 }
 
 # number
 assert 20211231 "puts(20211231)"
+# basic arithmetic operations
+assert 40 "puts(10 + 20 * 3 / 2)"
+assert 45 "puts((10 + 20) * 3 / 2)"
 # variable
 assert 5 "
   five = 5

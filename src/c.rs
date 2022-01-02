@@ -56,24 +56,32 @@ impl Emitter {
                 self.build(a);
             }
             syntax::ExprKind::Add(a, b) => {
+                self.push_str("(");
                 self.build(a);
                 self.push_str(" + ");
                 self.build(b);
+                self.push_str(")");
             }
             syntax::ExprKind::Sub(a, b) => {
+                self.push_str("(");
                 self.build(a);
                 self.push_str(" - ");
                 self.build(b);
+                self.push_str(")");
             }
             syntax::ExprKind::Mul(a, b) => {
+                self.push_str("(");
                 self.build(a);
                 self.push_str(" * ");
                 self.build(b);
+                self.push_str(")");
             }
             syntax::ExprKind::Div(a, b) => {
+                self.push_str("(");
                 self.build(a);
                 self.push_str(" / ");
                 self.build(b);
+                self.push_str(")");
             }
             syntax::ExprKind::Var(name) => {
                 self.push_str(name);
