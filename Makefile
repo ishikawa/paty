@@ -1,9 +1,9 @@
-.PHONY = test lint check
+.PHONY: test lint check
 
 test:
 	cargo test
 	cargo build
-	./test.sh
+	./test/test.sh
 	rm -rf ./_tmp
 
 lint:

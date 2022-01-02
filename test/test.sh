@@ -1,8 +1,10 @@
 #!/bin/bash
+# The shell script to test the output of some example programs.
 # Borrowed from https://www.sigbus.info/compilerbook
 set -e
 
 WORKDIR="./_tmp"
+FILENAME="test"
 CCFLAGS="-std=c11 -Wall -Wpedantic -Wextra"
 CCTESTFLAGS="-Werror -Wshadow"
 
@@ -12,10 +14,10 @@ assert() {
   expected="$1"
   input="$2"
 
-  echo -n "$input" > "${WORKDIR}/tmp${i}.paty"
-  ./target/debug/paty "${WORKDIR}/tmp${i}.paty" > "${WORKDIR}/tmp${i}.c"
-  cc ${CCFLAGS} ${CCTESTFLAGS} -o "${WORKDIR}/tmp${i}" "${WORKDIR}/tmp${i}.c"
-  actual=$("${WORKDIR}/tmp${i}")
+  echo -n "$input" > "${WORKDIR}/${FILENAME}${i}.paty"
+  ./target/debug/paty "${WORKDIR}/${FILENAME}${i}.paty" > "${WORKDIR}/${FILENAME}${i}.c"
+  cc ${CCFLAGS} ${CCTESTFLAGS} -o "${WORKDIR}/${FILENAME}${i}" "${WORKDIR}/${FILENAME}${i}.c"
+  actual=$("${WORKDIR}/${FILENAME}${i}")
 
   if [ "$actual" = "$expected" ]; then
     echo "$i: $input => $actual"
