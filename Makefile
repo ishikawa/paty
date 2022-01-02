@@ -4,6 +4,7 @@ test:
 	cargo test
 	cargo build
 	./test/test.sh
+	./test/error.sh
 	rm -rf ./_tmp
 
 lint:

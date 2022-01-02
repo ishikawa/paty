@@ -3,6 +3,11 @@
 # Borrowed from https://www.sigbus.info/compilerbook
 set -e
 
+# color codes
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+RESET='\033[0m' # No Color
+
 WORKDIR="./_tmp"
 FILENAME="test"
 CCFLAGS="-std=c11 -Wall -Wpedantic -Wextra"
@@ -20,9 +25,9 @@ assert() {
   actual=$("${WORKDIR}/${FILENAME}${i}")
 
   if [ "$actual" = "$expected" ]; then
-    echo "$i: $input => $actual"
+    echo -e "${GREEN}OK${RESET}   $i: $input => $actual"
   else
-    echo "$i: $input => $expected expected, but got $actual"
+    echo -e "${RED}FAIL${RESET} $i: $input => $expected expected, but got $actual"
     exit 1
   fi
 
