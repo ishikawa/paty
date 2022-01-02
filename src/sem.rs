@@ -1,5 +1,6 @@
 //! Semantic analysis
 use crate::syntax;
+mod usefulness;
 
 #[derive(Debug)]
 pub struct SemAST<'a> {
