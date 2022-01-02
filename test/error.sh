@@ -34,4 +34,4 @@ assert() {
 
 # undefined variable
 assert 'Cannot find variable `x` in scope' "x"
-assert 'Cannot find variable `x` in scope' "foo()"
+assert 'Cannot find function `foo` in scope' "foo()"
