@@ -53,4 +53,8 @@ assert 30 "
   # comment 4
   puts(foo(10, 20))"
 
+# examples
+assert 13 "$(cat examples/foo.paty)"
+assert 55 "$(cat examples/fib.paty)"
+
 echo OK

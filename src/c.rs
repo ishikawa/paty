@@ -174,8 +174,7 @@ impl Emitter {
                 self.push_str("int64_t ");
                 self.push_str(name);
                 self.push_str(format!(" = t{}", tr));
-                self.push_str(";");
-                self.push_str("\n");
+                self.push_str(";\n");
                 self.build(then)
             }
             syntax::ExprKind::Fn {
@@ -227,20 +226,40 @@ impl Emitter {
                 self.tmp_var_index = saved_tmp_var_index;
                 self.build(then)
             }
-            syntax::ExprKind::Case { .. } => {
-                // Allocate a new temporary variable to hold the result of
-                // this "case" expression.
-
-                // Allocate a new temporary variable to hold the result of
-                // the head expression.
-
-                // Evaluate the head expression and assign its result value to
-                // the pre-allocated temporary value.
+            syntax::ExprKind::Case {
+                head,
+                arms,
+                else_body,
+            } => {
+                let t = self.new_tmp_var();
+                let t_head = self.build(head);
 
                 // Construct "if-else" statement from each branches.
+                for (i, arm) in arms.iter().enumerate() {
+                    // Build an immediate value from the pattern
+                    let rhs = match arm.pattern().kind() {
+                        syntax::PatternKind::Integer(n) => format!("INT64_C({})", n),
+                    };
 
-                // Assign the result value to the pre-allocated temporary value
-                todo!();
+                    // Build "if" statement
+                    if i > 0 {
+                        self.push_str("else ");
+                    }
+                    self.push_str(format!("if (t{} == {}) {{\n", t_head, rhs));
+                    let t_body = self.build(arm.body());
+                    self.push_str(format!("t{} = t{}", t, t_body));
+                    self.push_str(";\n");
+                    self.push_str("}\n");
+                }
+                if let Some(else_body) = else_body {
+                    self.push_str("else {");
+                    let t_body = self.build(else_body);
+                    self.push_str(format!("t{} = t{}", t, t_body));
+                    self.push_str(";\n");
+                    self.push_str("}\n");
+                }
+
+                t
             }
         }
     }
