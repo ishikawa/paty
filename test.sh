@@ -2,34 +2,59 @@
 # Borrowed from https://www.sigbus.info/compilerbook
 set -e
 
+WORKDIR="./_tmp"
 CCFLAGS="-std=c11 -Wall -Wpedantic -Wextra"
 CCTESTFLAGS="-Werror -Wshadow"
 
+mkdir -p "${WORKDIR}"
+i=0
 assert() {
   expected="$1"
   input="$2"
 
-  echo -n "$input" > tmp.paty
-  ./target/debug/paty tmp.paty > tmp.c
-  cc ${CCFLAGS} ${CCTESTFLAGS} -o tmp tmp.c
-  actual=$(./tmp)
+  echo -n "$input" > "${WORKDIR}/tmp${i}.paty"
+  ./target/debug/paty "${WORKDIR}/tmp${i}.paty" > "${WORKDIR}/tmp${i}.c"
+  cc ${CCFLAGS} ${CCTESTFLAGS} -o "${WORKDIR}/tmp${i}" "${WORKDIR}/tmp${i}.c"
+  actual=$("${WORKDIR}/tmp${i}")
 
   if [ "$actual" = "$expected" ]; then
-    echo "$input => $actual"
+    echo "$i: $input => $actual"
   else
-    echo "$input => $expected expected, but got $actual"
+    echo "$i: $input => $expected expected, but got $actual"
     exit 1
   fi
+
+  i=$((i+1))
 }
 
+# number
 assert 20211231 "puts(20211231)"
+# basic arithmetic operations
+assert 40 "puts(10 + 20 * 3 / 2)"
+assert 45 "puts((10 + 20) * 3 / 2)"
+# variable
 assert 5 "
   five = 5
   puts(five)"
+# function
 assert 30 "
   def foo(x, y)
     x + y
   end
   puts(foo(10, 20))"
+# comments
+assert 30 "
+  # comment 1
+  def foo(x, y)
+    # comment 2
+    # comment 3
+    x + y
+  end
+  # comment 4
+  puts(foo(10, 20))"
+
+# examples
+assert 13 "$(cat examples/foo.paty)"
+assert 55 "$(cat examples/fib.paty)"
 
 echo OK

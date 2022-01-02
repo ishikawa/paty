@@ -4,7 +4,7 @@ test:
 	cargo test
 	cargo build
 	./test.sh
-	rm -f ./tmp*
+	rm -rf ./_tmp
 
 lint:
 	cargo clippy -- -D warnings

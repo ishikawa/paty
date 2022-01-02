@@ -5,18 +5,24 @@ use std::hash::{Hash, Hasher};
 #[derive(Debug, Clone, Eq)]
 pub struct Token {
     kind: TokenKind,
-    // leading comments followed by this token.
+    // Leading comments followed by this token.
+    // For simplicity, we don't handle trailing comments. For example,
+    // if we have a code like below:
+    //
+    //     # comment 1
+    //     x = 1 # comment 2
+    //     y = 2
+    //
+    // The "comment 1" will be the leading comment of "x" token, and
+    // the "comment 2" will be "y" token's.
     comments: Vec<String>,
-    // a trailing comment which follows this token.
-    trailing_comment: Option<String>,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, comments: &[&str], trailing_comment: Option<&str>) -> Self {
+    pub fn new(kind: TokenKind, comments: &[&str]) -> Self {
         Self {
             kind,
             comments: comments.iter().map(ToString::to_string).collect(),
-            trailing_comment: trailing_comment.map(ToString::to_string),
         }
     }
 
@@ -26,10 +32,6 @@ impl Token {
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
         self.comments.iter().map(AsRef::as_ref)
-    }
-
-    pub fn trailing_comment(&self) -> Option<&str> {
-        self.trailing_comment.as_ref().map(AsRef::as_ref)
     }
 }
 
@@ -51,12 +53,7 @@ impl fmt::Display for Token {
         for comment in self.comments() {
             writeln!(f, "#{}", comment)?;
         }
-        write!(f, "{}", self.kind)?;
-        if let Some(comment) = self.trailing_comment() {
-            write!(f, "  #{}", comment)?;
-        }
-
-        Ok(())
+        write!(f, "{}", self.kind)
     }
 }
 
@@ -68,6 +65,9 @@ pub enum TokenKind {
     Operator(char), // 1 char
     // Keywords
     Def,
+    Case,
+    When,
+    Else,
     End,
     Puts,
 }
@@ -79,6 +79,9 @@ impl fmt::Display for TokenKind {
             TokenKind::Operator(c) => write!(f, "{}", c),
             TokenKind::Identifier(s) => write!(f, "{}", s),
             TokenKind::Def => write!(f, "def"),
+            TokenKind::Case => write!(f, "case"),
+            TokenKind::When => write!(f, "when"),
+            TokenKind::Else => write!(f, "else"),
             TokenKind::End => write!(f, "end"),
             TokenKind::Puts => write!(f, "puts"),
         }
@@ -90,6 +93,9 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let operator = one_of("+-*/=(),").map(TokenKind::Operator);
     let identifier = choice((
         text::keyword("def").to(TokenKind::Def),
+        text::keyword("case").to(TokenKind::Case),
+        text::keyword("when").to(TokenKind::When),
+        text::keyword("else").to(TokenKind::Else),
         text::keyword("end").to(TokenKind::End),
         text::keyword("puts").to(TokenKind::Puts),
         text::ident().map(TokenKind::Identifier),
@@ -100,35 +106,23 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .or(identifier)
         .recover_with(skip_then_retry_until([]));
 
-    // whitespace except for newlines
-    let whitespace = one_of(" \t").repeated();
     let comment = just("#")
         .ignore_then(take_until(text::newline()))
         .map(|(chars, _)| Some(chars.iter().collect::<String>()));
 
-    // line comments followed by token
+    // line comments and token
     let token_with_comments = comment
         .padded()
         .repeated()
-        // token
         .then(token)
-        // a trailing comment. It must exist one or not.
-        .then_ignore(whitespace)
-        .then(comment.or(empty().to(None)))
-        .map(
-            |((comments, kind), trailing_comment): (
-                (Vec<Option<String>>, TokenKind),
-                Option<String>,
-            )| {
-                let comments = comments
-                    .iter()
-                    .filter_map(|v| v.as_ref().map(AsRef::as_ref))
-                    .collect::<Vec<&str>>();
-                let trailing_comment = trailing_comment.as_ref().map(AsRef::as_ref);
+        .map(|(comments, kind): (Vec<Option<String>>, TokenKind)| {
+            let comments = comments
+                .iter()
+                .filter_map(|v| v.as_ref().map(AsRef::as_ref))
+                .collect::<Vec<&str>>();
 
-                Token::new(kind, &comments, trailing_comment)
-            },
-        )
+            Token::new(kind, &comments)
+        })
         .padded();
 
     token_with_comments
@@ -143,8 +137,6 @@ pub struct Expr {
     kind: ExprKind,
     // comments followed by this token.
     comments: Vec<String>,
-    // a trailing comment which follows this token.
-    trailing_comment: Option<String>,
 }
 
 impl Expr {
@@ -152,7 +144,6 @@ impl Expr {
         Self {
             kind,
             comments: vec![],
-            trailing_comment: None,
         }
     }
 
@@ -162,10 +153,6 @@ impl Expr {
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
         self.comments.iter().map(AsRef::as_ref)
-    }
-
-    pub fn trailing_comment(&self) -> Option<&str> {
-        self.trailing_comment.as_ref().map(AsRef::as_ref)
     }
 
     pub fn append_comments_from(&mut self, token: &Token) {
@@ -198,17 +185,96 @@ pub enum ExprKind {
         body: Box<Expr>,
         then: Box<Expr>,
     },
+    Case {
+        head: Box<Expr>,
+        arms: Vec<CaseArm>,
+        else_body: Option<Box<Expr>>,
+    },
 
     // Built-in functions
     Puts(Vec<Expr>),
 }
 
+#[derive(Debug)]
+pub struct CaseArm {
+    pattern: Pattern,
+    body: Box<Expr>,
+    comments: Vec<String>,
+}
+
+impl CaseArm {
+    pub fn new(pattern: Pattern, body: Box<Expr>) -> Self {
+        Self {
+            pattern,
+            body,
+            comments: vec![],
+        }
+    }
+
+    pub fn pattern(&self) -> &Pattern {
+        &self.pattern
+    }
+
+    pub fn body(&self) -> &Expr {
+        &self.body
+    }
+
+    pub fn comments(&self) -> impl Iterator<Item = &str> {
+        self.comments.iter().map(AsRef::as_ref)
+    }
+
+    pub fn append_comments_from(&mut self, token: &Token) {
+        for comment in token.comments() {
+            self.comments.push(comment.to_string());
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Pattern {
+    kind: PatternKind,
+    comments: Vec<String>,
+}
+
+impl Pattern {
+    pub fn new(kind: PatternKind) -> Self {
+        Self {
+            kind,
+            comments: vec![],
+        }
+    }
+
+    pub fn kind(&self) -> &PatternKind {
+        &self.kind
+    }
+
+    pub fn comments(&self) -> impl Iterator<Item = &str> {
+        self.comments.iter().map(AsRef::as_ref)
+    }
+
+    pub fn append_comments_from(&mut self, token: &Token) {
+        for comment in token.comments() {
+            self.comments.push(comment.to_string());
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum PatternKind {
+    Integer(i64),
+}
+
 fn token(kind: TokenKind) -> Token {
-    Token::new(kind, &[], None)
+    Token::new(kind, &[])
 }
 
 pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
-    let op = |c| just(token(TokenKind::Operator(c)));
+    // can not use "just" which outputs an argument instead of a token from the input.
+    let just_token =
+        |kind: TokenKind| filter::<Token, _, Simple<Token>>(move |t: &Token| t.kind == kind);
+
+    let op = |c| just_token(TokenKind::Operator(c));
+
     let ident = select! {
         Token{ kind: TokenKind::Identifier(ident), ..} => ident,
     }
@@ -223,7 +289,15 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         }
         .labelled("value");
 
-        let puts = just(token(TokenKind::Puts))
+        let pattern = select! {
+            Token{ kind: TokenKind::Integer(n), ..} => {
+                let kind = PatternKind::Integer(n.parse().unwrap());
+                Pattern::new(kind)
+            },
+        }
+        .labelled("pattern");
+
+        let puts = just_token(TokenKind::Puts)
             .ignore_then(
                 expr.clone()
                     .separated_by(op(','))
@@ -250,7 +324,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .labelled("call");
 
         let atom = value
-            .or(expr.delimited_by(
+            .or(expr.clone().delimited_by(
                 token(TokenKind::Operator('(')),
                 token(TokenKind::Operator(')')),
             ))
@@ -265,7 +339,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .foldr(|_op, rhs| Expr::new(ExprKind::Neg(Box::new(rhs))));
 
         // binary: "*", "/"
-        let product = unary
+        let bin_op1 = unary
             .clone()
             .then(
                 op('*')
@@ -277,16 +351,44 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
 
         // binary: "+", "-"
-        product
+        let bin_op2 = bin_op1
             .clone()
             .then(
                 op('+')
                     .to(ExprKind::Add as fn(_, _) -> _)
                     .or(op('-').to(ExprKind::Sub as fn(_, _) -> _))
-                    .then(product)
+                    .then(bin_op1)
                     .repeated(),
             )
-            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))))
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
+        // case
+        let case_arm = just_token(TokenKind::When)
+            .then(pattern)
+            .then(expr.clone())
+            .map(|((when, pattern), body)| {
+                let mut expr = CaseArm::new(pattern, Box::new(body));
+                expr.append_comments_from(&when);
+                expr
+            });
+        let case = just_token(TokenKind::Case)
+            .then(expr.clone())
+            .then(case_arm.repeated().at_least(1))
+            .then(just_token(TokenKind::Else).then(expr.clone()).or_not())
+            .then_ignore(just_token(TokenKind::End))
+            .map(|(((case, head), arms), else_body)| {
+                let else_body = else_body.map(|(_else_tok, expr)| Box::new(expr));
+
+                let mut expr = Expr::new(ExprKind::Case {
+                    head: Box::new(head),
+                    arms,
+                    else_body,
+                });
+                expr.append_comments_from(&case);
+                expr
+            });
+
+        case.or(bin_op2)
     });
 
     let decl = recursive(|decl| {
@@ -304,16 +406,14 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             });
 
         // Function declaration
-        let r#fn = 
-            // can not use "just" which outputs an argument instead of a token from the input.
-            filter(|t: &Token| t.kind == TokenKind::Def)
+        let r#fn = just_token(TokenKind::Def)
             .then(ident)
             .then(ident.separated_by(op(',')).allow_trailing().delimited_by(
                 token(TokenKind::Operator('(')),
                 token(TokenKind::Operator(')')),
             ))
             .then(expr.clone())
-            .then_ignore(just(token(TokenKind::End)))
+            .then_ignore(just_token(TokenKind::End))
             .then(decl)
             .map(|((((def_tok, name), args), body), then)| {
                 let mut expr = Expr::new(ExprKind::Fn {
