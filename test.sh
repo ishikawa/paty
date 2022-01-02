@@ -2,18 +2,20 @@
 # Borrowed from https://www.sigbus.info/compilerbook
 set -e
 
+WORKDIR="./_tmp"
 CCFLAGS="-std=c11 -Wall -Wpedantic -Wextra"
 CCTESTFLAGS="-Werror -Wshadow"
 
+mkdir "${WORKDIR}"
 i=0
 assert() {
   expected="$1"
   input="$2"
 
-  echo -n "$input" > tmp${i}.paty
-  ./target/debug/paty tmp${i}.paty > tmp${i}.c
-  cc ${CCFLAGS} ${CCTESTFLAGS} -o tmp${i} tmp${i}.c
-  actual=$(./tmp${i})
+  echo -n "$input" > "${WORKDIR}/tmp${i}.paty"
+  ./target/debug/paty "${WORKDIR}/tmp${i}.paty" > "${WORKDIR}/tmp${i}.c"
+  cc ${CCFLAGS} ${CCTESTFLAGS} -o "${WORKDIR}/tmp${i}" "${WORKDIR}/tmp${i}.c"
+  actual=$("${WORKDIR}/tmp${i}")
 
   if [ "$actual" = "$expected" ]; then
     echo "$i: $input => $actual"
