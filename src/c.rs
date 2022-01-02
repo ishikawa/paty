@@ -7,6 +7,10 @@ struct Emitter {
     main: String,
     functions: String,
     in_top_level: bool,
+    // The current index of temporary variables. It starts from 0 and
+    // incremented by creating a new temporary variable. This index will
+    // be saved and reset to 0 when function enter, and restored when function exit.
+    tmp_var_index: i32,
 }
 
 impl Emitter {
@@ -15,6 +19,7 @@ impl Emitter {
             main: String::default(),
             functions: String::default(),
             in_top_level: true,
+            tmp_var_index: 0,
         }
     }
 
@@ -28,9 +33,8 @@ impl Emitter {
             "\n",
             "int main(void)\n",
             "{\n",
-            "  ",
             &self.main,
-            "  return 0;\n",
+            "return 0;\n",
             "}",
         ]
         .join("")
@@ -44,62 +48,102 @@ impl Emitter {
         }
     }
 
-    pub fn build(&mut self, expr: &syntax::Expr) {
+    fn new_tmp_var(&mut self) -> i32 {
+        let t = self.tmp_var_index;
+        self.tmp_var_index += 1;
+
+        self.push_str("int64_t ");
+        self.push_str(format!("t{}", t));
+        self.push_str(";\n");
+
+        t
+    }
+
+    pub fn build(&mut self, expr: &syntax::Expr) -> i32 {
         match expr.kind() {
             syntax::ExprKind::Integer(n) => {
+                let t = self.new_tmp_var();
+
                 // Use standard macros for integer constant expression to expand
                 // a value to the type int_least_N.
-                self.push_str(format!("INT64_C({})", n));
+                self.push_str(format!("t{} = INT64_C({})", t, n));
+                self.push_str(";\n");
+                t
             }
             syntax::ExprKind::Neg(a) => {
-                self.push_str("-");
-                self.build(a);
+                let t = self.new_tmp_var();
+                let ta = self.build(a);
+                self.push_str(format!("t{} = -t{}", t, ta));
+                self.push_str(";\n");
+                t
             }
             syntax::ExprKind::Add(a, b) => {
-                self.push_str("(");
-                self.build(a);
-                self.push_str(" + ");
-                self.build(b);
-                self.push_str(")");
+                let t = self.new_tmp_var();
+                let ta = self.build(a);
+                let tb = self.build(b);
+                self.push_str(format!("t{} = t{} + t{}", t, ta, tb));
+                self.push_str(";\n");
+                t
             }
             syntax::ExprKind::Sub(a, b) => {
-                self.push_str("(");
-                self.build(a);
-                self.push_str(" - ");
-                self.build(b);
-                self.push_str(")");
+                let t = self.new_tmp_var();
+                let ta = self.build(a);
+                let tb = self.build(b);
+                self.push_str(format!("t{} = t{} - t{}", t, ta, tb));
+                self.push_str(";\n");
+                t
             }
             syntax::ExprKind::Mul(a, b) => {
-                self.push_str("(");
-                self.build(a);
-                self.push_str(" * ");
-                self.build(b);
-                self.push_str(")");
+                let t = self.new_tmp_var();
+                let ta = self.build(a);
+                let tb = self.build(b);
+                self.push_str(format!("t{} = t{} * t{}", t, ta, tb));
+                self.push_str(";\n");
+                t
             }
             syntax::ExprKind::Div(a, b) => {
-                self.push_str("(");
-                self.build(a);
-                self.push_str(" / ");
-                self.build(b);
-                self.push_str(")");
+                let t = self.new_tmp_var();
+                let ta = self.build(a);
+                let tb = self.build(b);
+                self.push_str(format!("t{} = t{} / t{}", t, ta, tb));
+                self.push_str(";\n");
+                t
             }
             syntax::ExprKind::Var(name) => {
-                self.push_str(name);
+                let t = self.new_tmp_var();
+                self.push_str(format!("t{} = {}", t, name));
+                self.push_str(";\n");
+                t
             }
             syntax::ExprKind::Call(name, args) => {
-                self.push_str(name);
-                self.push_str("(");
-                for (i, arg) in args.iter().enumerate() {
-                    self.build(arg);
+                let mut t_args = vec![];
+                let t = self.new_tmp_var();
+
+                for arg in args.iter() {
+                    t_args.push(self.build(arg));
+                }
+                self.push_str(format!("t{} = {}(", t, name));
+                for (i, ta) in t_args.iter().enumerate() {
+                    // Use standard conversion specifier macros for integer types.
+                    self.push_str(format!("t{}", ta));
 
                     if i != (args.len() - 1) {
                         self.push_str(", ");
                     }
                 }
                 self.push_str(")");
+                self.push_str(";\n");
+
+                t
             }
             syntax::ExprKind::Puts(args) => {
                 // "puts" function prints each arguments and newline character.
+                let mut t_args = vec![];
+
+                for arg in args.iter() {
+                    t_args.push(self.build(arg));
+                }
+
                 self.push_str("printf(\"");
                 for (i, _) in args.iter().enumerate() {
                     // Use standard conversion specifier macros for integer types.
@@ -111,25 +155,28 @@ impl Emitter {
                 }
                 self.push_str("\\n\", ");
 
-                for (i, arg) in args.iter().enumerate() {
-                    self.build(arg);
+                for (i, ta) in t_args.iter().enumerate() {
+                    self.push_str(format!("t{}", ta));
 
                     if i != (args.len() - 1) {
                         self.push_str(", ");
                     }
                 }
-                self.push_str(");");
-                self.push_str("\n");
+                self.push_str(")");
+                self.push_str(";\n");
+
+                // dummy
+                0
             }
             syntax::ExprKind::Let { name, rhs, then } => {
+                let tr = self.build(rhs);
+
                 self.push_str("int64_t ");
                 self.push_str(name);
-                self.push_str(" = ");
-                self.build(rhs);
+                self.push_str(format!(" = t{}", tr));
                 self.push_str(";");
                 self.push_str("\n");
-                self.push_str("  ");
-                self.build(then);
+                self.build(then)
             }
             syntax::ExprKind::Fn {
                 name,
@@ -137,8 +184,13 @@ impl Emitter {
                 body,
                 then,
             } => {
-                let t = self.in_top_level;
+                // save and reset top level flag
+                let saved_in_top_level = self.in_top_level;
                 self.in_top_level = false;
+
+                // save and reset temp var index
+                let saved_tmp_var_index = self.tmp_var_index;
+                self.tmp_var_index = 0;
 
                 // comments
                 // TODO: Currently, only leading comments of "def" supported.
@@ -160,24 +212,35 @@ impl Emitter {
                     }
                 }
                 self.push_str(")\n");
-                self.push_str("{");
-                self.push_str("\n");
-                self.push_str("  ");
+                self.push_str("{\n");
                 {
-                    self.push_str("return ");
-                    self.build(body);
+                    let tb = self.build(body);
+
+                    self.push_str(format!("return t{}", tb));
                     self.push_str(";");
                     self.push_str("\n");
                 }
-                self.push_str("}");
-                self.push_str("\n");
-                self.push_str("  ");
+                self.push_str("}\n");
 
-                self.in_top_level = t;
-                self.build(then);
+                // restore
+                self.in_top_level = saved_in_top_level;
+                self.tmp_var_index = saved_tmp_var_index;
+                self.build(then)
             }
             syntax::ExprKind::Case { .. } => {
-                todo!()
+                // Allocate a new temporary variable to hold the result of
+                // this "case" expression.
+
+                // Allocate a new temporary variable to hold the result of
+                // the head expression.
+
+                // Evaluate the head expression and assign its result value to
+                // the pre-allocated temporary value.
+
+                // Construct "if-else" statement from each branches.
+
+                // Assign the result value to the pre-allocated temporary value
+                todo!();
             }
         }
     }

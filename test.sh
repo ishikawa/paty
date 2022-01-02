@@ -6,7 +6,7 @@ WORKDIR="./_tmp"
 CCFLAGS="-std=c11 -Wall -Wpedantic -Wextra"
 CCTESTFLAGS="-Werror -Wshadow"
 
-mkdir "${WORKDIR}"
+mkdir -p "${WORKDIR}"
 i=0
 assert() {
   expected="$1"
