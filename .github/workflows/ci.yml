@@ -26,4 +26,5 @@ jobs:
       - name: Run integration tests
         run: |
           cargo build
-          ./test.sh
+          ./test/test.sh
+          ./test/error.sh
