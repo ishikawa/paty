@@ -1,28 +1,16 @@
 //! Based on usefulness algorithm in Rust:
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/usefulness.rs
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/deconstruct_pat.rs
-use crate::typing::Type;
+use crate::{
+    syntax::{Pattern, PatternKind, RangeEnd},
+    typing::Type,
+};
 use std::{
     cell::Cell,
     cmp::{max, min},
     fmt,
     ops::RangeInclusive,
 };
-
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum RangeEnd {
-    Included,
-    Excluded,
-}
-
-impl fmt::Display for RangeEnd {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            RangeEnd::Included => "..", // Like Ruby
-            RangeEnd::Excluded => "...",
-        })
-    }
-}
 
 /// An inclusive interval, used for precise integer exhaustiveness checking.
 /// `IntRange`s always store a contiguous range. This means that values are
@@ -43,9 +31,10 @@ pub struct IntRange {
     bias: u128,
 }
 
+#[allow(dead_code)]
 impl IntRange {
     #[inline]
-    fn is_integral(ty: Type) -> bool {
+    fn is_integral(ty: &Type) -> bool {
         matches!(ty, Type::Int64)
     }
 
@@ -57,47 +46,34 @@ impl IntRange {
         (*self.range.start(), *self.range.end())
     }
 
-    #[inline]
-    fn integral_size_and_signed_bias(ty: Type) -> Option<u128> {
+    // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
+    fn signed_bias(ty: &Type) -> u128 {
         match ty {
-            Type::Int64 => Some(1u128 << (i64::BITS as u128 - 1)),
-            _ => None,
+            Type::Int64 => 1u128 << (i64::BITS as u128 - 1),
         }
     }
 
     #[inline]
-    fn from_const<'tcx>(
-        tcx: TyCtxt<'tcx>,
-        param_env: ty::ParamEnv<'tcx>,
-        value: &Const<'tcx>,
-    ) -> Option<IntRange> {
-        if let Some(bias) = Self::integral_size_and_signed_bias(value.ty) {
-            let ty = value.ty;
-            let val = (|| {
-                // This is a more general form of the previous case.
-                value.try_eval_bits(tcx, param_env, ty)
-            })()?;
-            let val = val ^ bias;
-            Some(IntRange {
-                range: val..=val,
-                bias,
-            })
-        } else {
-            None
-        }
+    fn from_const(value: i64) -> Option<IntRange> {
+        let bias = Self::signed_bias(&Type::Int64);
+        let val = u128::try_from(value + i64::try_from(bias).unwrap()).unwrap();
+        Some(IntRange {
+            range: val..=val,
+            bias,
+        })
     }
 
     #[inline]
-    fn from_range<'tcx>(lo: u128, hi: u128, ty: Type, end: &RangeEnd) -> Option<IntRange> {
-        if Self::is_integral(ty) {
+    fn from_range(lo: u128, hi: u128, ty: Type, end: &RangeEnd) -> Option<IntRange> {
+        if Self::is_integral(&ty) {
             // Perform a shift if the underlying types are signed,
             // which makes the interval arithmetic simpler.
-            let bias = IntRange::signed_bias(tcx, ty);
+            let bias = IntRange::signed_bias(&ty);
             let (lo, hi) = (lo ^ bias, hi ^ bias);
             let offset = (*end == RangeEnd::Excluded) as u128;
             if lo > hi || (lo == hi && *end == RangeEnd::Excluded) {
                 // This should have been caught earlier by E0030.
-                bug!("malformed range pattern: {}..={}", lo, (hi - offset));
+                unreachable!("malformed range pattern: {}..={}", lo, (hi - offset));
             }
             Some(IntRange {
                 range: lo..=(hi - offset),
@@ -105,14 +81,6 @@ impl IntRange {
             })
         } else {
             None
-        }
-    }
-
-    // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
-    fn signed_bias(ty: Type) -> u128 {
-        match ty {
-            Type::Int64 => 1u128 << (i64::BITS - 1),
-            _ => 0,
         }
     }
 
@@ -151,85 +119,24 @@ impl IntRange {
     }
 
     /// Only used for displaying the range properly.
-    fn to_pat<'tcx>(&self, tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Pat<'tcx> {
+    fn to_pat(&self) -> Pattern {
         let (lo, hi) = self.boundaries();
 
-        let bias = self.bias;
-        let (lo, hi) = (lo ^ bias, hi ^ bias);
-
-        let env = ty::ParamEnv::empty().and(ty);
-        let lo_const = ty::Const::from_bits(tcx, lo, env);
-        let hi_const = ty::Const::from_bits(tcx, hi, env);
+        let bias = i64::try_from(self.bias).unwrap();
+        let lo = i64::try_from(lo).unwrap() - bias;
+        let hi = i64::try_from(hi).unwrap() - bias;
 
         let kind = if lo == hi {
-            PatKind::Constant { value: lo_const }
+            PatternKind::Integer(lo)
         } else {
-            PatKind::Range(PatRange {
-                lo: lo_const,
-                hi: hi_const,
+            PatternKind::Range {
+                lo,
+                hi,
                 end: RangeEnd::Included,
-            })
+            }
         };
 
-        Pat {
-            ty,
-            span: DUMMY_SP,
-            kind: Box::new(kind),
-        }
-    }
-
-    /// Lint on likely incorrect range patterns (#63987)
-    pub(super) fn lint_overlapping_range_endpoints<'a, 'p: 'a>(
-        &self,
-        pats: impl Iterator<Item = &'a DeconstructedPat<'p>>,
-        column_count: usize,
-    ) {
-        if self.is_singleton() {
-            return;
-        }
-
-        if column_count != 1 {
-            // FIXME: for now, only check for overlapping ranges on simple range
-            // patterns. Otherwise with the current logic the following is detected
-            // as overlapping:
-            // ```
-            // match (0u8, true) {
-            //   (0 ..= 125, false) => {}
-            //   (125 ..= 255, true) => {}
-            //   _ => {}
-            // }
-            // ```
-            return;
-        }
-
-        let overlaps: Vec<_> = pats
-            .filter_map(|pat| Some((pat.ctor().as_int_range()?, pat.span())))
-            .filter(|(range, _)| self.suspicious_intersection(range))
-            .map(|(range, span)| (self.intersection(&range).unwrap(), span))
-            .collect();
-
-        if !overlaps.is_empty() {
-            pcx.cx.tcx.struct_span_lint_hir(
-                lint::builtin::OVERLAPPING_RANGE_ENDPOINTS,
-                hir_id,
-                pcx.span,
-                |lint| {
-                    let mut err = lint.build("multiple patterns overlap on their endpoints");
-                    for (int_range, span) in overlaps {
-                        err.span_label(
-                            span,
-                            &format!(
-                                "this range overlaps on `{}`...",
-                                int_range.to_pat(pcx.cx.tcx, pcx.ty)
-                            ),
-                        );
-                    }
-                    err.span_label(pcx.span, "... with this range");
-                    err.note("you likely meant to write mutually exclusive ranges");
-                    err.emit();
-                },
-            );
-        }
+        Pattern::new(kind)
     }
 
     /// See `Constructor::is_covered_by`
@@ -265,6 +172,7 @@ struct PatStack<'p> {
     pats: Vec<&'p DeconstructedPat<'p>>,
 }
 
+#[allow(dead_code)]
 impl<'p> PatStack<'p> {
     fn from_pattern(pat: &'p DeconstructedPat<'p>) -> Self {
         Self::from_vec(vec![pat])
@@ -292,19 +200,13 @@ impl<'p> PatStack<'p> {
 
     // Recursively expand the first pattern into its subpatterns. Only useful if the pattern is an
     // or-pattern. Panics if `self` is empty.
-    fn expand_or_pat<'a>(&'a self) -> impl Iterator<Item = PatStack<'p>> {
-        let v = self
-            .head()
-            .iter_fields()
-            .map(move |pat| {
-                let mut new_patstack = PatStack::from_pattern(pat);
+    fn expand_or_pat<'a>(&'a self) -> impl Iterator<Item = PatStack<'p>> + 'a {
+        self.head().iter_fields().map(move |pat| {
+            let mut new_patstack = PatStack::from_pattern(pat);
 
-                new_patstack.pats.extend_from_slice(&self.pats[1..]);
-                new_patstack
-            })
-            .collect::<Vec<_>>();
-
-        return v.into_iter();
+            new_patstack.pats.extend_from_slice(&self.pats[1..]);
+            new_patstack
+        })
     }
 
     /// This computes `S(self.head().ctor(), self)`. See top of the file for explanations.
@@ -328,6 +230,7 @@ pub(super) struct Matrix<'p> {
     patterns: Vec<PatStack<'p>>,
 }
 
+#[allow(dead_code)]
 impl<'p> Matrix<'p> {
     fn empty() -> Self {
         Matrix { patterns: vec![] }
@@ -377,7 +280,7 @@ impl<'p> Matrix<'p> {
 /// ```
 impl<'p> fmt::Debug for Matrix<'p> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\n")?;
+        writeln!(f)?;
 
         let Matrix { patterns: m, .. } = self;
         let pretty_printed_matrix: Vec<Vec<String>> = m
@@ -404,7 +307,7 @@ impl<'p> fmt::Debug for Matrix<'p> {
                 write!(f, "{:1$}", pat_str, column_widths[column])?;
                 write!(f, " +")?;
             }
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
         Ok(())
     }
@@ -429,6 +332,7 @@ impl<'p> fmt::Debug for PatStack<'p> {
 /// constructor. `Constructor::apply` reconstructs the pattern from a pair of `Constructor` and
 /// `Fields`.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum Constructor {
     /// Wildcard pattern.
     Wildcard,
@@ -441,7 +345,7 @@ impl Constructor {
     /// For the simple cases, this is simply checking for equality. For the "grouped" constructors,
     /// this checks for inclusion.
     // We inline because this has a single call site in `Matrix::specialize_constructor`.
-    pub(super) fn is_covered_by<'p>(&self, other: &Self) -> bool {
+    pub(super) fn is_covered_by(&self, other: &Self) -> bool {
         // This must be kept in sync with `is_covered_by_any`.
         match (self, other) {
             // Wildcards cover anything
@@ -449,6 +353,10 @@ impl Constructor {
             (Constructor::IntRange(self_range), Constructor::IntRange(other_range)) => {
                 self_range.is_covered_by(other_range)
             }
+            _ => unreachable!(
+                "trying to compare incompatible constructors {:?} and {:?}",
+                self, other
+            ),
         }
     }
 }
@@ -462,7 +370,7 @@ impl Constructor {
 /// In the following example `Fields::wildcards` returns `[_, _, _, _]`. Then in
 /// `extract_pattern_arguments` we fill some of the entries, and the result is
 /// `[Some(0), _, _, _]`.
-/// ```rust
+/// ```ignore
 /// let x: [Option<u8>; 4] = foo();
 /// match x {
 ///     [Some(0), ..] => {}
@@ -484,6 +392,14 @@ impl<'p> Fields<'p> {
         Fields { fields: &[] }
     }
 
+    /// Creates a new list of wildcard fields for a given constructor. The result must have a
+    /// length of `constructor.arity()`.
+    pub(super) fn wildcards(_ty: Type, constructor: &Constructor) -> Self {
+        match constructor {
+            Constructor::IntRange(..) | Constructor::Wildcard => Fields::empty(),
+        }
+    }
+
     /// Returns the list of patterns.
     pub fn iter_patterns<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p>> {
         self.fields.iter()
@@ -496,21 +412,25 @@ impl<'p> Fields<'p> {
 /// reason we should be careful not to clone patterns for which we care about that. Use
 /// `clone_and_forget_reachability` if you're sure.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DeconstructedPat<'p> {
     ctor: Constructor,
     fields: Fields<'p>,
+    ty: Type,
     reachable: Cell<bool>,
 }
 
+#[allow(dead_code)]
 impl<'p> DeconstructedPat<'p> {
-    pub(super) fn wildcard() -> Self {
-        Self::new(Constructor::Wildcard, Fields::empty())
+    pub(super) fn wildcard(ty: Type) -> Self {
+        Self::new(Constructor::Wildcard, Fields::empty(), ty)
     }
 
-    pub(super) fn new(ctor: Constructor, fields: Fields<'p>) -> Self {
+    pub(super) fn new(ctor: Constructor, fields: Fields<'p>, ty: Type) -> Self {
         DeconstructedPat {
             ctor,
             fields,
+            ty,
             reachable: Cell::new(false),
         }
     }
@@ -526,6 +446,20 @@ impl<'p> DeconstructedPat<'p> {
     pub(super) fn is_or_pat(&self) -> bool {
         false
     }
+
+    /// Specialize this pattern with a constructor.
+    /// `other_ctor` can be different from `self.ctor`, but must be covered by it.
+    pub fn specialize<'a>(&'a self, other_ctor: &Constructor) -> Vec<&'p DeconstructedPat<'p>> {
+        match (&self.ctor, other_ctor) {
+            (Constructor::Wildcard, _) => {
+                // We return a wildcard for each field of `other_ctor`.
+                Fields::wildcards(self.ty.clone(), other_ctor)
+                    .iter_patterns()
+                    .collect()
+            }
+            _ => self.fields.iter_patterns().collect(),
+        }
+    }
 }
 
 /// The arm of a match expression.
@@ -538,6 +472,7 @@ pub struct MatchArm<'p> {
 
 /// Indicates whether or not a given arm is reachable.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum Reachability {
     /// The arm is reachable.
     Reachable,
@@ -546,6 +481,7 @@ pub enum Reachability {
 }
 
 /// The output of checking a match for exhaustiveness and arm reachability.
+#[allow(dead_code)]
 pub struct UsefulnessReport<'p> {
     /// For each arm of the input, whether that arm is reachable after the arms above it.
     pub arm_usefulness: Vec<(MatchArm<'p>, Reachability)>,
@@ -554,11 +490,12 @@ pub struct UsefulnessReport<'p> {
     pub non_exhaustiveness_witnesses: Vec<DeconstructedPat<'p>>,
 }
 
+#[allow(dead_code)]
 /// The entrypoint for the usefulness algorithm. Computes whether a match is exhaustive and which
 /// of its arms are reachable.
 ///
 /// Note: the input patterns must have been lowered through
 /// `check_match::MatchVisitor::lower_pattern`.
-pub fn compute_match_usefulness<'p>(arms: &[MatchArm<'p>]) -> UsefulnessReport<'p> {
+pub fn compute_match_usefulness<'p>(_arms: &[MatchArm<'p>]) -> UsefulnessReport<'p> {
     todo!();
 }

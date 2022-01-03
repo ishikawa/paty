@@ -230,6 +230,21 @@ impl CaseArm {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum RangeEnd {
+    Included,
+    Excluded,
+}
+
+impl fmt::Display for RangeEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            RangeEnd::Included => "..", // Like Ruby
+            RangeEnd::Excluded => "...",
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct Pattern {
     kind: PatternKind,
@@ -262,6 +277,7 @@ impl Pattern {
 #[derive(Debug)]
 pub enum PatternKind {
     Integer(i64),
+    Range { lo: i64, hi: i64, end: RangeEnd },
 }
 
 fn token(kind: TokenKind) -> Token {
