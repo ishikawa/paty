@@ -1,7 +1,81 @@
 //! Based on usefulness algorithm in Rust:
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/usefulness.rs
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/deconstruct_pat.rs
-use std::cell::Cell;
+use std::{cell::Cell, fmt};
+
+/// A row of a matrix. Rows of len 1 are very common, which is why `SmallVec[_; 2]`
+/// works well.
+#[derive(Clone)]
+struct PatStack<'p> {
+    pats: Vec<&'p DeconstructedPat<'p>>,
+}
+
+impl<'p> PatStack<'p> {
+    fn from_pattern(pat: &'p DeconstructedPat<'p>) -> Self {
+        Self::from_vec(vec![pat])
+    }
+
+    fn from_vec(vec: Vec<&'p DeconstructedPat<'p>>) -> Self {
+        PatStack { pats: vec }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pats.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.pats.len()
+    }
+
+    fn head(&self) -> &'p DeconstructedPat<'p> {
+        self.pats[0]
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &DeconstructedPat<'p>> {
+        self.pats.iter().copied()
+    }
+
+    // Recursively expand the first pattern into its subpatterns. Only useful if the pattern is an
+    // or-pattern. Panics if `self` is empty.
+    fn expand_or_pat<'a>(&'a self) -> impl Iterator<Item = PatStack<'p>> {
+        let v = self
+            .head()
+            .iter_fields()
+            .map(move |pat| {
+                let mut new_patstack = PatStack::from_pattern(pat);
+
+                new_patstack.pats.extend_from_slice(&self.pats[1..]);
+                new_patstack
+            })
+            .collect::<Vec<_>>();
+
+        return v.into_iter();
+    }
+}
+
+/// Pretty-printing for matrix row.
+impl<'p> fmt::Debug for PatStack<'p> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "+")?;
+        for pat in self.iter() {
+            write!(f, " {:?} +", pat)?;
+        }
+        Ok(())
+    }
+}
+
+/// A value can be decomposed into a constructor applied to some fields. This struct represents
+/// the constructor. See also `Fields`.
+///
+/// `pat_constructor` retrieves the constructor corresponding to a pattern.
+/// `specialize_constructor` returns the list of fields corresponding to a pattern, given a
+/// constructor. `Constructor::apply` reconstructs the pattern from a pair of `Constructor` and
+/// `Fields`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Constructor {
+    /// Wildcard pattern.
+    Wildcard,
+}
 
 /// A value can be decomposed into a constructor applied to some fields. This struct represents
 /// those fields, generalized to allow patterns in each field. See also `Constructor`.
@@ -29,17 +103,15 @@ pub struct Fields<'p> {
     fields: &'p [DeconstructedPat<'p>],
 }
 
-/// A value can be decomposed into a constructor applied to some fields. This struct represents
-/// the constructor. See also `Fields`.
-///
-/// `pat_constructor` retrieves the constructor corresponding to a pattern.
-/// `specialize_constructor` returns the list of fields corresponding to a pattern, given a
-/// constructor. `Constructor::apply` reconstructs the pattern from a pair of `Constructor` and
-/// `Fields`.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Constructor {
-    /// Wildcard pattern.
-    Wildcard,
+impl<'p> Fields<'p> {
+    fn empty() -> Self {
+        Fields { fields: &[] }
+    }
+
+    /// Returns the list of patterns.
+    pub fn iter_patterns<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p>> {
+        self.fields.iter()
+    }
 }
 
 /// Values and patterns can be represented as a constructor applied to some fields. This represents
@@ -52,6 +124,24 @@ pub struct DeconstructedPat<'p> {
     ctor: Constructor,
     fields: Fields<'p>,
     reachable: Cell<bool>,
+}
+
+impl<'p, 'tcx> DeconstructedPat<'p> {
+    pub(super) fn wildcard() -> Self {
+        Self::new(Constructor::Wildcard, Fields::empty())
+    }
+
+    pub(super) fn new(ctor: Constructor, fields: Fields<'p>) -> Self {
+        DeconstructedPat {
+            ctor,
+            fields,
+            reachable: Cell::new(false),
+        }
+    }
+
+    pub fn iter_fields<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p>> {
+        self.fields.iter_patterns()
+    }
 }
 
 /// The arm of a match expression.
