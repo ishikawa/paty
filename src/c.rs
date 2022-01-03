@@ -250,6 +250,7 @@ impl Emitter {
                                 t_head, lo, t_head, hi
                             ),
                         },
+                        PatternKind::Wildcard => "1".to_string(),
                     };
 
                     // Build "if" statement

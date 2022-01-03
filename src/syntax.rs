@@ -278,6 +278,7 @@ impl Pattern {
 pub enum PatternKind {
     Integer(i64),
     Range { lo: i64, hi: i64, end: RangeEnd },
+    Wildcard,
 }
 
 fn token(kind: TokenKind) -> Token {

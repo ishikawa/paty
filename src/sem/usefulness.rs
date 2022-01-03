@@ -54,33 +54,30 @@ impl IntRange {
     }
 
     #[inline]
-    fn from_const(value: i64) -> Option<IntRange> {
+    fn from_const(value: i64) -> IntRange {
         let bias = Self::signed_bias(&Type::Int64);
         let val = u128::try_from(value + i64::try_from(bias).unwrap()).unwrap();
-        Some(IntRange {
+
+        IntRange {
             range: val..=val,
             bias,
-        })
+        }
     }
 
     #[inline]
-    fn from_range(lo: u128, hi: u128, ty: Type, end: &RangeEnd) -> Option<IntRange> {
-        if Self::is_integral(&ty) {
-            // Perform a shift if the underlying types are signed,
-            // which makes the interval arithmetic simpler.
-            let bias = IntRange::signed_bias(&ty);
-            let (lo, hi) = (lo ^ bias, hi ^ bias);
-            let offset = (*end == RangeEnd::Excluded) as u128;
-            if lo > hi || (lo == hi && *end == RangeEnd::Excluded) {
-                // This should have been caught earlier by E0030.
-                unreachable!("malformed range pattern: {}..={}", lo, (hi - offset));
-            }
-            Some(IntRange {
-                range: lo..=(hi - offset),
-                bias,
-            })
-        } else {
-            None
+    fn from_range(lo: u128, hi: u128, ty: &Type, end: &RangeEnd) -> IntRange {
+        // Perform a shift if the underlying types are signed,
+        // which makes the interval arithmetic simpler.
+        let bias = IntRange::signed_bias(ty);
+        let (lo, hi) = (lo ^ bias, hi ^ bias);
+        let offset = (*end == RangeEnd::Excluded) as u128;
+        if lo > hi || (lo == hi && *end == RangeEnd::Excluded) {
+            // This should have been caught earlier by E0030.
+            unreachable!("malformed range pattern: {}..={}", lo, (hi - offset));
+        }
+        IntRange {
+            range: lo..=(hi - offset),
+            bias,
         }
     }
 
@@ -435,6 +432,33 @@ impl<'p> DeconstructedPat<'p> {
         }
     }
 
+    pub fn from_pat(pat: &Pattern) -> Self {
+        let ctor;
+        let fields;
+        match pat.kind() {
+            PatternKind::Wildcard => {
+                ctor = Constructor::Wildcard;
+                fields = Fields::empty();
+            }
+            PatternKind::Integer(value) => {
+                let int_range = IntRange::from_const(*value);
+
+                ctor = Constructor::IntRange(int_range);
+                fields = Fields::empty();
+            }
+            &PatternKind::Range { lo, hi, end } => {
+                let bias = i64::MIN.abs() as i128;
+                let lo_biased = u128::try_from((lo as i128) + bias).unwrap();
+                let hi_biased = u128::try_from((hi as i128) + bias).unwrap();
+                let int_range = IntRange::from_range(lo_biased, hi_biased, &Type::Int64, &end);
+
+                ctor = Constructor::IntRange(int_range);
+                fields = Fields::empty();
+            }
+        }
+
+        DeconstructedPat::new(ctor, fields, Type::Int64)
+    }
     pub(super) fn ctor(&self) -> &Constructor {
         &self.ctor
     }
@@ -496,6 +520,6 @@ pub struct UsefulnessReport<'p> {
 ///
 /// Note: the input patterns must have been lowered through
 /// `check_match::MatchVisitor::lower_pattern`.
-pub fn compute_match_usefulness<'p>(_arms: &[MatchArm<'p>]) -> UsefulnessReport<'p> {
-    todo!();
+pub fn compute_match_usefulness<'p>(arms: &[MatchArm<'p>]) -> UsefulnessReport<'p> {
+    todo!()
 }
