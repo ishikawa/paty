@@ -589,6 +589,12 @@ pub enum Constructor {
     Wildcard,
     /// Ranges of integer literal values (`2`, `2..=5` or `2..5`).
     IntRange(IntRange),
+    /// Stands for constructors that are not seen in the matrix, as explained in the documentation
+    /// for [`SplitWildcard`]. The carried `bool` is used for the `non_exhaustive_omitted_patterns`
+    /// lint.
+    Missing {
+        nonexhaustive_enum_missing_real_variants: bool,
+    },
 }
 
 impl Constructor {
@@ -603,16 +609,30 @@ impl Constructor {
         }
     }
 
+    pub fn is_non_exhaustive(&self) -> bool {
+        false
+    }
+
+    /// Checks if the `Constructor` is a variant and `TyCtxt::eval_stability` returns
+    /// `EvalResult::Deny { .. }`.
+    ///
+    /// This means that the variant has a stdlib unstable feature marking it.
+    pub fn is_unstable_variant(&self, _pcx: &PatCtxt) -> bool {
+        false
+    }
+
     /// Returns whether `self` is covered by `other`, i.e. whether `self` is a subset of `other`.
     /// For the simple cases, this is simply checking for equality. For the "grouped" constructors,
     /// this checks for inclusion.
     // We inline because this has a single call site in `Matrix::specialize_constructor`.
-    pub(super) fn is_covered_by(&self, pcx: &PatCtxt, other: &Self) -> bool {
+    pub(super) fn is_covered_by(&self, _pcx: &PatCtxt, other: &Self) -> bool {
         // This must be kept in sync with `is_covered_by_any`.
         match (self, other) {
             // Wildcards cover anything
-            (_, Constructor::Wildcard) => true,
-            (Constructor::IntRange(self_range), Constructor::IntRange(other_range)) => {
+            (_, Self::Wildcard) => true,
+            // The missing ctors are not covered by anything in the matrix except wildcards.
+            (Self::Missing { .. } | Self::Wildcard, _) => false,
+            (Self::IntRange(self_range), Self::IntRange(other_range)) => {
                 self_range.is_covered_by(other_range)
             }
             _ => unreachable!(
@@ -636,7 +656,7 @@ impl Constructor {
                 .iter()
                 .filter_map(|c| c.as_int_range())
                 .any(|other| range.is_covered_by(other)),
-            Self::Wildcard => {
+            Self::Wildcard | Self::Missing { .. } => {
                 unreachable!("found unexpected ctor in all_ctors: {:?}", self)
             }
         }
@@ -726,7 +746,9 @@ impl Fields {
     /// length of `constructor.arity()`.
     pub fn wildcards(_ty: Type, constructor: &Constructor) -> Self {
         match constructor {
-            Constructor::IntRange(..) | Constructor::Wildcard => Fields::empty(),
+            Constructor::IntRange(..) | Constructor::Wildcard | Constructor::Missing { .. } => {
+                Fields::empty()
+            }
         }
     }
 
@@ -792,6 +814,20 @@ impl DeconstructedPat {
 
         DeconstructedPat::new(ctor, fields, Type::Int64)
     }
+
+    pub(crate) fn to_pat(&self) -> Pattern {
+        let pat = match &self.ctor {
+            Constructor::IntRange(range) => return range.to_pat(),
+            Constructor::Wildcard => PatternKind::Wildcard,
+            Constructor::Missing { .. } => unreachable!(
+                "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
+                `Missing` should have been processed in `apply_constructors`"
+            ),
+        };
+
+        Pattern::new(pat)
+    }
+
     pub(super) fn ctor(&self) -> &Constructor {
         &self.ctor
     }
@@ -820,11 +856,14 @@ impl DeconstructedPat {
 
     /// Specialize this pattern with a constructor.
     /// `other_ctor` can be different from `self.ctor`, but must be covered by it.
-    pub fn specialize(&self, other_ctor: &Constructor) -> Vec<&DeconstructedPat> {
+    pub fn specialize<'a: 'c, 'b, 'c>(
+        &'a self,
+        other_ctor: &'b Constructor,
+    ) -> Vec<&'c DeconstructedPat> {
         match (&self.ctor, other_ctor) {
             (Constructor::Wildcard, _) => {
                 // We return a wildcard for each field of `other_ctor`.
-                Fields::wildcards(self.ty.clone(), other_ctor)
+                Fields::wildcards(self.ty, other_ctor)
                     .iter_patterns()
                     .collect()
             }
@@ -920,7 +959,7 @@ impl Usefulness {
     /// with the results of specializing with the other constructors.
     fn apply_constructor<'p>(
         self,
-        matrix: &Matrix<'p>, // used to compute missing ctors
+        _matrix: &Matrix<'p>, // used to compute missing ctors
         ctor: &Constructor,
     ) -> Self {
         match self {
