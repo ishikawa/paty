@@ -57,14 +57,6 @@ impl IntRange {
         matches!(ty, Type::Int64)
     }
 
-    fn is_singleton(&self) -> bool {
-        self.range.start() == self.range.end()
-    }
-
-    fn boundaries(&self) -> (u128, u128) {
-        (*self.range.start(), *self.range.end())
-    }
-
     // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
     fn signed_bias(ty: Type) -> u128 {
         match ty {
@@ -98,6 +90,14 @@ impl IntRange {
             range: lo..=(hi - offset),
             bias,
         }
+    }
+
+    fn is_singleton(&self) -> bool {
+        self.range.start() == self.range.end()
+    }
+
+    fn boundaries(&self) -> (u128, u128) {
+        (*self.range.start(), *self.range.end())
     }
 
     fn is_subrange(&self, other: &Self) -> bool {
@@ -1254,5 +1254,20 @@ pub fn compute_match_usefulness<'p>(
     UsefulnessReport {
         arm_usefulness,
         non_exhaustiveness_witnesses,
+    }
+}
+
+#[cfg(test)]
+mod tests_int_rage {
+    use super::*;
+
+    #[test]
+    fn is_integral() {
+        assert!(IntRange::is_integral(Type::Int64))
+    }
+
+    #[test]
+    fn signed_bias() {
+        assert!(IntRange::is_integral(Type::Int64))
     }
 }
