@@ -117,6 +117,8 @@ fn analyze_loop<'a>(
                 analyze_loop(else_body, vars, functions)?;
             }
 
+            usefulness::check_match(arms);
+
             Ok(())
         }
     }

@@ -2,7 +2,7 @@
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/usefulness.rs
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/deconstruct_pat.rs
 use crate::{
-    syntax::{Pattern, PatternKind, RangeEnd},
+    syntax::{CaseArm, Pattern, PatternKind, RangeEnd},
     typing::Type,
 };
 use std::{
@@ -818,7 +818,7 @@ impl<'p> DeconstructedPat<'p> {
         DeconstructedPat::new(self.ctor.clone(), self.fields, self.ty)
     }
 
-    pub fn from_pat(pat: &Pattern) -> Self {
+    pub fn from_pat(_cx: &MatchCheckCtxt<'p>, pat: &Pattern) -> Self {
         let ctor;
         let fields;
         match pat.kind() {
@@ -1219,8 +1219,7 @@ fn is_useful<'p>(
 ///
 /// Note: the input patterns must have been lowered through
 /// `check_match::MatchVisitor::lower_pattern`.
-#[allow(dead_code)]
-pub fn compute_match_usefulness<'p>(
+fn compute_match_usefulness<'p>(
     cx: &MatchCheckCtxt<'p>,
     arms: &[MatchArm<'p>],
 ) -> UsefulnessReport<'p> {
@@ -1256,6 +1255,36 @@ pub fn compute_match_usefulness<'p>(
         arm_usefulness,
         non_exhaustiveness_witnesses,
     }
+}
+
+pub fn check_match(arms: &[CaseArm]) {
+    let pattern_arena = Arena::default();
+    let cx = MatchCheckCtxt {
+        pattern_arena: &pattern_arena,
+    };
+
+    let arms2: Vec<_> = arms
+        .iter()
+        .map(|arm| {
+            let pattern: &_ = cx
+                .pattern_arena
+                .alloc(DeconstructedPat::from_pat(&cx, arm.pattern()));
+
+            MatchArm {
+                pat: pattern,
+                has_guard: false,
+            }
+        })
+        .collect();
+
+    let report = compute_match_usefulness(&cx, &arms2);
+
+    // Check if the match is exhaustive.
+    let is_empty_match = arms2.is_empty();
+    let witnesses = report.non_exhaustiveness_witnesses;
+
+    eprintln!("is_empty_match = {}", is_empty_match);
+    eprintln!("witnesses = {:?}", witnesses);
 }
 
 #[cfg(test)]
