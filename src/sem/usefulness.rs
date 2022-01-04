@@ -12,9 +12,16 @@ use std::{
     iter::once,
     ops::RangeInclusive,
 };
+use typed_arena::Arena;
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct PatCtxt {
+pub struct MatchCheckCtxt<'p> {
+    pub pattern_arena: &'p Arena<DeconstructedPat<'p>>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub struct PatCtxt<'a, 'p> {
+    pub cx: &'a MatchCheckCtxt<'p>,
     /// Type of the current column under investigation.
     pub ty: Type,
     /// Whether the current pattern is the whole pattern as found in a match arm, or if it's a
@@ -176,6 +183,7 @@ impl fmt::Debug for IntRange {
 
 /// Represents a border between 2 integers. Because the intervals spanning borders must be able to
 /// cover every integer, we need to be able to represent 2^128 + 1 such borders.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum IntBorder {
     JustBefore(u128),
@@ -190,15 +198,16 @@ enum IntBorder {
 /// straddles the boundary of one of the inputs.
 ///
 /// The following input:
-/// ```
+/// ```ignore
 ///   |-------------------------| // `self`
 /// |------|  |----------|   |----|
 ///    |-------| |-------|
 /// ```
 /// would be iterated over as follows:
-/// ```
+/// ```ignore
 ///   ||---|--||-|---|---|---|--|
 /// ```
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct SplitIntRange {
     /// The range we are splitting
@@ -208,6 +217,7 @@ struct SplitIntRange {
     borders: Vec<IntBorder>,
 }
 
+#[allow(dead_code)]
 impl SplitIntRange {
     fn new(range: IntRange) -> Self {
         SplitIntRange {
@@ -241,7 +251,7 @@ impl SplitIntRange {
     }
 
     /// Iterate over the contained ranges.
-    fn iter<'a>(&'a self) -> impl Iterator<Item = IntRange> + 'a {
+    fn iter(&self) -> impl Iterator<Item = IntRange> + '_ {
         use IntBorder::*;
 
         let self_range = Self::to_borders(self.range.clone());
@@ -290,6 +300,7 @@ impl SplitIntRange {
 /// This will not preserve the whole list of witnesses, but will preserve whether the list is empty
 /// or not. In fact this is quite natural from the point of view of diagnostics too. This is done
 /// in `to_ctors`: in some cases we only return `Missing`.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(super) struct SplitWildcard {
     /// Constructors seen in the matrix.
@@ -298,8 +309,9 @@ pub(super) struct SplitWildcard {
     all_ctors: Vec<Constructor>,
 }
 
+#[allow(dead_code)]
 impl SplitWildcard {
-    pub(super) fn new(pcx: &PatCtxt) -> Self {
+    pub(super) fn new(pcx: PatCtxt) -> Self {
         let make_range = |start, end| {
             Constructor::IntRange(
                 // `unwrap()` is ok because we know the type is an integer.
@@ -334,7 +346,7 @@ impl SplitWildcard {
     /// do what you want.
     pub(super) fn split<'a>(
         &mut self,
-        pcx: &PatCtxt,
+        pcx: PatCtxt<'_, '_>,
         ctors: impl Iterator<Item = &'a Constructor> + Clone,
     ) {
         // Since `all_ctors` never contains wildcards, this won't recurse further.
@@ -347,23 +359,23 @@ impl SplitWildcard {
     }
 
     /// Whether there are any value constructors for this type that are not present in the matrix.
-    fn any_missing(&self, pcx: &PatCtxt) -> bool {
+    fn any_missing(&self, pcx: PatCtxt<'_, '_>) -> bool {
         self.iter_missing(pcx).next().is_some()
     }
 
     /// Iterate over the constructors for this type that are not present in the matrix.
-    pub fn iter_missing<'a, 'p: 'a>(
+    pub fn iter_missing<'a, 'p>(
         &'a self,
-        pcx: &'p PatCtxt,
-    ) -> impl Iterator<Item = &Constructor> {
+        _pcx: PatCtxt<'a, 'p>,
+    ) -> impl Iterator<Item = &'a Constructor> {
         self.all_ctors
             .iter()
-            .filter(|ctor| !ctor.is_covered_by_any(pcx, &self.matrix_ctors))
+            .filter(|ctor| !ctor.is_covered_by_any(&self.matrix_ctors))
     }
 
     /// Return the set of constructors resulting from splitting the wildcard. As explained at the
     /// top of the file, if any constructors are missing we can ignore the present ones.
-    fn into_ctors(self, pcx: &PatCtxt) -> Vec<Constructor> {
+    fn into_ctors(self, pcx: PatCtxt<'_, '_>) -> Vec<Constructor> {
         if self.any_missing(pcx) {
             // Some constructors are missing, thus we can specialize with the special `Missing`
             // constructor, which stands for those constructors that are not seen in the matrix,
@@ -420,7 +432,7 @@ impl SplitWildcard {
 /// works well.
 #[derive(Clone)]
 struct PatStack<'p> {
-    pats: Vec<&'p DeconstructedPat>,
+    pats: Vec<&'p DeconstructedPat<'p>>,
 }
 
 #[allow(dead_code)]
@@ -441,7 +453,7 @@ impl<'p> PatStack<'p> {
         self.pats.len()
     }
 
-    fn head(&self) -> &'p DeconstructedPat {
+    fn head(&self) -> &'p DeconstructedPat<'p> {
         self.pats[0]
     }
 
@@ -466,10 +478,10 @@ impl<'p> PatStack<'p> {
     /// fields filled with wild patterns.
     ///
     /// This is roughly the inverse of `Constructor::apply`.
-    fn pop_head_constructor(&self, ctor: &Constructor) -> PatStack<'p> {
+    fn pop_head_constructor(&self, cx: &MatchCheckCtxt<'p>, ctor: &Constructor) -> PatStack<'p> {
         // We pop the head pattern and push the new fields extracted from the arguments of
         // `self.head()`.
-        let mut new_fields = self.head().specialize(ctor);
+        let mut new_fields = self.head().specialize(cx, ctor);
         new_fields.extend_from_slice(&self.pats[1..]);
         PatStack::from_vec(new_fields)
     }
@@ -503,16 +515,16 @@ impl<'p> Matrix<'p> {
     }
 
     /// Iterate over the first component of each row
-    fn heads<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat> + Clone + 'a {
+    fn heads<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p>> + Clone + 'a {
         self.patterns.iter().map(|r| r.head())
     }
 
     /// This computes `S(constructor, self)`. See top of the file for explanations.
-    fn specialize_constructor(&self, pcx: &PatCtxt, ctor: &Constructor) -> Matrix<'p> {
+    fn specialize_constructor(&self, pcx: PatCtxt<'_, 'p>, ctor: &Constructor) -> Matrix<'p> {
         let mut matrix = Matrix::empty();
         for row in &self.patterns {
             if ctor.is_covered_by(pcx, row.head().ctor()) {
-                let new_row = row.pop_head_constructor(ctor);
+                let new_row = row.pop_head_constructor(pcx.cx, ctor);
                 matrix.push(new_row);
             }
         }
@@ -582,8 +594,8 @@ impl<'p> fmt::Debug for PatStack<'p> {
 /// `specialize_constructor` returns the list of fields corresponding to a pattern, given a
 /// constructor. `Constructor::apply` reconstructs the pattern from a pair of `Constructor` and
 /// `Fields`.
-#[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Constructor {
     /// Wildcard pattern.
     Wildcard,
@@ -597,6 +609,7 @@ pub enum Constructor {
     },
 }
 
+#[allow(dead_code)]
 impl Constructor {
     pub(super) fn is_wildcard(&self) -> bool {
         matches!(self, Constructor::Wildcard)
@@ -617,7 +630,7 @@ impl Constructor {
     /// `EvalResult::Deny { .. }`.
     ///
     /// This means that the variant has a stdlib unstable feature marking it.
-    pub fn is_unstable_variant(&self, _pcx: &PatCtxt) -> bool {
+    pub fn is_unstable_variant(&self, _pcx: PatCtxt<'_, '_>) -> bool {
         false
     }
 
@@ -625,7 +638,7 @@ impl Constructor {
     /// For the simple cases, this is simply checking for equality. For the "grouped" constructors,
     /// this checks for inclusion.
     // We inline because this has a single call site in `Matrix::specialize_constructor`.
-    pub(super) fn is_covered_by(&self, _pcx: &PatCtxt, other: &Self) -> bool {
+    pub fn is_covered_by<'p>(&self, _pcx: PatCtxt<'_, 'p>, other: &Self) -> bool {
         // This must be kept in sync with `is_covered_by_any`.
         match (self, other) {
             // Wildcards cover anything
@@ -645,7 +658,7 @@ impl Constructor {
     /// Faster version of `is_covered_by` when applied to many constructors. `used_ctors` is
     /// assumed to be built from `matrix.head_ctors()` with wildcards filtered out, and `self` is
     /// assumed to have been split from a wildcard.
-    fn is_covered_by_any<'p>(&self, pcx: &PatCtxt, used_ctors: &[Constructor]) -> bool {
+    fn is_covered_by_any(&self, used_ctors: &[Constructor]) -> bool {
         if used_ctors.is_empty() {
             return false;
         }
@@ -683,7 +696,7 @@ impl Constructor {
     /// matrix, unless all of them are.
     pub(super) fn split<'a>(
         &self,
-        pcx: &PatCtxt,
+        pcx: PatCtxt<'_, '_>,
         ctors: impl Iterator<Item = &'a Constructor> + Clone,
     ) -> Vec<Self> {
         match self {
@@ -727,24 +740,27 @@ impl Constructor {
 /// because the code mustn't observe that it is uninhabited. In that case that field is not
 /// included in `fields`. For that reason, when you have a `mir::Field` you must use
 /// `index_with_declared_idx`.
-#[derive(Debug, Clone)]
-pub struct Fields {
-    fields: Vec<DeconstructedPat>,
+#[derive(Debug, Clone, Copy)]
+pub struct Fields<'p> {
+    fields: &'p [DeconstructedPat<'p>],
 }
 
-impl Fields {
+impl<'p> Fields<'p> {
     fn empty() -> Self {
-        Fields { fields: vec![] }
+        Fields { fields: &[] }
     }
 
-    pub fn from_iter(fields: impl IntoIterator<Item = DeconstructedPat>) -> Self {
-        let fields = fields.into_iter().collect::<Vec<_>>();
+    pub fn from_iter(
+        cx: &MatchCheckCtxt<'p>,
+        fields: impl IntoIterator<Item = DeconstructedPat<'p>>,
+    ) -> Self {
+        let fields: &[_] = cx.pattern_arena.alloc_extend(fields);
         Fields { fields }
     }
 
     /// Creates a new list of wildcard fields for a given constructor. The result must have a
     /// length of `constructor.arity()`.
-    pub fn wildcards(_ty: Type, constructor: &Constructor) -> Self {
+    pub fn wildcards(_cx: &MatchCheckCtxt<'p>, _ty: Type, constructor: &Constructor) -> Self {
         match constructor {
             Constructor::IntRange(..) | Constructor::Wildcard | Constructor::Missing { .. } => {
                 Fields::empty()
@@ -753,7 +769,7 @@ impl Fields {
     }
 
     /// Returns the list of patterns.
-    pub fn iter_patterns(&self) -> impl Iterator<Item = &DeconstructedPat> {
+    pub fn iter_patterns<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p>> + 'a {
         self.fields.iter()
     }
 }
@@ -765,26 +781,40 @@ impl Fields {
 /// `clone_and_forget_reachability` if you're sure.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct DeconstructedPat {
+pub struct DeconstructedPat<'p> {
     ctor: Constructor,
-    fields: Fields,
+    fields: Fields<'p>,
     ty: Type,
     reachable: Cell<bool>,
 }
 
 #[allow(dead_code)]
-impl DeconstructedPat {
+impl<'p> DeconstructedPat<'p> {
     pub(super) fn wildcard(ty: Type) -> Self {
         Self::new(Constructor::Wildcard, Fields::empty(), ty)
     }
 
-    pub(super) fn new(ctor: Constructor, fields: Fields, ty: Type) -> Self {
+    pub(super) fn new(ctor: Constructor, fields: Fields<'p>, ty: Type) -> Self {
         DeconstructedPat {
             ctor,
             fields,
             ty,
             reachable: Cell::new(false),
         }
+    }
+
+    /// Construct a pattern that matches everything that starts with this constructor.
+    /// For example, if `ctor` is a `Constructor::Variant` for `Option::Some`, we get the pattern
+    /// `Some(_)`.
+    pub fn wild_from_ctor(pcx: PatCtxt<'_, 'p>, ctor: Constructor) -> Self {
+        let fields = Fields::wildcards(pcx.cx, pcx.ty, &ctor);
+        DeconstructedPat::new(ctor, fields, pcx.ty)
+    }
+
+    /// Clone this value. This method emphasizes that cloning loses reachability information and
+    /// should be done carefully.
+    pub fn clone_and_forget_reachability(&self) -> Self {
+        DeconstructedPat::new(self.ctor.clone(), self.fields, self.ty)
     }
 
     pub fn from_pat(pat: &Pattern) -> Self {
@@ -856,14 +886,15 @@ impl DeconstructedPat {
 
     /// Specialize this pattern with a constructor.
     /// `other_ctor` can be different from `self.ctor`, but must be covered by it.
-    pub fn specialize<'a: 'c, 'b, 'c>(
+    pub fn specialize<'a>(
         &'a self,
-        other_ctor: &'b Constructor,
-    ) -> Vec<&'c DeconstructedPat> {
+        cx: &MatchCheckCtxt<'p>,
+        other_ctor: &Constructor,
+    ) -> Vec<&'p DeconstructedPat<'p>> {
         match (&self.ctor, other_ctor) {
             (Constructor::Wildcard, _) => {
                 // We return a wildcard for each field of `other_ctor`.
-                Fields::wildcards(self.ty, other_ctor)
+                Fields::wildcards(cx, self.ty, other_ctor)
                     .iter_patterns()
                     .collect()
             }
@@ -876,7 +907,7 @@ impl DeconstructedPat {
 #[derive(Clone, Copy)]
 pub struct MatchArm<'p> {
     /// The pattern must have been lowered through `check_match::MatchVisitor::lower_pattern`.
-    pub pat: &'p DeconstructedPat,
+    pub pat: &'p DeconstructedPat<'p>,
     pub has_guard: bool,
 }
 
@@ -897,7 +928,7 @@ pub struct UsefulnessReport<'p> {
     pub arm_usefulness: Vec<(MatchArm<'p>, Reachability)>,
     /// If the match is exhaustive, this is empty. If not, this contains witnesses for the lack of
     /// exhaustiveness.
-    pub non_exhaustiveness_witnesses: Vec<DeconstructedPat>,
+    pub non_exhaustiveness_witnesses: Vec<DeconstructedPat<'p>>,
 }
 
 /// This carries the results of computing usefulness, as described at the top of the file. When
@@ -907,49 +938,48 @@ pub struct UsefulnessReport<'p> {
 /// witnesses of non-exhaustiveness when there are any.
 /// Which variant to use is dictated by `ArmType`.
 #[derive(Debug)]
-enum Usefulness {
+enum Usefulness<'p> {
     /// If we don't care about witnesses, simply remember if the pattern was useful.
     NoWitnesses { useful: bool },
     /// Carries a list of witnesses of non-exhaustiveness. If empty, indicates that the whole
     /// pattern is unreachable.
-    WithWitnesses(Vec<Witness>),
+    WithWitnesses(Vec<Witness<'p>>),
 }
 
-impl Usefulness {
+impl<'p> Usefulness<'p> {
     fn new_useful(preference: ArmType) -> Self {
         match preference {
             // A single (empty) witness of reachability.
-            FakeExtraWildcard => Usefulness::WithWitnesses(vec![Witness(vec![])]),
-            RealArm => Usefulness::NoWitnesses { useful: true },
+            ArmType::FakeExtraWildcard => Usefulness::WithWitnesses(vec![Witness(vec![])]),
+            ArmType::RealArm => Usefulness::NoWitnesses { useful: true },
         }
     }
 
     fn new_not_useful(preference: ArmType) -> Self {
         match preference {
-            FakeExtraWildcard => Usefulness::WithWitnesses(vec![]),
-            RealArm => Usefulness::NoWitnesses { useful: false },
+            ArmType::FakeExtraWildcard => Usefulness::WithWitnesses(vec![]),
+            ArmType::RealArm => Usefulness::NoWitnesses { useful: false },
         }
     }
 
     fn is_useful(&self) -> bool {
         match self {
-            Usefulness::NoWitnesses { useful } => *useful,
-            Usefulness::WithWitnesses(witnesses) => !witnesses.is_empty(),
+            Self::NoWitnesses { useful } => *useful,
+            Self::WithWitnesses(witnesses) => !witnesses.is_empty(),
         }
     }
 
     /// Combine usefulnesses from two branches. This is an associative operation.
     fn extend(&mut self, other: Self) {
         match (&mut *self, other) {
-            (Usefulness::WithWitnesses(_), Usefulness::WithWitnesses(o)) if o.is_empty() => {}
-            (Usefulness::WithWitnesses(s), Usefulness::WithWitnesses(o)) if s.is_empty() => {
+            (Self::WithWitnesses(_), Self::WithWitnesses(o)) if o.is_empty() => {}
+            (Self::WithWitnesses(s), Self::WithWitnesses(o)) if s.is_empty() => {
                 *self = Usefulness::WithWitnesses(o)
             }
-            (Usefulness::WithWitnesses(s), Usefulness::WithWitnesses(o)) => s.extend(o),
-            (
-                Usefulness::NoWitnesses { useful: s_useful },
-                Usefulness::NoWitnesses { useful: o_useful },
-            ) => *s_useful = *s_useful || o_useful,
+            (Self::WithWitnesses(s), Self::WithWitnesses(o)) => s.extend(o),
+            (Self::NoWitnesses { useful: s_useful }, Self::NoWitnesses { useful: o_useful }) => {
+                *s_useful = *s_useful || o_useful
+            }
             _ => unreachable!(),
         }
     }
@@ -957,21 +987,61 @@ impl Usefulness {
     /// After calculating usefulness after a specialization, call this to reconstruct a usefulness
     /// that makes sense for the matrix pre-specialization. This new usefulness can then be merged
     /// with the results of specializing with the other constructors.
-    fn apply_constructor<'p>(
+    fn apply_constructor(
         self,
-        _matrix: &Matrix<'p>, // used to compute missing ctors
+        pcx: PatCtxt<'_, 'p>,
+        matrix: &Matrix<'p>, // used to compute missing ctors
         ctor: &Constructor,
     ) -> Self {
         match self {
-            Usefulness::NoWitnesses { .. } => self,
-            Usefulness::WithWitnesses(ref witnesses) if witnesses.is_empty() => self,
-            Usefulness::WithWitnesses(witnesses) => {
-                let new_witnesses = witnesses
-                    .into_iter()
-                    .map(|witness| witness.apply_constructor(&ctor))
-                    .collect();
+            Self::NoWitnesses { .. } => self,
+            Self::WithWitnesses(ref witnesses) if witnesses.is_empty() => self,
+            Self::WithWitnesses(witnesses) => {
+                let new_witnesses = if let Constructor::Missing { .. } = ctor {
+                    // We got the special `Missing` constructor, so each of the missing constructors
+                    // gives a new pattern that is not caught by the match. We list those patterns.
+                    let new_patterns = if pcx.is_non_exhaustive {
+                        // Here we don't want the user to try to list all variants, we want them to add
+                        // a wildcard, so we only suggest that.
+                        vec![DeconstructedPat::wildcard(pcx.ty)]
+                    } else {
+                        let mut split_wildcard = SplitWildcard::new(pcx);
+                        split_wildcard.split(pcx, matrix.heads().map(DeconstructedPat::ctor));
 
-                Usefulness::WithWitnesses(new_witnesses)
+                        // Construct for each missing constructor a "wild" version of this
+                        // constructor, that matches everything that can be built with
+                        // it. For example, if `ctor` is a `Constructor::Variant` for
+                        // `Option::Some`, we get the pattern `Some(_)`.
+                        split_wildcard
+                            .iter_missing(pcx)
+                            .map(|missing_ctor| {
+                                DeconstructedPat::wild_from_ctor(pcx, missing_ctor.clone())
+                            })
+                            .collect()
+                    };
+
+                    witnesses
+                        .into_iter()
+                        .flat_map(|witness| {
+                            new_patterns.iter().map(move |pat| {
+                                Witness(
+                                    witness
+                                        .0
+                                        .iter()
+                                        .chain(once(pat))
+                                        .map(DeconstructedPat::clone_and_forget_reachability)
+                                        .collect(),
+                                )
+                            })
+                        })
+                        .collect()
+                } else {
+                    witnesses
+                        .into_iter()
+                        .map(|witness| witness.apply_constructor(pcx, ctor))
+                        .collect()
+                };
+                Self::WithWitnesses(new_witnesses)
             }
         }
     }
@@ -996,7 +1066,7 @@ enum ArmType {
 ///
 /// For example, if we are constructing a witness for the match against
 ///
-/// ```
+/// ```ignore
 /// struct Pair(Option<(u32, u32)>, bool);
 ///
 /// match (p: Pair) {
@@ -1017,11 +1087,11 @@ enum ArmType {
 ///
 /// The final `Pair(Some(_), true)` is then the resulting witness.
 #[derive(Debug)]
-pub struct Witness(Vec<DeconstructedPat>);
+pub struct Witness<'p>(Vec<DeconstructedPat<'p>>);
 
-impl Witness {
+impl<'p> Witness<'p> {
     /// Asserts that the witness contains a single pattern, and returns it.
-    fn single_pattern(self) -> DeconstructedPat {
+    fn single_pattern(self) -> DeconstructedPat<'p> {
         assert_eq!(self.0.len(), 1);
         self.0.into_iter().next().unwrap()
     }
@@ -1039,12 +1109,12 @@ impl Witness {
     ///
     /// left_ty: struct X { a: (bool, &'static str), b: usize}
     /// pats: [(false, "foo"), 42]  => X { a: (false, "foo"), b: 42 }
-    fn apply_constructor(mut self, ctor: &Constructor) -> Self {
+    fn apply_constructor(mut self, pcx: PatCtxt<'_, 'p>, ctor: &Constructor) -> Self {
         let pat = {
             let len = self.0.len();
             let arity = ctor.arity();
             let pats = self.0.drain((len - arity)..).rev();
-            let fields = Fields::from_iter(pats);
+            let fields = Fields::from_iter(pcx.cx, pats);
             DeconstructedPat::new(ctor.clone(), fields, Type::Int64)
         };
 
@@ -1077,12 +1147,13 @@ impl Witness {
 /// has one it must not be inserted into the matrix. This shouldn't be
 /// relied on for soundness.
 fn is_useful<'p>(
+    cx: &MatchCheckCtxt<'p>,
     matrix: &Matrix<'p>,
     v: &PatStack<'p>,
     witness_preference: ArmType,
     is_under_guard: bool,
     is_top_level: bool,
-) -> Usefulness {
+) -> Usefulness<'p> {
     let Matrix { patterns: rows, .. } = matrix;
 
     // The base case. We are pattern-matching on () and the return value is
@@ -1101,6 +1172,7 @@ fn is_useful<'p>(
 
     let ty = v.head().ty();
     let pcx = PatCtxt {
+        cx,
         ty,
         is_top_level,
         is_non_exhaustive: false,
@@ -1113,16 +1185,23 @@ fn is_useful<'p>(
         let v_ctor = v.head().ctor();
 
         // We split the head constructor of `v`.
-        let split_ctors = v_ctor.split(&pcx, matrix.heads().map(DeconstructedPat::ctor));
+        let split_ctors = v_ctor.split(pcx, matrix.heads().map(DeconstructedPat::ctor));
         // For each constructor, we compute whether there's a value that starts with it that would
         // witness the usefulness of `v`.
         let start_matrix = &matrix;
         for ctor in split_ctors {
             // We cache the result of `Fields::wildcards` because it is used a lot.
-            let spec_matrix = start_matrix.specialize_constructor(&pcx, &ctor);
-            let v = v.pop_head_constructor(&ctor);
-            let usefulness = is_useful(&spec_matrix, &v, witness_preference, is_under_guard, false);
-            let usefulness = usefulness.apply_constructor(start_matrix, &ctor);
+            let spec_matrix = start_matrix.specialize_constructor(pcx, &ctor);
+            let v = v.pop_head_constructor(cx, &ctor);
+            let usefulness = is_useful(
+                cx,
+                &spec_matrix,
+                &v,
+                witness_preference,
+                is_under_guard,
+                false,
+            );
+            let usefulness = usefulness.apply_constructor(pcx, start_matrix, &ctor);
             ret.extend(usefulness);
         }
     }
@@ -1139,14 +1218,18 @@ fn is_useful<'p>(
 ///
 /// Note: the input patterns must have been lowered through
 /// `check_match::MatchVisitor::lower_pattern`.
-pub fn compute_match_usefulness<'p>(arms: &[MatchArm<'p>]) -> UsefulnessReport<'p> {
+#[allow(dead_code)]
+pub fn compute_match_usefulness<'p>(
+    cx: &MatchCheckCtxt<'p>,
+    arms: &[MatchArm<'p>],
+) -> UsefulnessReport<'p> {
     let mut matrix = Matrix::empty();
     let arm_usefulness: Vec<_> = arms
         .iter()
         .copied()
         .map(|arm| {
             let v = PatStack::from_pattern(arm.pat);
-            is_useful(&matrix, &v, ArmType::RealArm, arm.has_guard, true);
+            is_useful(cx, &matrix, &v, ArmType::RealArm, arm.has_guard, true);
             if !arm.has_guard {
                 matrix.push(v);
             }
@@ -1159,9 +1242,11 @@ pub fn compute_match_usefulness<'p>(arms: &[MatchArm<'p>]) -> UsefulnessReport<'
         })
         .collect();
 
-    let wild_pattern = DeconstructedPat::wildcard(Type::Int64);
-    let v = PatStack::from_pattern(&wild_pattern);
-    let usefulness = is_useful(&matrix, &v, ArmType::FakeExtraWildcard, false, true);
+    let wild_pattern = cx
+        .pattern_arena
+        .alloc(DeconstructedPat::wildcard(Type::Int64));
+    let v = PatStack::from_pattern(wild_pattern);
+    let usefulness = is_useful(cx, &matrix, &v, ArmType::FakeExtraWildcard, false, true);
     let non_exhaustiveness_witnesses = match usefulness {
         Usefulness::WithWitnesses(pats) => pats.into_iter().map(|w| w.single_pattern()).collect(),
         Usefulness::NoWitnesses { .. } => unreachable!(),

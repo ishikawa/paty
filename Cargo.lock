@@ -89,6 +89,7 @@ version = "0.1.0"
 dependencies = [
  "chumsky",
  "exitcode",
+ "typed-arena",
 ]
 
 [[package]]
@@ -105,6 +106,12 @@ checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
  "crunchy",
 ]
+
+[[package]]
+name = "typed-arena"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0685c84d5d54d1c26f7d3eb96cd41550adb97baed141a761cf335d3d33bcd0ae"
 
 [[package]]
 name = "wasi"
