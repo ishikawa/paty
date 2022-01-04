@@ -29,8 +29,13 @@ fn main() {
     //println!("ast = {:?}", expr);
 
     let ast = match sem::analyze(&expr) {
-        Err(err) => {
-            eprintln!("Semantic error: {}", err);
+        Err(errors) => {
+            assert!(!errors.is_empty());
+
+            for err in errors {
+                eprintln!("Semantic error: {}", err);
+            }
+
             std::process::exit(exitcode::DATAERR);
         }
         Ok(ast) => ast,

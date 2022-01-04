@@ -175,7 +175,12 @@ impl fmt::Debug for IntRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (lo, hi) = self.boundaries();
         let bias = self.bias;
-        let (lo, hi) = (lo ^ bias, hi ^ bias);
+
+        let lo =
+            i64::try_from(i128::try_from(lo).unwrap() - i128::try_from(bias).unwrap()).unwrap();
+        let hi =
+            i64::try_from(i128::try_from(hi).unwrap() - i128::try_from(bias).unwrap()).unwrap();
+
         write!(f, "{}", lo)?;
         write!(f, "{}", RangeEnd::Included)?;
         write!(f, "{}", hi)
@@ -905,7 +910,7 @@ impl<'p> DeconstructedPat<'p> {
 }
 
 /// The arm of a match expression.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct MatchArm<'p> {
     /// The pattern must have been lowered through `check_match::MatchVisitor::lower_pattern`.
     pub pat: &'p DeconstructedPat<'p>,
@@ -913,7 +918,7 @@ pub struct MatchArm<'p> {
 }
 
 /// Indicates whether or not a given arm is reachable.
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum Reachability {
     /// The arm is reachable.
@@ -1284,7 +1289,9 @@ pub fn check_match(arms: &[CaseArm]) {
     let witnesses = report.non_exhaustiveness_witnesses;
 
     eprintln!("is_empty_match = {}", is_empty_match);
+    //    eprintln!("arms2 = {:?}", arms2);
     eprintln!("witnesses = {:?}", witnesses);
+    eprintln!("arm_usefulness = {:?}", report.arm_usefulness);
 }
 
 #[cfg(test)]
