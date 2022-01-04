@@ -67,7 +67,8 @@ impl IntRange {
     #[inline]
     fn from_const(value: i64) -> IntRange {
         let bias = Self::signed_bias(Type::Int64);
-        let val = u128::try_from(value + i64::try_from(bias).unwrap()).unwrap();
+        let val =
+            u128::try_from(i128::try_from(value).unwrap() + i128::try_from(bias).unwrap()).unwrap();
 
         IntRange {
             range: val..=val,
@@ -138,9 +139,9 @@ impl IntRange {
     fn to_pat(&self) -> Pattern {
         let (lo, hi) = self.boundaries();
 
-        let bias = i64::try_from(self.bias).unwrap();
-        let lo = i64::try_from(lo).unwrap() - bias;
-        let hi = i64::try_from(hi).unwrap() - bias;
+        let bias = i128::try_from(self.bias).unwrap();
+        let lo = i64::try_from(i128::try_from(lo).unwrap() - bias).unwrap();
+        let hi = i64::try_from(i128::try_from(hi).unwrap() - bias).unwrap();
 
         let kind = if lo == hi {
             PatternKind::Integer(lo)
@@ -1263,11 +1264,31 @@ mod tests_int_rage {
 
     #[test]
     fn is_integral() {
-        assert!(IntRange::is_integral(Type::Int64))
+        assert!(IntRange::is_integral(Type::Int64));
     }
 
     #[test]
     fn signed_bias() {
-        assert!(IntRange::is_integral(Type::Int64))
+        let bias = IntRange::signed_bias(Type::Int64);
+        assert_eq!(bias, 9223372036854775808);
+    }
+
+    #[test]
+    fn zero() {
+        let r = IntRange::from_const(i64::MIN);
+        let (low, high) = r.boundaries();
+
+        assert!(r.is_singleton());
+        assert_eq!(low, 0);
+        assert_eq!(high, 0);
+
+        let pat = r.to_pat();
+        let kind = pat.kind();
+
+        if let PatternKind::Integer(n) = kind {
+            assert_eq!(*n, i64::MIN);
+        } else {
+            unreachable!("pattern must be integer")
+        }
     }
 }
