@@ -1270,11 +1270,11 @@ mod tests_int_rage {
     #[test]
     fn signed_bias() {
         let bias = IntRange::signed_bias(Type::Int64);
-        assert_eq!(bias, 9223372036854775808);
+        assert_eq!(bias, 9223372036854775808u128);
     }
 
     #[test]
-    fn zero() {
+    fn i64_min() {
         let r = IntRange::from_const(i64::MIN);
         let (low, high) = r.boundaries();
 
@@ -1287,6 +1287,25 @@ mod tests_int_rage {
 
         if let PatternKind::Integer(n) = kind {
             assert_eq!(*n, i64::MIN);
+        } else {
+            unreachable!("pattern must be integer")
+        }
+    }
+
+    #[test]
+    fn i64_max() {
+        let r = IntRange::from_const(i64::MAX);
+        let (low, high) = r.boundaries();
+
+        assert!(r.is_singleton());
+        assert_eq!(low, 18446744073709551615u128);
+        assert_eq!(high, 18446744073709551615u128);
+
+        let pat = r.to_pat();
+        let kind = pat.kind();
+
+        if let PatternKind::Integer(n) = kind {
+            assert_eq!(*n, i64::MAX);
         } else {
             unreachable!("pattern must be integer")
         }
