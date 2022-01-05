@@ -14,6 +14,8 @@ use std::{
 };
 use typed_arena::Arena;
 
+use super::error::SemanticError;
+
 pub struct MatchCheckCtxt<'p> {
     pub pattern_arena: &'p Arena<DeconstructedPat<'p>>,
 }
@@ -851,7 +853,7 @@ impl<'p> DeconstructedPat<'p> {
         DeconstructedPat::new(ctor, fields, Type::Int64)
     }
 
-    pub(crate) fn to_pat(&self) -> Pattern {
+    pub fn to_pat(&self) -> Pattern {
         let pat = match &self.ctor {
             Constructor::IntRange(range) => return range.to_pat(),
             Constructor::Wildcard => PatternKind::Wildcard,
@@ -1262,13 +1264,13 @@ fn compute_match_usefulness<'p>(
     }
 }
 
-pub fn check_match(arms: &[CaseArm]) {
+pub fn check_match(arms: &[CaseArm], has_else: bool) -> Result<(), Vec<SemanticError>> {
     let pattern_arena = Arena::default();
     let cx = MatchCheckCtxt {
         pattern_arena: &pattern_arena,
     };
 
-    let arms2: Vec<_> = arms
+    let mut arms2: Vec<_> = arms
         .iter()
         .map(|arm| {
             let pattern: &_ = cx
@@ -1281,17 +1283,46 @@ pub fn check_match(arms: &[CaseArm]) {
             }
         })
         .collect();
+    // else
+    if has_else {
+        let pattern: &_ = cx
+            .pattern_arena
+            .alloc(DeconstructedPat::wildcard(Type::Int64));
+        arms2.push(MatchArm {
+            pat: pattern,
+            has_guard: false,
+        })
+    }
 
     let report = compute_match_usefulness(&cx, &arms2);
 
     // Check if the match is exhaustive.
-    let is_empty_match = arms2.is_empty();
-    let witnesses = report.non_exhaustiveness_witnesses;
+    let mut errors = vec![];
 
-    eprintln!("is_empty_match = {}", is_empty_match);
-    //    eprintln!("arms2 = {:?}", arms2);
-    eprintln!("witnesses = {:?}", witnesses);
-    eprintln!("arm_usefulness = {:?}", report.arm_usefulness);
+    // unreachable pattern
+    for (arm, reachability) in report.arm_usefulness {
+        if matches!(reachability, Reachability::Unreachable) {
+            let pat = arm.pat.to_pat();
+
+            errors.push(SemanticError::UnreachablePattern {
+                pattern: pat.kind().to_string(),
+            })
+        }
+    }
+    // non exhaustiveness
+    for pat in report.non_exhaustiveness_witnesses {
+        let pat = pat.to_pat();
+
+        errors.push(SemanticError::NonExhaustivePattern {
+            pattern: pat.kind().to_string(),
+        })
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 #[cfg(test)]

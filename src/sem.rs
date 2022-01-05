@@ -1,5 +1,8 @@
 //! Semantic analysis
 use crate::syntax;
+
+use self::error::SemanticError;
+mod error;
 mod usefulness;
 
 #[derive(Debug)]
@@ -18,7 +21,7 @@ impl<'a> SemAST<'a> {
 }
 
 // Analyze an AST and returns error if any.
-pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, Vec<String>> {
+pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, Vec<SemanticError>> {
     let mut errors = vec![];
 
     analyze_loop(expr, &mut Vec::new(), &mut Vec::new(), &mut errors);
@@ -33,7 +36,7 @@ fn analyze_loop<'a>(
     expr: &'a syntax::Expr,
     vars: &mut Vec<&'a String>,
     functions: &mut Vec<(&'a String, &'a [String], &'a syntax::Expr)>,
-    errors: &mut Vec<String>,
+    errors: &mut Vec<SemanticError>,
 ) {
     match expr.kind() {
         syntax::ExprKind::Integer(_) => {}
@@ -47,7 +50,7 @@ fn analyze_loop<'a>(
         }
         syntax::ExprKind::Var(name) => {
             if !vars.iter().rev().any(|var| *var == name) {
-                errors.push(format!("Cannot find variable `{}` in scope", name));
+                errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
         }
         syntax::ExprKind::Let { name, rhs, then } => {
@@ -65,19 +68,18 @@ fn analyze_loop<'a>(
                 .copied()
             {
                 if arg_names.len() != args.len() {
-                    errors.push(format!(
-                        "Wrong number of arguments for function `{}`: expected {}, found {}",
-                        name,
-                        arg_names.len(),
-                        args.len(),
-                    ));
+                    errors.push(SemanticError::WrongNumberOfArguments {
+                        name: name.clone(),
+                        expected: arg_names.len(),
+                        actual: args.len(),
+                    });
                 } else {
                     for arg in args {
                         analyze_loop(arg, vars, functions, errors);
                     }
                 }
             } else {
-                errors.push(format!("Cannot find function `{}` in scope", name));
+                errors.push(SemanticError::UndefinedFunction { name: name.clone() });
             }
         }
         syntax::ExprKind::Puts(args) => {
@@ -122,7 +124,9 @@ fn analyze_loop<'a>(
             }
             // Usefulness check
 
-            usefulness::check_match(arms);
+            if let Err(err) = usefulness::check_match(arms, else_body.is_some()) {
+                errors.extend(err);
+            }
         }
     }
 }

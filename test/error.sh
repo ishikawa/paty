@@ -33,5 +33,26 @@ assert() {
 }
 
 # undefined variable
-assert 'Cannot find variable `x` in scope' "x"
-assert 'Cannot find function `foo` in scope' "foo()"
+assert 'cannot find variable `x` in scope' "x"
+# undefined function
+assert 'cannot find function `foo` in scope' "foo()"
+# unreachable pattern
+assert 'Semantic error: unreachable pattern: `1`' "
+  n = 100
+  case n
+  when 1
+    puts(1)
+  when 1
+    puts(1)
+  else
+    puts(n)
+  end"
+# non-exhaustive pattern
+assert 'Semantic error: non-exhaustive pattern: `int64::MIN..0`' "
+  n = 100
+  case n
+  when 1
+    puts(1)
+  when 2
+    puts(2)
+  end"

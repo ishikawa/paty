@@ -281,6 +281,30 @@ pub enum PatternKind {
     Wildcard,
 }
 
+impl fmt::Display for PatternKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PatternKind::Integer(n) => write!(f, "{}", n),
+            PatternKind::Range { lo, hi, end } => {
+                if *lo == i64::MIN {
+                    write!(f, "int64::MIN")?;
+                } else {
+                    write!(f, "{}", lo)?;
+                }
+
+                write!(f, "{}", end)?;
+
+                if *hi == i64::MAX {
+                    write!(f, "int64::MAX")
+                } else {
+                    write!(f, "{}", hi)
+                }
+            }
+            PatternKind::Wildcard => write!(f, "_"),
+        }
+    }
+}
+
 fn token(kind: TokenKind) -> Token {
     Token::new(kind, &[])
 }
