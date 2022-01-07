@@ -1326,7 +1326,7 @@ pub fn check_match(arms: &[CaseArm], has_else: bool) -> Result<(), Vec<SemanticE
 }
 
 #[cfg(test)]
-mod tests_int_rage {
+mod tests_int_range {
     use super::*;
 
     #[test]
@@ -1376,5 +1376,27 @@ mod tests_int_rage {
         } else {
             unreachable!("pattern must be integer")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_deconstructed_pat {
+    use super::*;
+
+    #[test]
+    fn from_pat() {
+        let pattern_arena = Arena::default();
+        let cx = MatchCheckCtxt {
+            pattern_arena: &pattern_arena,
+        };
+        let kind = PatternKind::Range {
+            lo: 1,
+            hi: 2,
+            end: RangeEnd::Included,
+        };
+        let pat = Pattern::new(kind);
+        let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
+
+        assert_eq!(dc_pat.ty(), Type::Int64);
     }
 }

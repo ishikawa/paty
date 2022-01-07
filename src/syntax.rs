@@ -108,7 +108,13 @@ impl fmt::Display for TokenKind {
 }
 
 pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
-    let integer = text::int(10).map(TokenKind::Integer);
+    let integer = text::int(10);
+    let pos_integer = integer.map(TokenKind::Integer);
+    let neg_integer = just('-')
+        .ignore_then(integer)
+        .map(|s| TokenKind::Integer(format!("-{}", s)));
+    let integer = pos_integer.or(neg_integer);
+
     let operator = one_of("+-*/=(),").map(TokenKind::Operator);
     let range = choice((
         just("..=").to(TokenKind::RangeIncluded),
@@ -333,22 +339,48 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
     }
     .labelled("identifier");
 
-    let expr = recursive(|expr| {
-        let value = select! {
-            Token{ kind: TokenKind::Integer(n), ..} => {
-                let kind = ExprKind::Integer(n.parse().unwrap());
-                Expr::new(kind)
-            },
-        }
-        .labelled("value");
+    let integer = select! {
+        Token{ kind: TokenKind::Integer(n), ..} => n.parse().unwrap()
+    }
+    .labelled("integer");
 
-        let pattern = select! {
-            Token{ kind: TokenKind::Integer(n), ..} => {
-                let kind = PatternKind::Integer(n.parse().unwrap());
+    let pattern = {
+        let integer_pattern = integer.map(|n| {
+            let kind = PatternKind::Integer(n);
+            Pattern::new(kind)
+        });
+        let range_pattern = integer
+            .then(choice((
+                just_token(TokenKind::RangeExcluded),
+                just_token(TokenKind::RangeIncluded),
+            )))
+            .then(integer)
+            .map(|((lhs, op), rhs)| {
+                let end = if let TokenKind::RangeIncluded = op.kind() {
+                    RangeEnd::Included
+                } else {
+                    RangeEnd::Excluded
+                };
+
+                let kind = PatternKind::Range {
+                    lo: lhs,
+                    hi: rhs,
+                    end,
+                };
+
                 Pattern::new(kind)
-            },
-        }
-        .labelled("pattern");
+            });
+
+        range_pattern.or(integer_pattern)
+    };
+
+    let expr = recursive(|expr| {
+        let value = integer
+            .map(|n| {
+                let kind = ExprKind::Integer(n);
+                Expr::new(kind)
+            })
+            .labelled("value");
 
         let puts = just_token(TokenKind::Puts)
             .ignore_then(
