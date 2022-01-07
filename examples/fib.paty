@@ -1,7 +1,7 @@
 # fibonacci number
 def fib(n)
   case n
-  when 1..2
+  when 1..=2
     1
   else
     fib(n - 1) + fib(n - 2)

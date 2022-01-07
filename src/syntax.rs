@@ -2,6 +2,21 @@ use chumsky::prelude::*;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum RangeEnd {
+    Included, // "..=" taken from Rust language
+    Excluded, // "..<" taken from Swift language
+}
+
+impl fmt::Display for RangeEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            RangeEnd::Included => "..=",
+            RangeEnd::Excluded => "..<",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Eq)]
 pub struct Token {
     kind: TokenKind,
@@ -62,6 +77,8 @@ pub enum TokenKind {
     Integer(String),
     Identifier(String),
     // Operators
+    RangeIncluded,  // RangeEnd::Included
+    RangeExcluded,  // RangeEnd::Excluded
     Operator(char), // 1 char
     // Keywords
     Def,
@@ -76,8 +93,10 @@ impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             TokenKind::Integer(n) => write!(f, "{}", n),
-            TokenKind::Operator(c) => write!(f, "{}", c),
             TokenKind::Identifier(s) => write!(f, "{}", s),
+            TokenKind::RangeIncluded => write!(f, "{}", RangeEnd::Included),
+            TokenKind::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
+            TokenKind::Operator(c) => write!(f, "{}", c),
             TokenKind::Def => write!(f, "def"),
             TokenKind::Case => write!(f, "case"),
             TokenKind::When => write!(f, "when"),
@@ -91,6 +110,10 @@ impl fmt::Display for TokenKind {
 pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let integer = text::int(10).map(TokenKind::Integer);
     let operator = one_of("+-*/=(),").map(TokenKind::Operator);
+    let range = choice((
+        just("..=").to(TokenKind::RangeIncluded),
+        just("..<").to(TokenKind::RangeExcluded),
+    ));
     let identifier = choice((
         text::keyword("def").to(TokenKind::Def),
         text::keyword("case").to(TokenKind::Case),
@@ -102,8 +125,9 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     ));
 
     let token = integer
-        .or(operator)
         .or(identifier)
+        .or(range)
+        .or(operator)
         .recover_with(skip_then_retry_until([]));
 
     let comment = just("#")
@@ -227,21 +251,6 @@ impl CaseArm {
         for comment in token.comments() {
             self.comments.push(comment.to_string());
         }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum RangeEnd {
-    Included,
-    Excluded,
-}
-
-impl fmt::Display for RangeEnd {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            RangeEnd::Included => "..", // Like Ruby
-            RangeEnd::Excluded => "...",
-        })
     }
 }
 
