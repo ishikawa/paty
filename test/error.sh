@@ -48,7 +48,7 @@ assert 'Semantic error: unreachable pattern: `1`' "
     puts(n)
   end"
 # non-exhaustive pattern
-assert 'Semantic error: non-exhaustive pattern: `int64::MIN..0`' "
+assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
   n = 100
   case n
   when 1

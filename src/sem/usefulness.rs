@@ -49,7 +49,7 @@ pub struct IntRange {
     /// Keeps the bias used for encoding the range. It depends on the type of the range and
     /// possibly the pointer size of the current architecture. The algorithm ensures we never
     /// compare `IntRange`s with different types/architectures.
-    bias: u128,
+    bias: i128,
 }
 
 #[allow(dead_code)]
@@ -60,17 +60,26 @@ impl IntRange {
     }
 
     // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
-    fn signed_bias(ty: Type) -> u128 {
+    fn signed_bias(ty: Type) -> i128 {
         match ty {
-            Type::Int64 => 1u128 << (i64::BITS as u128 - 1),
+            Type::Int64 => 1i128 << (i64::BITS as i128 - 1),
         }
+    }
+
+    #[inline]
+    fn encode_value(value: i64, bias: i128) -> u128 {
+        u128::try_from(i128::try_from(value).unwrap() + bias).unwrap()
+    }
+
+    #[inline]
+    fn decode_value(value: u128, bias: i128) -> i64 {
+        i64::try_from(i128::try_from(value).unwrap() - bias).unwrap()
     }
 
     #[inline]
     fn from_const(value: i64) -> IntRange {
         let bias = Self::signed_bias(Type::Int64);
-        let val =
-            u128::try_from(i128::try_from(value).unwrap() + i128::try_from(bias).unwrap()).unwrap();
+        let val = Self::encode_value(value, bias);
 
         IntRange {
             range: val..=val,
@@ -79,13 +88,13 @@ impl IntRange {
     }
 
     #[inline]
-    fn from_range(lo: u128, hi: u128, ty: Type, end: &RangeEnd) -> IntRange {
-        // Perform a shift if the underlying types are signed,
-        // which makes the interval arithmetic simpler.
+    fn from_range(lo: i64, hi: i64, ty: Type, end: RangeEnd) -> IntRange {
         let bias = IntRange::signed_bias(ty);
-        let (lo, hi) = (lo ^ bias, hi ^ bias);
-        let offset = (*end == RangeEnd::Excluded) as u128;
-        if lo > hi || (lo == hi && *end == RangeEnd::Excluded) {
+        let lo = Self::encode_value(lo, bias);
+        let hi = Self::encode_value(hi, bias);
+
+        let offset = (end == RangeEnd::Excluded) as u128;
+        if lo > hi || (lo == hi && end == RangeEnd::Excluded) {
             // This should have been caught earlier by E0030.
             unreachable!("malformed range pattern: {}..={}", lo, (hi - offset));
         }
@@ -141,9 +150,8 @@ impl IntRange {
     fn to_pat(&self) -> Pattern {
         let (lo, hi) = self.boundaries();
 
-        let bias = i128::try_from(self.bias).unwrap();
-        let lo = i64::try_from(i128::try_from(lo).unwrap() - bias).unwrap();
-        let hi = i64::try_from(i128::try_from(hi).unwrap() - bias).unwrap();
+        let lo = Self::decode_value(lo, self.bias);
+        let hi = Self::decode_value(hi, self.bias);
 
         let kind = if lo == hi {
             PatternKind::Integer(lo)
@@ -176,12 +184,8 @@ impl IntRange {
 impl fmt::Debug for IntRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (lo, hi) = self.boundaries();
-        let bias = self.bias;
-
-        let lo =
-            i64::try_from(i128::try_from(lo).unwrap() - i128::try_from(bias).unwrap()).unwrap();
-        let hi =
-            i64::try_from(i128::try_from(hi).unwrap() - i128::try_from(bias).unwrap()).unwrap();
+        let lo = Self::decode_value(lo, self.bias);
+        let hi = Self::decode_value(hi, self.bias);
 
         write!(f, "{}", lo)?;
         write!(f, "{}", RangeEnd::Included)?;
@@ -320,27 +324,15 @@ pub(super) struct SplitWildcard {
 #[allow(dead_code)]
 impl SplitWildcard {
     pub(super) fn new(pcx: PatCtxt) -> Self {
-        let make_range = |start, end| {
-            Constructor::IntRange(
-                // `unwrap()` is ok because we know the type is an integer.
-                IntRange::from_range(start, end, Type::Int64, &RangeEnd::Included),
-            )
-        };
-
-        // This determines the set of all possible constructors for the type `pcx.ty`. For numbers,
-        // arrays and slices we use ranges and variable-length slices when appropriate.
-        //
-        // If the `exhaustive_patterns` feature is enabled, we make sure to omit constructors that
-        // are statically impossible. E.g., for `Option<!>`, we do not include `Some(_)` in the
-        // returned list of constructors.
-        // Invariant: this is empty if and only if the type is uninhabited (as determined by
-        // `cx.is_uninhabited()`).
         let all_ctors = match pcx.ty {
             Type::Int64 => {
-                let bits = i64::BITS;
-                let min = 1u128 << (bits - 1);
-                let max = min - 1;
-                vec![make_range(min, max)]
+                let ctor = Constructor::IntRange(IntRange::from_range(
+                    i64::MIN,
+                    i64::MAX,
+                    Type::Int64,
+                    RangeEnd::Included,
+                ));
+                vec![ctor]
             }
         };
 
@@ -840,10 +832,7 @@ impl<'p> DeconstructedPat<'p> {
                 fields = Fields::empty();
             }
             &PatternKind::Range { lo, hi, end } => {
-                let bias = i64::MIN.abs() as i128;
-                let lo_biased = u128::try_from((lo as i128) + bias).unwrap();
-                let hi_biased = u128::try_from((hi as i128) + bias).unwrap();
-                let int_range = IntRange::from_range(lo_biased, hi_biased, Type::Int64, &end);
+                let int_range = IntRange::from_range(lo, hi, Type::Int64, end);
 
                 ctor = Constructor::IntRange(int_range);
                 fields = Fields::empty();
@@ -1337,7 +1326,7 @@ mod tests_int_range {
     #[test]
     fn signed_bias() {
         let bias = IntRange::signed_bias(Type::Int64);
-        assert_eq!(bias, 9223372036854775808u128);
+        assert_eq!(bias, 9223372036854775808i128);
     }
 
     #[test]
@@ -1376,6 +1365,16 @@ mod tests_int_range {
         } else {
             unreachable!("pattern must be integer")
         }
+    }
+
+    #[test]
+    fn from_range() {
+        let r = IntRange::from_range(i64::MIN, i64::MAX, Type::Int64, RangeEnd::Included);
+        let (low, high) = r.boundaries();
+
+        assert!(!r.is_singleton());
+        assert_eq!(low, 0);
+        assert_eq!(high, 18446744073709551615u128);
     }
 }
 
