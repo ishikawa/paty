@@ -59,6 +59,16 @@ assert 30 "
   end
   # comment 4
   puts(foo(10, 20))"
+# pattern match (case)
+assert 50 "
+  n = 10
+  m = case n
+  when 10
+    n * 5
+  else
+    n
+  end
+  puts(m)"
 
 # examples
 assert 13 "$(cat examples/foo.paty)"
