@@ -191,7 +191,10 @@ pub enum ExprKind {
     Integer(i64),
     Var(String),
 
-    Neg(Box<Expr>),
+    // unary operators
+    Minus(Box<Expr>),
+
+    // binary operators
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
@@ -386,7 +389,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         let unary = op('-')
             .repeated()
             .then(atom)
-            .foldr(|_op, rhs| Expr::new(ExprKind::Neg(Box::new(rhs))));
+            .foldr(|_op, rhs| Expr::new(ExprKind::Minus(Box::new(rhs))));
 
         // binary: "*", "/"
         let bin_op1 = unary

@@ -71,7 +71,7 @@ impl Emitter {
                 self.push_str(";\n");
                 t
             }
-            syntax::ExprKind::Neg(a) => {
+            syntax::ExprKind::Minus(a) => {
                 let t = self.new_tmp_var();
                 let ta = self.build(a);
                 self.push_str(format!("t{} = -t{}", t, ta));
