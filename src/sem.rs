@@ -40,7 +40,7 @@ fn analyze_loop<'a>(
 ) {
     match expr.kind() {
         syntax::ExprKind::Integer(_) => {}
-        syntax::ExprKind::Neg(a) => analyze_loop(a, vars, functions, errors),
+        syntax::ExprKind::Minus(a) => analyze_loop(a, vars, functions, errors),
         syntax::ExprKind::Add(a, b)
         | syntax::ExprKind::Sub(a, b)
         | syntax::ExprKind::Mul(a, b)
