@@ -60,6 +60,15 @@ assert 30 "
   # comment 4
   puts(foo(10, 20))"
 # pattern match (case)
+assert 3 "
+  case 3
+  when 1
+    puts(1)
+  when 0..=2
+    puts(2)
+  else
+    puts(3)
+  end"
 assert 152 "
   def pt(n)
     case n

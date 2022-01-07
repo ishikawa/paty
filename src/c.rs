@@ -138,6 +138,8 @@ impl Emitter {
                 t
             }
             syntax::ExprKind::Puts(args) => {
+                let t = self.new_tmp_var();
+
                 // "puts" function prints each arguments and newline character.
                 let mut t_args = vec![];
 
@@ -167,7 +169,8 @@ impl Emitter {
                 self.push_str(";\n");
 
                 // dummy
-                0
+                self.push_str(format!("t{} = INT64_C(1);\n", t));
+                t
             }
             syntax::ExprKind::Let { name, rhs, then } => {
                 let tr = self.build(rhs);
