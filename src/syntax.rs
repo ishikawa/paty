@@ -230,6 +230,21 @@ impl CaseArm {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum RangeEnd {
+    Included,
+    Excluded,
+}
+
+impl fmt::Display for RangeEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            RangeEnd::Included => "..", // Like Ruby
+            RangeEnd::Excluded => "...",
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct Pattern {
     kind: PatternKind,
@@ -262,6 +277,32 @@ impl Pattern {
 #[derive(Debug)]
 pub enum PatternKind {
     Integer(i64),
+    Range { lo: i64, hi: i64, end: RangeEnd },
+    Wildcard,
+}
+
+impl fmt::Display for PatternKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PatternKind::Integer(n) => write!(f, "{}", n),
+            PatternKind::Range { lo, hi, end } => {
+                if *lo == i64::MIN {
+                    write!(f, "int64::MIN")?;
+                } else {
+                    write!(f, "{}", lo)?;
+                }
+
+                write!(f, "{}", end)?;
+
+                if *hi == i64::MAX {
+                    write!(f, "int64::MAX")
+                } else {
+                    write!(f, "{}", hi)
+                }
+            }
+            PatternKind::Wildcard => write!(f, "_"),
+        }
+    }
 }
 
 fn token(kind: TokenKind) -> Token {

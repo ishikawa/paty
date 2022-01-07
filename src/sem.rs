@@ -1,6 +1,10 @@
 //! Semantic analysis
 use crate::syntax;
 
+use self::error::SemanticError;
+mod error;
+mod usefulness;
+
 #[derive(Debug)]
 pub struct SemAST<'a> {
     expr: &'a syntax::Expr,
@@ -17,40 +21,44 @@ impl<'a> SemAST<'a> {
 }
 
 // Analyze an AST and returns error if any.
-pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, String> {
-    analyze_loop(expr, &mut Vec::new(), &mut Vec::new())?;
-    Ok(SemAST::new(expr))
+pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, Vec<SemanticError>> {
+    let mut errors = vec![];
+
+    analyze_loop(expr, &mut Vec::new(), &mut Vec::new(), &mut errors);
+    if errors.is_empty() {
+        Ok(SemAST::new(expr))
+    } else {
+        Err(errors)
+    }
 }
 
 fn analyze_loop<'a>(
     expr: &'a syntax::Expr,
     vars: &mut Vec<&'a String>,
     functions: &mut Vec<(&'a String, &'a [String], &'a syntax::Expr)>,
-) -> Result<(), String> {
+    errors: &mut Vec<SemanticError>,
+) {
     match expr.kind() {
-        syntax::ExprKind::Integer(_) => Ok(()),
-        syntax::ExprKind::Neg(a) => analyze_loop(a, vars, functions),
+        syntax::ExprKind::Integer(_) => {}
+        syntax::ExprKind::Neg(a) => analyze_loop(a, vars, functions, errors),
         syntax::ExprKind::Add(a, b)
         | syntax::ExprKind::Sub(a, b)
         | syntax::ExprKind::Mul(a, b)
         | syntax::ExprKind::Div(a, b) => {
-            analyze_loop(a, vars, functions)?;
-            analyze_loop(b, vars, functions)
+            analyze_loop(a, vars, functions, errors);
+            analyze_loop(b, vars, functions, errors)
         }
         syntax::ExprKind::Var(name) => {
-            if vars.iter().rev().any(|var| *var == name) {
-                Ok(())
-            } else {
-                Err(format!("Cannot find variable `{}` in scope", name))
+            if !vars.iter().rev().any(|var| *var == name) {
+                errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
         }
         syntax::ExprKind::Let { name, rhs, then } => {
-            analyze_loop(rhs, vars, functions)?;
+            analyze_loop(rhs, vars, functions, errors);
 
             vars.push(name);
-            let output = analyze_loop(then, vars, functions);
+            analyze_loop(then, vars, functions, errors);
             vars.pop();
-            output
         }
         syntax::ExprKind::Call(name, args) => {
             if let Some((_, arg_names, _)) = functions
@@ -60,28 +68,24 @@ fn analyze_loop<'a>(
                 .copied()
             {
                 if arg_names.len() != args.len() {
-                    return Err(format!(
-                        "Wrong number of arguments for function `{}`: expected {}, found {}",
-                        name,
-                        arg_names.len(),
-                        args.len(),
-                    ));
+                    errors.push(SemanticError::WrongNumberOfArguments {
+                        name: name.clone(),
+                        expected: arg_names.len(),
+                        actual: args.len(),
+                    });
+                } else {
+                    for arg in args {
+                        analyze_loop(arg, vars, functions, errors);
+                    }
                 }
-
-                for arg in args {
-                    analyze_loop(arg, vars, functions)?;
-                }
-
-                Ok(())
             } else {
-                Err(format!("Cannot find function `{}` in scope", name))
+                errors.push(SemanticError::UndefinedFunction { name: name.clone() });
             }
         }
         syntax::ExprKind::Puts(args) => {
             for arg in args {
-                analyze_loop(arg, vars, functions)?;
+                analyze_loop(arg, vars, functions, errors);
             }
-            Ok(())
         }
         syntax::ExprKind::Fn {
             name,
@@ -93,30 +97,36 @@ fn analyze_loop<'a>(
             {
                 vars.extend(args);
                 {
-                    analyze_loop(body, vars, functions)?;
+                    analyze_loop(body, vars, functions, errors);
                 }
                 vars.truncate(vars.len() - args.len());
-                analyze_loop(then, vars, functions)?;
+                analyze_loop(then, vars, functions, errors);
             }
             functions.pop();
-            Ok(())
         }
         syntax::ExprKind::Case {
             head,
             arms,
             else_body,
         } => {
-            analyze_loop(head, vars, functions)?;
+            analyze_loop(head, vars, functions, errors);
 
             for arm in arms {
-                analyze_loop(arm.body(), vars, functions)?;
+                analyze_loop(arm.body(), vars, functions, errors);
             }
 
             if let Some(else_body) = else_body {
-                analyze_loop(else_body, vars, functions)?;
+                analyze_loop(else_body, vars, functions, errors);
             }
 
-            Ok(())
+            if !errors.is_empty() {
+                return;
+            }
+            // Usefulness check
+
+            if let Err(err) = usefulness::check_match(arms, else_body.is_some()) {
+                errors.extend(err);
+            }
         }
     }
 }

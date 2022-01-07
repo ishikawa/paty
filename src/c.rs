@@ -1,6 +1,7 @@
 //! C code generator
 use crate::sem;
 use crate::syntax;
+use crate::syntax::PatternKind;
 
 #[derive(Debug)]
 struct Emitter {
@@ -237,15 +238,26 @@ impl Emitter {
                 // Construct "if-else" statement from each branches.
                 for (i, arm) in arms.iter().enumerate() {
                     // Build an immediate value from the pattern
-                    let rhs = match arm.pattern().kind() {
-                        syntax::PatternKind::Integer(n) => format!("INT64_C({})", n),
+                    let condition = match arm.pattern().kind() {
+                        PatternKind::Integer(n) => format!("t{} == INT64_C({})", t_head, n),
+                        PatternKind::Range { lo, hi, end } => match end {
+                            syntax::RangeEnd::Included => format!(
+                                "t{} >= INT64_C({}) && t{} <= INT64_C({})",
+                                t_head, lo, t_head, hi
+                            ),
+                            syntax::RangeEnd::Excluded => format!(
+                                "t{} >= INT64_C({}) && t{} < INT64_C({})",
+                                t_head, lo, t_head, hi
+                            ),
+                        },
+                        PatternKind::Wildcard => "1".to_string(),
                     };
 
                     // Build "if" statement
                     if i > 0 {
                         self.push_str("else ");
                     }
-                    self.push_str(format!("if (t{} == {}) {{\n", t_head, rhs));
+                    self.push_str(format!("if ({}) {{\n", condition));
                     let t_body = self.build(arm.body());
                     self.push_str(format!("t{} = t{}", t, t_body));
                     self.push_str(";\n");
