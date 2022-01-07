@@ -60,7 +60,7 @@ impl Emitter {
         t
     }
 
-    pub fn build(&mut self, expr: &syntax::Expr) -> i32 {
+    fn build(&mut self, expr: &syntax::Expr) -> i32 {
         match expr.kind() {
             syntax::ExprKind::Integer(n) => {
                 let t = self.new_tmp_var();
@@ -138,8 +138,6 @@ impl Emitter {
                 t
             }
             syntax::ExprKind::Puts(args) => {
-                let t = self.new_tmp_var();
-
                 // "puts" function prints each arguments and newline character.
                 let mut t_args = vec![];
 
@@ -169,8 +167,7 @@ impl Emitter {
                 self.push_str(";\n");
 
                 // dummy
-                self.push_str(format!("t{} = INT64_C(1);\n", t));
-                t
+                0
             }
             syntax::ExprKind::Let { name, rhs, then } => {
                 let tr = self.build(rhs);

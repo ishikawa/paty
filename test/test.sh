@@ -61,14 +61,15 @@ assert 30 "
   puts(foo(10, 20))"
 # pattern match (case)
 assert 3 "
-  case 3
+  n = case 3
   when 1
-    puts(1)
+    1
   when 0..=2
-    puts(2)
+    2
   else
-    puts(3)
-  end"
+    3
+  end
+  puts(n)"
 assert 152 "
   def pt(n)
     case n
