@@ -60,15 +60,20 @@ assert 30 "
   # comment 4
   puts(foo(10, 20))"
 # pattern match (case)
-assert 50 "
-  n = 10
-  m = case n
-  when 10
-    n * 5
-  else
-    n
+assert 152 "
+  def pt(n)
+    case n
+    when 0..=5
+      n * 2
+    when 5..<10
+      n * 3
+    when 10
+      n * 4
+    else
+      n * 5
+    end
   end
-  puts(m)"
+  puts(pt(1) + pt(5) + pt(10) + pt(20))"
 
 # examples
 assert 13 "$(cat examples/foo.paty)"
