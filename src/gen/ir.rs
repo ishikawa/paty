@@ -39,7 +39,11 @@ impl fmt::Display for Function<'_> {
         }
         writeln!(f, "):")?;
         for stmt in &self.body {
-            writeln!(f, "  {:?}", stmt)?;
+            let lines = stmt.to_string();
+            let lines = lines.split("\n");
+            for line in lines {
+                writeln!(f, "  {}", line)?;
+            }
         }
         Ok(())
     }
@@ -72,15 +76,42 @@ pub enum Stmt<'a> {
     },
     Cond {
         /// The index of temporary variable which holds the result.
-        ret: Option<&'a TmpVar>,
+        ret: &'a TmpVar,
         branches: Vec<Branch<'a>>,
     },
     // "return" statement
     Ret(&'a Expr<'a>),
     // "Phi" function for a basic block. This statement must appear at the end of
-    // each branch. It will be removed if the result location of a branch is None and
-    // an expression has no side-effect.
+    // each branch.
     Phi(&'a Expr<'a>),
+}
+
+impl fmt::Display for Stmt<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Stmt::TmpVarDef { var, init } => {
+                write!(f, "t{} (used: {}) = {:?}", var.index, var.used.get(), init)?;
+            }
+            Stmt::VarDef { name, init } => {
+                write!(f, "{} = {:?}", name, init)?;
+            }
+            Stmt::Ret(expr) => {
+                write!(f, "return {:?}", expr)?;
+            }
+            Stmt::Phi(tmp) => {
+                write!(f, "phi {:?}", tmp)?;
+            }
+            Stmt::Cond { ret, branches } => {
+                write!(f, "t{} (used: {}) = ", ret.index, ret.used.get())?;
+                writeln!(f, "cond {{")?;
+                for branch in branches {
+                    writeln!(f, "  {:?}", branch)?;
+                }
+                write!(f, "}}")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -378,10 +409,7 @@ impl<'a> Builder<'a> {
                 }
 
                 let t = self.next_temp_var();
-                let stmt = Stmt::Cond {
-                    branches,
-                    ret: Some(t),
-                };
+                let stmt = Stmt::Cond { branches, ret: t };
                 stmts.push(stmt);
 
                 self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))

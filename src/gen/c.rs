@@ -85,21 +85,21 @@ impl<'a> Emitter<'a> {
             }
             Stmt::Phi(expr) => {
                 if let Some(var) = self.phi_target {
-                    code.push_str(&format!("t{} = ", var.index));
+                    if var.used.get() > 0 {
+                        code.push_str(&format!("t{} = ", var.index));
+                    }
                 }
                 self.emit_expr(expr, code);
                 code.push_str(";\n");
             }
             Stmt::Cond { branches, ret } => {
                 let saved_phi_target = self.phi_target;
-                self.phi_target = *ret;
+                self.phi_target = Some(ret);
 
-                if let Some(var) = ret {
-                    if var.used.get() > 0 {
-                        code.push_str("int64_t ");
-                        code.push_str(&format!("t{}", var.index));
-                        code.push_str(";\n");
-                    }
+                if ret.used.get() > 0 {
+                    code.push_str("int64_t ");
+                    code.push_str(&format!("t{}", ret.index));
+                    code.push_str(";\n");
                 }
 
                 // Construct "if-else" statement from each branches.

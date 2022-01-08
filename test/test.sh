@@ -71,6 +71,15 @@ assert 3 "
     3
   end
   puts(n)"
+assert 3 "
+  case 3
+  when 1
+    puts(1)
+  when 0..=2
+    puts(1)
+  else
+    puts(1)
+  end"
 assert 152 "
   def pt(n)
     case n
