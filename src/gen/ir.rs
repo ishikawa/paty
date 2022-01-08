@@ -201,6 +201,11 @@ impl<'a> Builder<'a> {
             is_entry_point: true,
         };
         program.functions.push(main);
+
+        // Optimize
+        //let mut optimizer = Optimizer::new();
+        //optimizer.optimize(&mut program);
+
         program
     }
 
@@ -429,6 +434,123 @@ impl<'a> Builder<'a> {
 
                 self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))
             }
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct Optimizer {}
+
+impl<'a> Optimizer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn optimize(&mut self, program: &mut Program<'a>) {
+        for fun in &mut program.functions {
+            self.analyze_function(fun);
+        }
+    }
+
+    fn analyze_function(&mut self, fun: &Function<'a>) {
+        for stmt in &fun.body {
+            self.analyze_stmt(stmt);
+        }
+    }
+
+    fn analyze_stmt(&mut self, stmt: &Stmt<'a>) {
+        match stmt {
+            Stmt::TmpVarDef { init, .. } => {
+                self.analyze_expr(init);
+            }
+            Stmt::VarDef { init, .. } => {
+                self.analyze_expr(init);
+            }
+            Stmt::Ret(expr) => {
+                self.analyze_expr(expr);
+            }
+            Stmt::Phi(expr) => {
+                self.analyze_expr(expr);
+            }
+            Stmt::Cond { branches, .. } => {
+                // Construct "if-else" statement from each branches.
+                for branch in branches {
+                    if let Some(condition) = branch.condition {
+                        self.analyze_expr(condition);
+                    }
+
+                    // body
+                    for stmt in &branch.body {
+                        self.analyze_stmt(stmt);
+                    }
+                }
+            }
+        }
+    }
+
+    fn analyze_expr(&mut self, expr: &Expr<'a>) {
+        match expr {
+            Expr::Minus(operand) => {
+                self.analyze_expr(operand);
+            }
+            Expr::Add(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Sub(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Mul(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Div(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Lt(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Le(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Gt(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Ge(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Eq(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::And(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Call { args, .. } => {
+                for arg in args {
+                    self.analyze_expr(arg);
+                }
+            }
+            Expr::Printf { args } => {
+                for arg in args {
+                    self.analyze_expr(arg);
+                }
+            }
+            Expr::Value(value) => self.analyze_value(value),
+        }
+    }
+
+    fn analyze_value(&mut self, value: &Value) {
+        if let Value::TmpVar(t) = value {
+            let u = t.used.get();
+            t.used.set(u + 1);
         }
     }
 }
