@@ -64,8 +64,10 @@ impl<'a> Emitter<'a> {
     fn emit_stmt(&mut self, stmt: &Stmt<'a>, code: &mut String) {
         match stmt {
             Stmt::TmpVarDef { var, init } => {
-                code.push_str("int64_t ");
-                code.push_str(&format!("t{} = ", var.index));
+                if var.used.get() > 0 {
+                    code.push_str("int64_t ");
+                    code.push_str(&format!("t{} = ", var.index));
+                }
                 self.emit_expr(init, code);
                 code.push_str(";\n");
             }
@@ -91,6 +93,14 @@ impl<'a> Emitter<'a> {
             Stmt::Cond { branches, ret } => {
                 let saved_phi_target = self.phi_target;
                 self.phi_target = *ret;
+
+                if let Some(var) = ret {
+                    if var.used.get() > 0 {
+                        code.push_str("int64_t ");
+                        code.push_str(&format!("t{}", var.index));
+                        code.push_str(";\n");
+                    }
+                }
 
                 // Construct "if-else" statement from each branches.
                 for (i, branch) in branches.iter().enumerate() {
@@ -120,7 +130,7 @@ impl<'a> Emitter<'a> {
     fn emit_expr(&mut self, expr: &Expr<'a>, code: &mut String) {
         match expr {
             Expr::Minus(operand) => {
-                code.push_str("-");
+                code.push('-');
                 self.emit_expr(operand, code);
             }
             Expr::Add(lhs, rhs) => {
