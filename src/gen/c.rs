@@ -61,13 +61,15 @@ impl<'a> Emitter {
 
     fn emit_stmt(&mut self, stmt: &Stmt<'a>, code: &mut String) {
         match stmt {
-            Stmt::TmpVarDef { var, init } => {
-                if var.used.get() > 0 {
-                    code.push_str("int64_t ");
-                    code.push_str(&format!("t{} = ", var.index));
+            Stmt::TmpVarDef { var, init, pruned } => {
+                if !pruned.get() {
+                    if var.used.get() > 0 {
+                        code.push_str("int64_t ");
+                        code.push_str(&format!("t{} = ", var.index));
+                    }
+                    self.emit_expr(init, code);
+                    code.push_str(";\n");
                 }
-                self.emit_expr(init, code);
-                code.push_str(";\n");
             }
             Stmt::VarDef { name, init } => {
                 code.push_str("int64_t ");
@@ -81,19 +83,14 @@ impl<'a> Emitter {
                 self.emit_expr(expr, code);
                 code.push_str(";\n");
             }
-            Stmt::Phi { var, value } => {
-                if var.used.get() > 0 {
-                    code.push_str(&format!("t{} = ", var.index));
-                }
-                if let Expr::Value(Value::TmpVar(var)) = value {
-                    if var.used.get() == 0 {
-                        // undefined variable
-                        return;
+            Stmt::Phi { var, value, pruned } => {
+                if !pruned.get() {
+                    if var.used.get() > 0 {
+                        code.push_str(&format!("t{} = ", var.index));
                     }
+                    self.emit_expr(value, code);
+                    code.push_str(";\n");
                 }
-
-                self.emit_expr(value, code);
-                code.push_str(";\n");
             }
             Stmt::Cond { branches, var } => {
                 if var.used.get() > 0 {
@@ -226,7 +223,13 @@ impl<'a> Emitter {
             {
                 code.push_str(&format!("INT64_C({})", *n))
             }
-            Value::TmpVar(t) => code.push_str(&format!("t{}", t.index)),
+            Value::TmpVar(t) => {
+                if let Some(expr) = t.immediate.get() {
+                    self.emit_expr(expr, code);
+                } else {
+                    code.push_str(&format!("t{}", t.index));
+                }
+            }
             Value::Var(name) => code.push_str(name),
         }
     }

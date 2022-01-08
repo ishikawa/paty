@@ -33,7 +33,7 @@ impl fmt::Display for Function<'_> {
         write!(f, "(")?;
         for (i, arg) in self.args.iter().enumerate() {
             write!(f, "{}", arg)?;
-            if i == (self.args.len() - 1) {
+            if i < (self.args.len() - 1) {
                 write!(f, ", ")?;
             }
         }
@@ -50,16 +50,18 @@ impl fmt::Display for Function<'_> {
 }
 
 #[derive(Debug)]
-pub struct TmpVar {
+pub struct TmpVar<'a> {
     pub index: usize,
     pub used: Cell<usize>,
+    pub immediate: Cell<Option<&'a Expr<'a>>>,
 }
 
-impl TmpVar {
+impl<'a> TmpVar<'a> {
     pub fn new(index: usize) -> Self {
         Self {
             index,
             used: Cell::new(0),
+            immediate: Cell::new(None),
         }
     }
 }
@@ -67,8 +69,9 @@ impl TmpVar {
 #[derive(Debug)]
 pub enum Stmt<'a> {
     TmpVarDef {
-        var: &'a TmpVar,
+        var: &'a TmpVar<'a>,
         init: &'a Expr<'a>,
+        pruned: Cell<bool>,
     },
     VarDef {
         name: String,
@@ -76,14 +79,15 @@ pub enum Stmt<'a> {
     },
     Cond {
         /// The index of temporary variable which holds the result.
-        var: &'a TmpVar,
+        var: &'a TmpVar<'a>,
         branches: Vec<Branch<'a>>,
     },
     // "Phi" function for a basic block. This statement must appear at the end of
     // each branch.
     Phi {
-        var: &'a TmpVar,
+        var: &'a TmpVar<'a>,
         value: &'a Expr<'a>,
+        pruned: Cell<bool>,
     },
     // "return" statement
     Ret(&'a Expr<'a>),
@@ -92,8 +96,15 @@ pub enum Stmt<'a> {
 impl fmt::Display for Stmt<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Stmt::TmpVarDef { var, init } => {
-                write!(f, "t{} (used: {}) = {:?}", var.index, var.used.get(), init)?;
+            Stmt::TmpVarDef { var, init, pruned } => {
+                write!(
+                    f,
+                    "t{} (used: {}, pruned: {}) = {:?}",
+                    var.index,
+                    var.used.get(),
+                    pruned.get(),
+                    init
+                )?;
             }
             Stmt::VarDef { name, init } => {
                 write!(f, "{} = {:?}", name, init)?;
@@ -101,12 +112,13 @@ impl fmt::Display for Stmt<'_> {
             Stmt::Ret(expr) => {
                 write!(f, "return {:?}", expr)?;
             }
-            Stmt::Phi { var, value } => {
+            Stmt::Phi { var, value, pruned } => {
                 write!(
                     f,
-                    "phi(t{} (used: {}) = {:?})",
+                    "phi(t{} (used: {}, pruned: {}) = {:?})",
                     var.index,
                     var.used.get(),
+                    pruned.get(),
                     value
                 )?;
             }
@@ -157,14 +169,14 @@ pub enum Value<'a> {
     /// Native "int" type.
     Int(i32),
     Int64(i64),
-    TmpVar(&'a TmpVar),
+    TmpVar(&'a TmpVar<'a>),
     Var(String),
 }
 
 pub struct Builder<'a> {
     /// An arena allocators for nodes.
     expr_arena: &'a Arena<Expr<'a>>,
-    tmp_var_arena: &'a Arena<TmpVar>,
+    tmp_var_arena: &'a Arena<TmpVar<'a>>,
     /// The current index of temporary variables. It starts from 0 and
     /// incremented by creating a new temporary variable. This index will
     /// be saved and reset to 0 when function enter, and restored when function exit.
@@ -172,7 +184,7 @@ pub struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    pub fn new(expr_arena: &'a Arena<Expr<'a>>, tmp_var_arena: &'a Arena<TmpVar>) -> Self {
+    pub fn new(expr_arena: &'a Arena<Expr<'a>>, tmp_var_arena: &'a Arena<TmpVar<'a>>) -> Self {
         Self {
             expr_arena,
             tmp_var_arena,
@@ -180,7 +192,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    pub fn build(&mut self, ast: &sem::SemAST) -> Program {
+    pub fn build(&mut self, ast: &sem::SemAST) -> Program<'a> {
         let mut program = Program { functions: vec![] };
         let mut stmts = vec![];
 
@@ -209,7 +221,7 @@ impl<'a> Builder<'a> {
         program
     }
 
-    fn next_temp_var(&mut self) -> &'a TmpVar {
+    fn next_temp_var(&mut self) -> &'a TmpVar<'a> {
         let t = self.tmp_var_index;
         self.tmp_var_index += 1;
         self.tmp_var_arena.alloc(TmpVar::new(t))
@@ -217,7 +229,11 @@ impl<'a> Builder<'a> {
 
     fn push_expr(&mut self, expr: &'a Expr<'a>, stmts: &mut Vec<Stmt<'a>>) -> &'a Expr<'a> {
         let t = self.next_temp_var();
-        let stmt = Stmt::TmpVarDef { var: t, init: expr };
+        let stmt = Stmt::TmpVarDef {
+            var: t,
+            init: expr,
+            pruned: Cell::new(false),
+        };
         stmts.push(stmt);
 
         self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))
@@ -402,6 +418,7 @@ impl<'a> Builder<'a> {
                         branch_stmts.push(Stmt::Phi {
                             var: t,
                             value: self.inc_used(ret),
+                            pruned: Cell::new(false),
                         });
 
                         Branch {
@@ -417,6 +434,7 @@ impl<'a> Builder<'a> {
                     branch_stmts.push(Stmt::Phi {
                         var: t,
                         value: self.inc_used(ret),
+                        pruned: Cell::new(false),
                     });
 
                     let branch = Branch {
@@ -468,7 +486,16 @@ impl<'a> Optimizer {
 
     fn optimize_stmt(&mut self, stmt: &Stmt<'a>) {
         match stmt {
-            Stmt::TmpVarDef { init, .. } => {
+            Stmt::TmpVarDef { var, init, pruned } => {
+                if var.used.get() == 1 {
+                    // This temporary variable is used only once, so it could be
+                    // replaced with the expression if it has no side-effect.
+                    if let Expr::Value(_) = init {
+                        var.immediate.set(Some(init));
+                        pruned.set(true);
+                        return;
+                    }
+                }
                 self.optimize_expr(init);
             }
             Stmt::VarDef { init, .. } => {
@@ -477,12 +504,15 @@ impl<'a> Optimizer {
             Stmt::Ret(expr) => {
                 self.optimize_expr(expr);
             }
-            Stmt::Phi { var, value } => {
+            Stmt::Phi { var, value, pruned } => {
                 if var.used.get() == 0 {
                     // The result of cond expression is unused.
                     // So decrement the used count of a value because we increment it in
                     // Builder::build().
-                    self.decr_used(value);
+                    if let Some(0) = self.decr_used(value) {
+                        pruned.set(true);
+                        return;
+                    }
                 }
 
                 self.optimize_expr(value);
