@@ -1,10 +1,21 @@
 use crate::syntax::PatternKind;
 use crate::{sem, syntax};
+use std::cell::Cell;
+use std::fmt;
 use typed_arena::Arena;
 
 #[derive(Debug)]
 pub struct Program<'a> {
     pub functions: Vec<Function<'a>>,
+}
+
+impl fmt::Display for Program<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for fun in &self.functions {
+            write!(f, "{}", fun)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -16,10 +27,43 @@ pub struct Function<'a> {
     pub is_entry_point: bool,
 }
 
+impl fmt::Display for Function<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        write!(f, "(")?;
+        for (i, arg) in self.args.iter().enumerate() {
+            write!(f, "{}", arg)?;
+            if i == (self.args.len() - 1) {
+                write!(f, ", ")?;
+            }
+        }
+        writeln!(f, "):")?;
+        for stmt in &self.body {
+            writeln!(f, "  {:?}", stmt)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct TmpVar {
+    pub index: usize,
+    pub used: Cell<usize>,
+}
+
+impl TmpVar {
+    pub fn new(index: usize) -> Self {
+        Self {
+            index,
+            used: Cell::new(0),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Stmt<'a> {
     TmpVarDef {
-        index: usize,
+        var: &'a TmpVar,
         init: &'a Expr<'a>,
     },
     VarDef {
@@ -28,7 +72,7 @@ pub enum Stmt<'a> {
     },
     Cond {
         /// The index of temporary variable which holds the result.
-        ret: Option<usize>,
+        ret: Option<&'a TmpVar>,
         branches: Vec<Branch<'a>>,
     },
     // "return" statement
@@ -65,21 +109,22 @@ pub enum Expr<'a> {
     Printf {
         args: Vec<&'a Expr<'a>>,
     },
-    Value(Value),
+    Value(Value<'a>),
 }
 
 #[derive(Debug)]
-pub enum Value {
+pub enum Value<'a> {
     /// Native "int" type.
     Int(i32),
     Int64(i64),
-    TmpVar(usize),
+    TmpVar(&'a TmpVar),
     Var(String),
 }
 
 pub struct Builder<'a> {
-    /// An allocation arena for expressions.
+    /// An arena allocators for nodes.
     expr_arena: &'a Arena<Expr<'a>>,
+    tmp_var_arena: &'a Arena<TmpVar>,
     /// The current index of temporary variables. It starts from 0 and
     /// incremented by creating a new temporary variable. This index will
     /// be saved and reset to 0 when function enter, and restored when function exit.
@@ -87,9 +132,10 @@ pub struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    pub fn new(expr_arena: &'a Arena<Expr<'a>>) -> Self {
+    pub fn new(expr_arena: &'a Arena<Expr<'a>>, tmp_var_arena: &'a Arena<TmpVar>) -> Self {
         Self {
             expr_arena,
+            tmp_var_arena,
             tmp_var_index: 0,
         }
     }
@@ -115,24 +161,37 @@ impl<'a> Builder<'a> {
             is_entry_point: true,
         };
         program.functions.push(main);
+
+        // Optimize
+        //let mut optimizer = Optimizer::new();
+        //optimizer.optimize(&mut program);
+
         program
     }
 
-    fn next_temp_var(&mut self) -> usize {
+    fn next_temp_var(&mut self) -> &'a TmpVar {
         let t = self.tmp_var_index;
         self.tmp_var_index += 1;
-        t
+        self.tmp_var_arena.alloc(TmpVar::new(t))
     }
 
     fn push_expr(&mut self, expr: &'a Expr<'a>, stmts: &mut Vec<Stmt<'a>>) -> &'a Expr<'a> {
         let t = self.next_temp_var();
         let stmt = Stmt::TmpVarDef {
-            index: t,
-            init: expr,
+            var: t,
+            init: self.mark_used(expr),
         };
         stmts.push(stmt);
 
         self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))
+    }
+
+    fn mark_used(&self, expr: &'a Expr<'a>) -> &'a Expr<'a> {
+        if let Expr::Value(Value::TmpVar(t)) = expr {
+            t.used.set(t.used.get() + 1);
+        }
+
+        expr
     }
 
     fn _build(
@@ -150,35 +209,43 @@ impl<'a> Builder<'a> {
             }
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
-                let expr = self.expr_arena.alloc(Expr::Minus(a));
+                let expr = self.expr_arena.alloc(Expr::Minus(self.mark_used(a)));
 
                 self.push_expr(expr, stmts)
             }
             syntax::ExprKind::Add(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self.expr_arena.alloc(Expr::Add(a, b));
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Add(self.mark_used(a), self.mark_used(b)));
 
                 self.push_expr(expr, stmts)
             }
             syntax::ExprKind::Sub(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self.expr_arena.alloc(Expr::Sub(a, b));
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Sub(self.mark_used(a), self.mark_used(b)));
 
                 self.push_expr(expr, stmts)
             }
             syntax::ExprKind::Mul(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self.expr_arena.alloc(Expr::Mul(a, b));
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Mul(self.mark_used(a), self.mark_used(b)));
 
                 self.push_expr(expr, stmts)
             }
             syntax::ExprKind::Div(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self.expr_arena.alloc(Expr::Div(a, b));
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Div(self.mark_used(a), self.mark_used(b)));
 
                 self.push_expr(expr, stmts)
             }
@@ -193,7 +260,10 @@ impl<'a> Builder<'a> {
                     name: name.clone(),
                     args: args
                         .iter()
-                        .map(|a| self._build(a, program, stmts))
+                        .map(|a| {
+                            let a = self._build(a, program, stmts);
+                            self.mark_used(a)
+                        })
                         .collect(),
                 };
                 let expr = self.expr_arena.alloc(expr);
@@ -204,7 +274,10 @@ impl<'a> Builder<'a> {
                 let expr = Expr::Printf {
                     args: args
                         .iter()
-                        .map(|a| self._build(a, program, stmts))
+                        .map(|a| {
+                            let a = self._build(a, program, stmts);
+                            self.mark_used(a)
+                        })
                         .collect(),
                 };
                 let expr = self.expr_arena.alloc(expr);
@@ -215,7 +288,7 @@ impl<'a> Builder<'a> {
                 let init = self._build(rhs, program, stmts);
                 let stmt = Stmt::VarDef {
                     name: name.clone(),
-                    init,
+                    init: self.mark_used(init),
                 };
                 stmts.push(stmt);
                 self._build(then, program, stmts)
@@ -232,7 +305,7 @@ impl<'a> Builder<'a> {
 
                 let mut body_stmts = vec![];
                 let ret = self._build(body, program, &mut body_stmts);
-                body_stmts.push(Stmt::Ret(ret));
+                body_stmts.push(Stmt::Ret(self.mark_used(ret)));
 
                 let fun = Function {
                     name: name.clone(),
@@ -268,14 +341,15 @@ impl<'a> Builder<'a> {
                             PatternKind::Range { lo, hi, end } => {
                                 let lo = self.expr_arena.alloc(Expr::Value(Value::Int64(*lo)));
                                 let hi = self.expr_arena.alloc(Expr::Value(Value::Int64(*hi)));
-                                let lhs = self.expr_arena.alloc(Expr::Ge(t_head, lo));
+                                let lhs =
+                                    self.expr_arena.alloc(Expr::Ge(self.mark_used(t_head), lo));
 
                                 let rhs = match end {
                                     syntax::RangeEnd::Included => {
-                                        self.expr_arena.alloc(Expr::Le(t_head, hi))
+                                        self.expr_arena.alloc(Expr::Le(self.mark_used(t_head), hi))
                                     }
                                     syntax::RangeEnd::Excluded => {
-                                        self.expr_arena.alloc(Expr::Lt(t_head, hi))
+                                        self.expr_arena.alloc(Expr::Lt(self.mark_used(t_head), hi))
                                     }
                                 };
                                 self.expr_arena.alloc(Expr::And(lhs, rhs))
@@ -287,7 +361,7 @@ impl<'a> Builder<'a> {
 
                         let mut branch_stmts = vec![];
                         let ret = self._build(arm.body(), program, &mut branch_stmts);
-                        branch_stmts.push(Stmt::Phi(ret));
+                        branch_stmts.push(Stmt::Phi(self.mark_used(ret)));
 
                         Branch {
                             condition: Some(condition),
@@ -299,7 +373,7 @@ impl<'a> Builder<'a> {
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
                     let ret = self._build(else_body, program, &mut branch_stmts);
-                    branch_stmts.push(Stmt::Phi(ret));
+                    branch_stmts.push(Stmt::Phi(self.mark_used(ret)));
 
                     let branch = Branch {
                         condition: None,
@@ -317,6 +391,123 @@ impl<'a> Builder<'a> {
 
                 self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))
             }
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct Optimizer {}
+
+impl<'a> Optimizer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn optimize(&mut self, program: &mut Program<'a>) {
+        for fun in &mut program.functions {
+            self.analyze_function(fun);
+        }
+    }
+
+    fn analyze_function(&mut self, fun: &Function<'a>) {
+        for stmt in &fun.body {
+            self.analyze_stmt(stmt);
+        }
+    }
+
+    fn analyze_stmt(&mut self, stmt: &Stmt<'a>) {
+        match stmt {
+            Stmt::TmpVarDef { init, .. } => {
+                self.analyze_expr(init);
+            }
+            Stmt::VarDef { init, .. } => {
+                self.analyze_expr(init);
+            }
+            Stmt::Ret(expr) => {
+                self.analyze_expr(expr);
+            }
+            Stmt::Phi(expr) => {
+                self.analyze_expr(expr);
+            }
+            Stmt::Cond { branches, .. } => {
+                // Construct "if-else" statement from each branches.
+                for branch in branches {
+                    if let Some(condition) = branch.condition {
+                        self.analyze_expr(condition);
+                    }
+
+                    // body
+                    for stmt in &branch.body {
+                        self.analyze_stmt(stmt);
+                    }
+                }
+            }
+        }
+    }
+
+    fn analyze_expr(&mut self, expr: &Expr<'a>) {
+        match expr {
+            Expr::Minus(operand) => {
+                self.analyze_expr(operand);
+            }
+            Expr::Add(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Sub(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Mul(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Div(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Lt(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Le(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Gt(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Ge(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Eq(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::And(lhs, rhs) => {
+                self.analyze_expr(lhs);
+                self.analyze_expr(rhs);
+            }
+            Expr::Call { args, .. } => {
+                for arg in args {
+                    self.analyze_expr(arg);
+                }
+            }
+            Expr::Printf { args } => {
+                for arg in args {
+                    self.analyze_expr(arg);
+                }
+            }
+            Expr::Value(value) => self.analyze_value(value),
+        }
+    }
+
+    fn analyze_value(&mut self, value: &Value) {
+        if let Value::TmpVar(t) = value {
+            let u = t.used.get();
+            t.used.set(u + 1);
         }
     }
 }

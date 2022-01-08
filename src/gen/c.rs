@@ -1,23 +1,23 @@
 //! C code generator
-use super::ir::{Expr, Function, Program, Stmt, Value};
+use super::ir::{Expr, Function, Program, Stmt, TmpVar, Value};
 
 #[derive(Debug)]
-pub struct Emitter {
-    phi_target: Option<usize>,
+pub struct Emitter<'a> {
+    phi_target: Option<&'a TmpVar>,
 }
 
-impl Default for Emitter {
+impl<'a> Default for Emitter<'a> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Emitter {
+impl<'a> Emitter<'a> {
     pub fn new() -> Self {
         Self { phi_target: None }
     }
 
-    pub fn emit<'a>(&mut self, program: &'a Program<'a>) -> String {
+    pub fn emit(&mut self, program: &'a Program<'a>) -> String {
         let mut code = [
             "#include <stdio.h>",
             "#include <stdint.h>",
@@ -33,7 +33,7 @@ impl Emitter {
         code
     }
 
-    fn emit_function<'a>(&mut self, fun: &Function<'a>, code: &mut String) {
+    fn emit_function(&mut self, fun: &Function<'a>, code: &mut String) {
         if fun.is_entry_point {
             // 'main' must return 'int'
             code.push_str("int ");
@@ -61,11 +61,11 @@ impl Emitter {
         code.push_str("}\n");
     }
 
-    fn emit_stmt<'a>(&mut self, stmt: &Stmt<'a>, code: &mut String) {
+    fn emit_stmt(&mut self, stmt: &Stmt<'a>, code: &mut String) {
         match stmt {
-            Stmt::TmpVarDef { index, init } => {
+            Stmt::TmpVarDef { var, init } => {
                 code.push_str("int64_t ");
-                code.push_str(&format!("t{} = ", index));
+                code.push_str(&format!("t{} = ", var.index));
                 self.emit_expr(init, code);
                 code.push_str(";\n");
             }
@@ -82,8 +82,8 @@ impl Emitter {
                 code.push_str(";\n");
             }
             Stmt::Phi(expr) => {
-                if let Some(index) = self.phi_target {
-                    code.push_str(&format!("t{} = ", index));
+                if let Some(var) = self.phi_target {
+                    code.push_str(&format!("t{} = ", var.index));
                 }
                 self.emit_expr(expr, code);
                 code.push_str(";\n");
@@ -117,9 +117,12 @@ impl Emitter {
         }
     }
 
-    fn emit_expr<'a>(&mut self, expr: &Expr<'a>, code: &mut String) {
+    fn emit_expr(&mut self, expr: &Expr<'a>, code: &mut String) {
         match expr {
-            Expr::Minus(_) => todo!(),
+            Expr::Minus(operand) => {
+                code.push_str("-");
+                self.emit_expr(operand, code);
+            }
             Expr::Add(lhs, rhs) => {
                 self.emit_expr(lhs, code);
                 code.push_str(" + ");
@@ -215,7 +218,7 @@ impl Emitter {
             {
                 code.push_str(&format!("INT64_C({})", *n))
             }
-            Value::TmpVar(i) => code.push_str(&format!("t{}", *i)),
+            Value::TmpVar(t) => code.push_str(&format!("t{}", t.index)),
             Value::Var(name) => code.push_str(name),
         }
     }

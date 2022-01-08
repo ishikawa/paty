@@ -45,8 +45,13 @@ fn main() {
 
     {
         let expr_arena = Arena::new();
-        let mut builder = gen::ir::Builder::new(&expr_arena);
+        let tmp_var_arena = Arena::new();
+
+        let mut builder = gen::ir::Builder::new(&expr_arena, &tmp_var_arena);
         let program = builder.build(&ast);
+
+        eprintln!("{}", program);
+
         let mut emitter = gen::c::Emitter::new();
         let code = emitter.emit(&program);
 
