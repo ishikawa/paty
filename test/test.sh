@@ -76,9 +76,9 @@ assert 3 "
   when 1
     puts(1)
   when 0..=2
-    puts(1)
+    puts(2)
   else
-    puts(1)
+    puts(3)
   end"
 assert 152 "
   def pt(n)

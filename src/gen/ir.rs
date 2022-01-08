@@ -202,9 +202,9 @@ impl<'a> Builder<'a> {
         };
         program.functions.push(main);
 
-        // Optimize
-        //let mut optimizer = Optimizer::new();
-        //optimizer.optimize(&mut program);
+        // post process
+        let mut optimizer = Optimizer::new();
+        optimizer.optimize(&mut program);
 
         program
     }
@@ -217,16 +217,13 @@ impl<'a> Builder<'a> {
 
     fn push_expr(&mut self, expr: &'a Expr<'a>, stmts: &mut Vec<Stmt<'a>>) -> &'a Expr<'a> {
         let t = self.next_temp_var();
-        let stmt = Stmt::TmpVarDef {
-            var: t,
-            init: self.mark_used(expr),
-        };
+        let stmt = Stmt::TmpVarDef { var: t, init: expr };
         stmts.push(stmt);
 
         self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))
     }
 
-    fn mark_used(&self, expr: &'a Expr<'a>) -> &'a Expr<'a> {
+    fn inc_used(&self, expr: &'a Expr<'a>) -> &'a Expr<'a> {
         if let Expr::Value(Value::TmpVar(t)) = expr {
             t.used.set(t.used.get() + 1);
         }
@@ -249,7 +246,7 @@ impl<'a> Builder<'a> {
             }
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
-                let expr = self.expr_arena.alloc(Expr::Minus(self.mark_used(a)));
+                let expr = self.expr_arena.alloc(Expr::Minus(self.inc_used(a)));
 
                 self.push_expr(expr, stmts)
             }
@@ -258,7 +255,7 @@ impl<'a> Builder<'a> {
                 let b = self._build(b, program, stmts);
                 let expr = self
                     .expr_arena
-                    .alloc(Expr::Add(self.mark_used(a), self.mark_used(b)));
+                    .alloc(Expr::Add(self.inc_used(a), self.inc_used(b)));
 
                 self.push_expr(expr, stmts)
             }
@@ -267,7 +264,7 @@ impl<'a> Builder<'a> {
                 let b = self._build(b, program, stmts);
                 let expr = self
                     .expr_arena
-                    .alloc(Expr::Sub(self.mark_used(a), self.mark_used(b)));
+                    .alloc(Expr::Sub(self.inc_used(a), self.inc_used(b)));
 
                 self.push_expr(expr, stmts)
             }
@@ -276,7 +273,7 @@ impl<'a> Builder<'a> {
                 let b = self._build(b, program, stmts);
                 let expr = self
                     .expr_arena
-                    .alloc(Expr::Mul(self.mark_used(a), self.mark_used(b)));
+                    .alloc(Expr::Mul(self.inc_used(a), self.inc_used(b)));
 
                 self.push_expr(expr, stmts)
             }
@@ -285,7 +282,7 @@ impl<'a> Builder<'a> {
                 let b = self._build(b, program, stmts);
                 let expr = self
                     .expr_arena
-                    .alloc(Expr::Div(self.mark_used(a), self.mark_used(b)));
+                    .alloc(Expr::Div(self.inc_used(a), self.inc_used(b)));
 
                 self.push_expr(expr, stmts)
             }
@@ -302,7 +299,7 @@ impl<'a> Builder<'a> {
                         .iter()
                         .map(|a| {
                             let a = self._build(a, program, stmts);
-                            self.mark_used(a)
+                            self.inc_used(a)
                         })
                         .collect(),
                 };
@@ -316,7 +313,7 @@ impl<'a> Builder<'a> {
                         .iter()
                         .map(|a| {
                             let a = self._build(a, program, stmts);
-                            self.mark_used(a)
+                            self.inc_used(a)
                         })
                         .collect(),
                 };
@@ -328,7 +325,7 @@ impl<'a> Builder<'a> {
                 let init = self._build(rhs, program, stmts);
                 let stmt = Stmt::VarDef {
                     name: name.clone(),
-                    init: self.mark_used(init),
+                    init: self.inc_used(init),
                 };
                 stmts.push(stmt);
                 self._build(then, program, stmts)
@@ -345,7 +342,7 @@ impl<'a> Builder<'a> {
 
                 let mut body_stmts = vec![];
                 let ret = self._build(body, program, &mut body_stmts);
-                body_stmts.push(Stmt::Ret(self.mark_used(ret)));
+                body_stmts.push(Stmt::Ret(self.inc_used(ret)));
 
                 let fun = Function {
                     name: name.clone(),
@@ -383,14 +380,14 @@ impl<'a> Builder<'a> {
                                 let lo = self.expr_arena.alloc(Expr::Value(Value::Int64(*lo)));
                                 let hi = self.expr_arena.alloc(Expr::Value(Value::Int64(*hi)));
                                 let lhs =
-                                    self.expr_arena.alloc(Expr::Ge(self.mark_used(t_head), lo));
+                                    self.expr_arena.alloc(Expr::Ge(self.inc_used(t_head), lo));
 
                                 let rhs = match end {
                                     syntax::RangeEnd::Included => {
-                                        self.expr_arena.alloc(Expr::Le(self.mark_used(t_head), hi))
+                                        self.expr_arena.alloc(Expr::Le(self.inc_used(t_head), hi))
                                     }
                                     syntax::RangeEnd::Excluded => {
-                                        self.expr_arena.alloc(Expr::Lt(self.mark_used(t_head), hi))
+                                        self.expr_arena.alloc(Expr::Lt(self.inc_used(t_head), hi))
                                     }
                                 };
                                 self.expr_arena.alloc(Expr::And(lhs, rhs))
@@ -404,7 +401,7 @@ impl<'a> Builder<'a> {
                         let ret = self._build(arm.body(), program, &mut branch_stmts);
                         branch_stmts.push(Stmt::Phi {
                             var: t,
-                            value: self.mark_used(ret),
+                            value: self.inc_used(ret),
                         });
 
                         Branch {
@@ -419,7 +416,7 @@ impl<'a> Builder<'a> {
                     let ret = self._build(else_body, program, &mut branch_stmts);
                     branch_stmts.push(Stmt::Phi {
                         var: t,
-                        value: self.mark_used(ret),
+                        value: self.inc_used(ret),
                     });
 
                     let branch = Branch {
@@ -448,109 +445,122 @@ impl<'a> Optimizer {
 
     pub fn optimize(&mut self, program: &mut Program<'a>) {
         for fun in &mut program.functions {
-            self.analyze_function(fun);
+            self.optimize_function(fun);
         }
     }
 
-    fn analyze_function(&mut self, fun: &Function<'a>) {
+    fn decr_used(&self, expr: &'a Expr<'a>) -> Option<usize> {
+        if let Expr::Value(Value::TmpVar(t)) = expr {
+            let u = t.used.get();
+            if u > 0 {
+                t.used.set(u - 1);
+                return Some(u - 1);
+            }
+        }
+        None
+    }
+
+    fn optimize_function(&mut self, fun: &Function<'a>) {
         for stmt in &fun.body {
-            self.analyze_stmt(stmt);
+            self.optimize_stmt(stmt);
         }
     }
 
-    fn analyze_stmt(&mut self, stmt: &Stmt<'a>) {
+    fn optimize_stmt(&mut self, stmt: &Stmt<'a>) {
         match stmt {
             Stmt::TmpVarDef { init, .. } => {
-                self.analyze_expr(init);
+                self.optimize_expr(init);
             }
             Stmt::VarDef { init, .. } => {
-                self.analyze_expr(init);
+                self.optimize_expr(init);
             }
             Stmt::Ret(expr) => {
-                self.analyze_expr(expr);
+                self.optimize_expr(expr);
             }
-            Stmt::Phi(expr) => {
-                self.analyze_expr(expr);
+            Stmt::Phi { var, value } => {
+                if var.used.get() == 0 {
+                    // The result of cond expression is unused.
+                    // So decrement the used count of a value because we increment it in
+                    // Builder::build().
+                    self.decr_used(value);
+                }
+
+                self.optimize_expr(value);
             }
             Stmt::Cond { branches, .. } => {
                 // Construct "if-else" statement from each branches.
                 for branch in branches {
                     if let Some(condition) = branch.condition {
-                        self.analyze_expr(condition);
+                        self.optimize_expr(condition);
                     }
 
                     // body
                     for stmt in &branch.body {
-                        self.analyze_stmt(stmt);
+                        self.optimize_stmt(stmt);
                     }
                 }
             }
         }
     }
 
-    fn analyze_expr(&mut self, expr: &Expr<'a>) {
+    fn optimize_expr(&mut self, expr: &Expr<'a>) {
         match expr {
             Expr::Minus(operand) => {
-                self.analyze_expr(operand);
+                self.optimize_expr(operand);
             }
             Expr::Add(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Sub(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Mul(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Div(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Lt(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Le(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Gt(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Ge(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Eq(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::And(lhs, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.optimize_expr(lhs);
+                self.optimize_expr(rhs);
             }
             Expr::Call { args, .. } => {
                 for arg in args {
-                    self.analyze_expr(arg);
+                    self.optimize_expr(arg);
                 }
             }
             Expr::Printf { args } => {
                 for arg in args {
-                    self.analyze_expr(arg);
+                    self.optimize_expr(arg);
                 }
             }
-            Expr::Value(value) => self.analyze_value(value),
+            Expr::Value(value) => self.optimize_value(value),
         }
     }
 
-    fn analyze_value(&mut self, value: &Value) {
-        if let Value::TmpVar(t) = value {
-            let u = t.used.get();
-            t.used.set(u + 1);
-        }
-    }
+    fn optimize_value(&mut self, _value: &Value) {}
 }

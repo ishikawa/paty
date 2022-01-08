@@ -85,6 +85,13 @@ impl<'a> Emitter {
                 if var.used.get() > 0 {
                     code.push_str(&format!("t{} = ", var.index));
                 }
+                if let Expr::Value(Value::TmpVar(var)) = value {
+                    if var.used.get() == 0 {
+                        // undefined variable
+                        return;
+                    }
+                }
+
                 self.emit_expr(value, code);
                 code.push_str(";\n");
             }
