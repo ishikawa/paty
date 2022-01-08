@@ -20,12 +20,13 @@ impl<'a> Emitter {
             "#include <stdio.h>",
             "#include <stdint.h>",
             "#include <inttypes.h>",
-            "",
+            "\n",
         ]
         .join("\n");
 
         for fun in &program.functions {
             self.emit_function(fun, &mut code);
+            code.push('\n');
         }
 
         code
@@ -129,44 +130,60 @@ impl<'a> Emitter {
                 self.emit_expr(operand, code);
             }
             Expr::Add(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" + ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Sub(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" - ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Mul(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" * ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Div(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" / ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Lt(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" < ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Le(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" <= ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Gt(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" > ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Ge(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" >= ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Eq(lhs, rhs) => {
                 self.emit_expr(lhs, code);
@@ -174,9 +191,11 @@ impl<'a> Emitter {
                 self.emit_expr(rhs, code);
             }
             Expr::And(lhs, rhs) => {
+                code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" && ");
                 self.emit_expr(rhs, code);
+                code.push(')');
             }
             Expr::Call { name, args } => {
                 code.push_str(&format!("{}(", name));

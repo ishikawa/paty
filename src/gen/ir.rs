@@ -467,15 +467,17 @@ impl<'a> Optimizer {
         }
     }
 
-    fn decr_used(&self, expr: &'a Expr<'a>) -> Option<usize> {
+    fn decr_used_and_prunable(&self, expr: &'a Expr<'a>) -> bool {
         if let Expr::Value(Value::TmpVar(t)) = expr {
             let u = t.used.get();
             if u > 0 {
-                t.used.set(u - 1);
-                return Some(u - 1);
+                let u = u - 1;
+                t.used.set(u);
+
+                return u == 0 && t.immediate.get().is_none();
             }
         }
-        None
+        false
     }
 
     fn optimize_function(&mut self, fun: &Function<'a>) {
@@ -490,11 +492,11 @@ impl<'a> Optimizer {
                 if var.used.get() == 1 {
                     // This temporary variable is used only once, so it could be
                     // replaced with the expression if it has no side-effect.
-                    if let Expr::Value(_) = init {
-                        var.immediate.set(Some(init));
-                        pruned.set(true);
-                        return;
-                    }
+                    //if let Expr::Value(_) = init {
+                    var.immediate.set(Some(init));
+                    pruned.set(true);
+                    return;
+                    //}
                 }
                 self.optimize_expr(init);
             }
@@ -509,7 +511,7 @@ impl<'a> Optimizer {
                     // The result of cond expression is unused.
                     // So decrement the used count of a value because we increment it in
                     // Builder::build().
-                    if let Some(0) = self.decr_used(value) {
+                    if self.decr_used_and_prunable(value) {
                         pruned.set(true);
                         return;
                     }
