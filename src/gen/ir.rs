@@ -40,7 +40,7 @@ impl fmt::Display for Function<'_> {
         writeln!(f, "):")?;
         for stmt in &self.body {
             let lines = stmt.to_string();
-            let lines = lines.split("\n");
+            let lines = lines.split('\n');
             for line in lines {
                 writeln!(f, "  {}", line)?;
             }
@@ -76,14 +76,17 @@ pub enum Stmt<'a> {
     },
     Cond {
         /// The index of temporary variable which holds the result.
-        ret: &'a TmpVar,
+        var: &'a TmpVar,
         branches: Vec<Branch<'a>>,
+    },
+    // "Phi" function for a basic block. This statement must appear at the end of
+    // each branch.
+    Phi {
+        var: &'a TmpVar,
+        value: &'a Expr<'a>,
     },
     // "return" statement
     Ret(&'a Expr<'a>),
-    // "Phi" function for a basic block. This statement must appear at the end of
-    // each branch.
-    Phi(&'a Expr<'a>),
 }
 
 impl fmt::Display for Stmt<'_> {
@@ -98,10 +101,16 @@ impl fmt::Display for Stmt<'_> {
             Stmt::Ret(expr) => {
                 write!(f, "return {:?}", expr)?;
             }
-            Stmt::Phi(tmp) => {
-                write!(f, "phi {:?}", tmp)?;
+            Stmt::Phi { var, value } => {
+                write!(
+                    f,
+                    "phi(t{} (used: {}) = {:?})",
+                    var.index,
+                    var.used.get(),
+                    value
+                )?;
             }
-            Stmt::Cond { ret, branches } => {
+            Stmt::Cond { var: ret, branches } => {
                 write!(f, "t{} (used: {}) = ", ret.index, ret.used.get())?;
                 writeln!(f, "cond {{")?;
                 for branch in branches {
@@ -350,6 +359,7 @@ impl<'a> Builder<'a> {
                 arms,
                 else_body,
             } => {
+                let t = self.next_temp_var();
                 let t_head = self._build(head, program, stmts);
 
                 // Construct "if-else" statement from each branches.
@@ -387,7 +397,10 @@ impl<'a> Builder<'a> {
 
                         let mut branch_stmts = vec![];
                         let ret = self._build(arm.body(), program, &mut branch_stmts);
-                        branch_stmts.push(Stmt::Phi(self.mark_used(ret)));
+                        branch_stmts.push(Stmt::Phi {
+                            var: t,
+                            value: self.mark_used(ret),
+                        });
 
                         Branch {
                             condition: Some(condition),
@@ -399,7 +412,10 @@ impl<'a> Builder<'a> {
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
                     let ret = self._build(else_body, program, &mut branch_stmts);
-                    branch_stmts.push(Stmt::Phi(self.mark_used(ret)));
+                    branch_stmts.push(Stmt::Phi {
+                        var: t,
+                        value: self.mark_used(ret),
+                    });
 
                     let branch = Branch {
                         condition: None,
@@ -408,8 +424,7 @@ impl<'a> Builder<'a> {
                     branches.push(branch);
                 }
 
-                let t = self.next_temp_var();
-                let stmt = Stmt::Cond { branches, ret: t };
+                let stmt = Stmt::Cond { branches, var: t };
                 stmts.push(stmt);
 
                 self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))

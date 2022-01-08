@@ -1,20 +1,18 @@
 //! C code generator
-use super::ir::{Expr, Function, Program, Stmt, TmpVar, Value};
+use super::ir::{Expr, Function, Program, Stmt, Value};
 
 #[derive(Debug)]
-pub struct Emitter<'a> {
-    phi_target: Option<&'a TmpVar>,
-}
+pub struct Emitter {}
 
-impl<'a> Default for Emitter<'a> {
+impl<'a> Default for Emitter {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> Emitter<'a> {
+impl<'a> Emitter {
     pub fn new() -> Self {
-        Self { phi_target: None }
+        Self {}
     }
 
     pub fn emit(&mut self, program: &'a Program<'a>) -> String {
@@ -83,22 +81,17 @@ impl<'a> Emitter<'a> {
                 self.emit_expr(expr, code);
                 code.push_str(";\n");
             }
-            Stmt::Phi(expr) => {
-                if let Some(var) = self.phi_target {
-                    if var.used.get() > 0 {
-                        code.push_str(&format!("t{} = ", var.index));
-                    }
+            Stmt::Phi { var, value } => {
+                if var.used.get() > 0 {
+                    code.push_str(&format!("t{} = ", var.index));
                 }
-                self.emit_expr(expr, code);
+                self.emit_expr(value, code);
                 code.push_str(";\n");
             }
-            Stmt::Cond { branches, ret } => {
-                let saved_phi_target = self.phi_target;
-                self.phi_target = Some(ret);
-
-                if ret.used.get() > 0 {
+            Stmt::Cond { branches, var } => {
+                if var.used.get() > 0 {
                     code.push_str("int64_t ");
-                    code.push_str(&format!("t{}", ret.index));
+                    code.push_str(&format!("t{}", var.index));
                     code.push_str(";\n");
                 }
 
@@ -121,8 +114,6 @@ impl<'a> Emitter<'a> {
                     }
                     code.push_str("}\n");
                 }
-
-                self.phi_target = saved_phi_target;
             }
         }
     }
