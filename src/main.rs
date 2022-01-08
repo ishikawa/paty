@@ -1,8 +1,10 @@
 use chumsky::Parser;
+use paty::gen;
 use paty::sem;
 use paty::syntax;
 use std::env;
 use std::fs;
+use typed_arena::Arena;
 
 fn main() {
     let filepath = env::args().nth(1).expect("filename");
@@ -41,6 +43,17 @@ fn main() {
         Ok(ast) => ast,
     };
 
-    let code = paty::c::emit(&ast);
-    println!("{}", code);
+    {
+        let expr_arena = Arena::new();
+        let mut builder = gen::ir::Builder::new(&expr_arena);
+        let program = builder.build(&ast);
+        let mut emitter = gen::c::Emitter::new();
+        let code = emitter.emit(&program);
+
+        //eprintln!("-----\n{}-----", code);
+        println!("{}", code);
+    }
+
+    //let code = paty::c::emit(&ast);
+    //println!("{}", code);
 }
