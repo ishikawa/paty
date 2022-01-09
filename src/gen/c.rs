@@ -19,6 +19,7 @@ impl<'a> Emitter {
         let mut code = [
             "#include <stdio.h>",
             "#include <stdint.h>",
+            "#include <stdbool.h>",
             "#include <inttypes.h>",
             "\n",
         ]
@@ -222,9 +223,16 @@ impl<'a> Emitter {
             }
             Expr::Printf { args } => {
                 code.push_str("printf(\"");
-                for (i, _) in args.iter().enumerate() {
-                    // Use standard conversion specifier macros for integer types.
-                    code.push_str("%\" PRId64 \"");
+                for (i, arg) in args.iter().enumerate() {
+                    // TODO: type inference
+
+                    if let Expr::Value(Value::Bool(_)) = immediate(arg) {
+                        // "true" / "false"
+                        code.push_str("%s");
+                    } else {
+                        // Use standard conversion specifier macros for integer types.
+                        code.push_str("%\" PRId64 \"");
+                    }
 
                     if i != (args.len() - 1) {
                         code.push_str(", ");
@@ -233,7 +241,17 @@ impl<'a> Emitter {
                 code.push_str("\\n\", ");
 
                 for (i, arg) in args.iter().enumerate() {
-                    self.emit_expr(arg, code);
+                    // TODO: type inference
+
+                    if let Expr::Value(Value::Bool(_)) = immediate(arg) {
+                        // "true" / "false"
+                        code.push('(');
+                        self.emit_expr(arg, code);
+                        code.push_str(" ? \"true\": \"false\"");
+                        code.push(')');
+                    } else {
+                        self.emit_expr(arg, code);
+                    }
 
                     if i != (args.len() - 1) {
                         code.push_str(", ");
@@ -254,6 +272,15 @@ impl<'a> Emitter {
             {
                 code.push_str(&format!("INT64_C({})", *n))
             }
+            Value::Bool(b) =>
+            // Use standard macros for boolean constant expression.
+            {
+                if *b {
+                    code.push_str("true");
+                } else {
+                    code.push_str("false");
+                }
+            }
             Value::TmpVar(t) => {
                 if let Some(expr) = t.immediate.get() {
                     self.emit_expr(expr, code);
@@ -264,4 +291,13 @@ impl<'a> Emitter {
             Value::Var(name) => code.push_str(name),
         }
     }
+}
+
+fn immediate<'a>(expr: &'a Expr<'a>) -> &'a Expr<'a> {
+    if let Expr::Value(Value::TmpVar(t)) = expr {
+        if let Some(expr) = t.immediate.get() {
+            return expr;
+        }
+    }
+    expr
 }

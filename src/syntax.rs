@@ -93,6 +93,8 @@ pub enum TokenKind {
     Else,
     End,
     Puts,
+    True,
+    False,
 }
 
 impl fmt::Display for TokenKind {
@@ -115,6 +117,8 @@ impl fmt::Display for TokenKind {
             Self::Else => write!(f, "else"),
             Self::End => write!(f, "end"),
             Self::Puts => write!(f, "puts"),
+            Self::True => write!(f, "true"),
+            Self::False => write!(f, "false"),
         }
     }
 }
@@ -145,6 +149,8 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         text::keyword("else").to(TokenKind::Else),
         text::keyword("end").to(TokenKind::End),
         text::keyword("puts").to(TokenKind::Puts),
+        text::keyword("true").to(TokenKind::True),
+        text::keyword("false").to(TokenKind::False),
         text::ident().map(TokenKind::Identifier),
     ));
 
@@ -213,6 +219,7 @@ impl Expr {
 #[derive(Debug)]
 pub enum ExprKind {
     Integer(i64),
+    Boolean(bool),
     Var(String),
 
     // unary operators
@@ -321,6 +328,7 @@ impl Pattern {
 #[derive(Debug)]
 pub enum PatternKind {
     Integer(i64),
+    Boolean(bool),
     Range { lo: i64, hi: i64, end: RangeEnd },
     Wildcard,
 }
@@ -329,6 +337,7 @@ impl fmt::Display for PatternKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PatternKind::Integer(n) => write!(f, "{}", n),
+            PatternKind::Boolean(b) => write!(f, "{}", b),
             PatternKind::Range { lo, hi, end } => {
                 if *lo == i64::MIN {
                     write!(f, "int64::MIN")?;
@@ -360,27 +369,37 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
 
     let op = |c| just_token(TokenKind::Operator(c));
 
-    let ident = select! {
+    let ident_value = select! {
         Token{ kind: TokenKind::Identifier(ident), ..} => ident,
     }
     .labelled("identifier");
 
-    let integer = select! {
+    let integer_value = select! {
         Token{ kind: TokenKind::Integer(n), ..} => n.parse().unwrap()
     }
     .labelled("integer");
 
+    let boolean_value = choice((
+        just_token(TokenKind::True).to(true),
+        just_token(TokenKind::False).to(false),
+    ))
+    .labelled("boolean");
+
     let pattern = {
-        let integer_pattern = integer.map(|n| {
+        let integer_pattern = integer_value.map(|n| {
             let kind = PatternKind::Integer(n);
             Pattern::new(kind)
         });
-        let range_pattern = integer
+        let boolean_pattern = boolean_value.clone().map(|b| {
+            let kind = PatternKind::Boolean(b);
+            Pattern::new(kind)
+        });
+        let range_pattern = integer_value
             .then(choice((
                 just_token(TokenKind::RangeExcluded),
                 just_token(TokenKind::RangeIncluded),
             )))
-            .then(integer)
+            .then(integer_value)
             .map(|((lhs, op), rhs)| {
                 let end = if let TokenKind::RangeIncluded = op.kind() {
                     RangeEnd::Included
@@ -397,16 +416,24 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                 Pattern::new(kind)
             });
 
-        range_pattern.or(integer_pattern)
+        range_pattern.or(integer_pattern).or(boolean_pattern)
     };
 
     let expr = recursive(|expr| {
-        let value = integer
+        let integer = integer_value
             .map(|n| {
                 let kind = ExprKind::Integer(n);
                 Expr::new(kind)
             })
-            .labelled("value");
+            .labelled("integer");
+
+        let ident = ident_value
+            .map(|s| Expr::new(ExprKind::Var(s)))
+            .labelled("ident");
+
+        let boolean = boolean_value
+            .map(|b| Expr::new(ExprKind::Boolean(b)))
+            .labelled("boolean");
 
         let puts = just_token(TokenKind::Puts)
             .ignore_then(
@@ -421,7 +448,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .map(|args| Expr::new(ExprKind::Puts(args)))
             .labelled("puts");
 
-        let call = ident
+        let call = ident_value
             .then(
                 expr.clone()
                     .separated_by(op(','))
@@ -434,14 +461,17 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .map(|(f, args)| Expr::new(ExprKind::Call(f, args)))
             .labelled("call");
 
-        let atom = value
-            .or(expr.clone().delimited_by(
+        let atom = expr
+            .clone()
+            .delimited_by(
                 token(TokenKind::Operator('(')),
                 token(TokenKind::Operator(')')),
-            ))
+            )
+            .or(integer)
+            .or(boolean)
             .or(puts)
             .or(call)
-            .or(ident.map(|s| Expr::new(ExprKind::Var(s))));
+            .or(ident);
 
         // unary: "-"
         let unary = op('-')
@@ -473,9 +503,9 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             )
             .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
 
-        // logical operators
+        // comparison operators
         #[rustfmt::skip]
-        let logical_op1 = bin_op2
+        let comp_op = bin_op2
             .clone()
             .then(
                 op('<').to(ExprKind::Lt as fn(_, _) -> _).or(
@@ -489,25 +519,25 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
 
         // equality operators
         #[rustfmt::skip]
-        let logical_op2 = logical_op1
+        let eq_op = comp_op
             .clone()
             .then(
                 just_token(TokenKind::Eq).to(ExprKind::Eq as fn(_, _) -> _).or(
                 just_token(TokenKind::Ne).to(ExprKind::Ne as fn(_, _) -> _)
             )
-                .then(logical_op1).repeated().at_most(1)
+                .then(comp_op).repeated().at_most(1)
             )
             .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
 
-        // and/or
+        // logical operators
         #[rustfmt::skip]
-        let logical_op3 = logical_op2
+        let logical_op = eq_op
             .clone()
             .then(
                 just_token(TokenKind::And).to(ExprKind::And as fn(_, _) -> _).or(
                 just_token(TokenKind::Or).to(ExprKind::Or as fn(_, _) -> _)
             )
-                .then(logical_op2).repeated().at_most(1)
+                .then(eq_op).repeated().at_most(1)
             )
             .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
 
@@ -537,12 +567,12 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                 expr
             });
 
-        case.or(logical_op3)
+        case.or(logical_op)
     });
 
     let decl = recursive(|decl| {
         // Variable declaration
-        let r#let = ident
+        let r#let = ident_value
             .then_ignore(op('='))
             .then(expr.clone())
             .then(decl.clone())
@@ -556,11 +586,16 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
 
         // Function declaration
         let r#fn = just_token(TokenKind::Def)
-            .then(ident)
-            .then(ident.separated_by(op(',')).allow_trailing().delimited_by(
-                token(TokenKind::Operator('(')),
-                token(TokenKind::Operator(')')),
-            ))
+            .then(ident_value)
+            .then(
+                ident_value
+                    .separated_by(op(','))
+                    .allow_trailing()
+                    .delimited_by(
+                        token(TokenKind::Operator('(')),
+                        token(TokenKind::Operator(')')),
+                    ),
+            )
             .then(expr.clone())
             .then_ignore(just_token(TokenKind::End))
             .then(decl)

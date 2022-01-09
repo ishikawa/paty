@@ -171,6 +171,7 @@ pub enum Value<'a> {
     /// Native "int" type.
     Int(i32),
     Int64(i64),
+    Bool(bool),
     TmpVar(&'a TmpVar<'a>),
     Var(String),
 }
@@ -258,6 +259,12 @@ impl<'a> Builder<'a> {
         match expr.kind() {
             syntax::ExprKind::Integer(n) => {
                 let value = Value::Int64(*n);
+                let expr = self.expr_arena.alloc(Expr::Value(value));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Boolean(b) => {
+                let value = Value::Bool(*b);
                 let expr = self.expr_arena.alloc(Expr::Value(value));
 
                 self.push_expr(expr, stmts)
@@ -462,7 +469,13 @@ impl<'a> Builder<'a> {
                         let condition = match arm.pattern().kind() {
                             PatternKind::Integer(n) => {
                                 let value = self.expr_arena.alloc(Expr::Value(Value::Int64(*n)));
-                                let eq = Expr::Eq(t_head, value);
+                                let eq = Expr::Eq(self.inc_used(t_head), value);
+
+                                self.expr_arena.alloc(eq)
+                            }
+                            PatternKind::Boolean(b) => {
+                                let value = self.expr_arena.alloc(Expr::Value(Value::Bool(*b)));
+                                let eq = Expr::Eq(self.inc_used(t_head), value);
 
                                 self.expr_arena.alloc(eq)
                             }

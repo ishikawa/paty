@@ -56,7 +56,7 @@ pub struct IntRange {
 impl IntRange {
     #[inline]
     fn is_integral(ty: Type) -> bool {
-        matches!(ty, Type::Int64)
+        matches!(ty, Type::Int64 | Type::Boolean)
     }
 
     // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
@@ -77,15 +77,22 @@ impl IntRange {
         i64::try_from(i128::try_from(value).unwrap() - bias).unwrap()
     }
 
-    #[inline]
-    fn from_const(value: i64) -> IntRange {
-        let bias = Self::signed_bias(Type::Int64);
+    fn from_const(value: i64, ty: Type) -> IntRange {
+        let bias = Self::signed_bias(ty);
         let val = Self::encode_value(value, bias);
 
         IntRange {
             range: val..=val,
             bias,
         }
+    }
+
+    fn from_i64(value: i64) -> IntRange {
+        Self::from_const(value, Type::Int64)
+    }
+
+    fn from_bool(value: bool) -> IntRange {
+        Self::from_const(i64::try_from(value).unwrap(), Type::Boolean)
     }
 
     #[inline]
@@ -836,13 +843,19 @@ impl<'p> DeconstructedPat<'p> {
                 fields = Fields::empty();
             }
             PatternKind::Integer(value) => {
-                let int_range = IntRange::from_const(*value);
+                let int_range = IntRange::from_i64(*value);
 
                 ctor = Constructor::IntRange(int_range);
                 fields = Fields::empty();
             }
-            &PatternKind::Range { lo, hi, end } => {
-                let int_range = IntRange::from_range(lo, hi, Type::Int64, end);
+            PatternKind::Boolean(b) => {
+                let int_range = IntRange::from_bool(*b);
+
+                ctor = Constructor::IntRange(int_range);
+                fields = Fields::empty();
+            }
+            PatternKind::Range { lo, hi, end } => {
+                let int_range = IntRange::from_range(*lo, *hi, Type::Int64, *end);
 
                 ctor = Constructor::IntRange(int_range);
                 fields = Fields::empty();
@@ -1228,6 +1241,7 @@ fn is_useful<'p>(
 fn compute_match_usefulness<'p>(
     cx: &MatchCheckCtxt<'p>,
     arms: &[MatchArm<'p>],
+    src_ty: Type,
 ) -> UsefulnessReport<'p> {
     let mut matrix = Matrix::empty();
     let arm_usefulness: Vec<_> = arms
@@ -1248,9 +1262,7 @@ fn compute_match_usefulness<'p>(
         })
         .collect();
 
-    let wild_pattern = cx
-        .pattern_arena
-        .alloc(DeconstructedPat::wildcard(Type::Int64));
+    let wild_pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(src_ty));
     let v = PatStack::from_pattern(wild_pattern);
     let usefulness = is_useful(cx, &matrix, &v, ArmType::FakeExtraWildcard, false, true);
     let non_exhaustiveness_witnesses = match usefulness {
@@ -1263,7 +1275,11 @@ fn compute_match_usefulness<'p>(
     }
 }
 
-pub fn check_match(arms: &[CaseArm], has_else: bool) -> Result<(), Vec<SemanticError>> {
+pub fn check_match(
+    head_ty: Type,
+    arms: &[CaseArm],
+    has_else: bool,
+) -> Result<(), Vec<SemanticError>> {
     let pattern_arena = Arena::default();
     let cx = MatchCheckCtxt {
         pattern_arena: &pattern_arena,
@@ -1293,7 +1309,7 @@ pub fn check_match(arms: &[CaseArm], has_else: bool) -> Result<(), Vec<SemanticE
         })
     }
 
-    let report = compute_match_usefulness(&cx, &arms2);
+    let report = compute_match_usefulness(&cx, &arms2, head_ty);
 
     // Check if the match is exhaustive.
     let mut errors = vec![];
@@ -1341,7 +1357,7 @@ mod tests_int_range {
 
     #[test]
     fn i64_min() {
-        let r = IntRange::from_const(i64::MIN);
+        let r = IntRange::from_i64(i64::MIN);
         let (low, high) = r.boundaries();
 
         assert!(r.is_singleton());
@@ -1360,7 +1376,7 @@ mod tests_int_range {
 
     #[test]
     fn i64_max() {
-        let r = IntRange::from_const(i64::MAX);
+        let r = IntRange::from_i64(i64::MAX);
         let (low, high) = r.boundaries();
 
         assert!(r.is_singleton());
