@@ -190,10 +190,22 @@ impl<'a> Emitter {
                 code.push_str(" == ");
                 self.emit_expr(rhs, code);
             }
+            Expr::Ne(lhs, rhs) => {
+                self.emit_expr(lhs, code);
+                code.push_str(" != ");
+                self.emit_expr(rhs, code);
+            }
             Expr::And(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" && ");
+                self.emit_expr(rhs, code);
+                code.push(')');
+            }
+            Expr::Or(lhs, rhs) => {
+                code.push('(');
+                self.emit_expr(lhs, code);
+                code.push_str(" || ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }

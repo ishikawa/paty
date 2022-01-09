@@ -77,8 +77,14 @@ pub enum TokenKind {
     Integer(String),
     Identifier(String),
     // Operators
-    RangeIncluded,  // RangeEnd::Included
-    RangeExcluded,  // RangeEnd::Excluded
+    RangeIncluded, // RangeEnd::Included
+    RangeExcluded, // RangeEnd::Excluded
+    Eq,
+    Ne,
+    Le,
+    Ge,
+    And,
+    Or,
     Operator(char), // 1 char
     // Keywords
     Def,
@@ -92,17 +98,23 @@ pub enum TokenKind {
 impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            TokenKind::Integer(n) => write!(f, "{}", n),
-            TokenKind::Identifier(s) => write!(f, "{}", s),
-            TokenKind::RangeIncluded => write!(f, "{}", RangeEnd::Included),
-            TokenKind::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
-            TokenKind::Operator(c) => write!(f, "{}", c),
-            TokenKind::Def => write!(f, "def"),
-            TokenKind::Case => write!(f, "case"),
-            TokenKind::When => write!(f, "when"),
-            TokenKind::Else => write!(f, "else"),
-            TokenKind::End => write!(f, "end"),
-            TokenKind::Puts => write!(f, "puts"),
+            Self::Integer(n) => write!(f, "{}", n),
+            Self::Identifier(s) => write!(f, "{}", s),
+            Self::RangeIncluded => write!(f, "{}", RangeEnd::Included),
+            Self::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
+            Self::Operator(c) => write!(f, "{}", c),
+            Self::Eq => write!(f, "=="),
+            Self::Ne => write!(f, "!="),
+            Self::Le => write!(f, "<="),
+            Self::Ge => write!(f, ">="),
+            Self::And => write!(f, "&&"),
+            Self::Or => write!(f, "||"),
+            Self::Def => write!(f, "def"),
+            Self::Case => write!(f, "case"),
+            Self::When => write!(f, "when"),
+            Self::Else => write!(f, "else"),
+            Self::End => write!(f, "end"),
+            Self::Puts => write!(f, "puts"),
         }
     }
 }
@@ -115,10 +127,16 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .map(|s| TokenKind::Integer(format!("-{}", s)));
     let integer = pos_integer.or(neg_integer);
 
-    let operator = one_of("+-*/=(),").map(TokenKind::Operator);
-    let range = choice((
+    let operator1 = one_of("+-*/=(),<>").map(TokenKind::Operator);
+    let operator2 = choice((
         just("..=").to(TokenKind::RangeIncluded),
         just("..<").to(TokenKind::RangeExcluded),
+        just("==").to(TokenKind::Eq),
+        just("!=").to(TokenKind::Ne),
+        just("<=").to(TokenKind::Le),
+        just(">=").to(TokenKind::Ge),
+        just("&&").to(TokenKind::And),
+        just("||").to(TokenKind::Or),
     ));
     let identifier = choice((
         text::keyword("def").to(TokenKind::Def),
@@ -132,8 +150,8 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
 
     let token = integer
         .or(identifier)
-        .or(range)
-        .or(operator)
+        .or(operator2)
+        .or(operator1)
         .recover_with(skip_then_retry_until([]));
 
     let comment = just("#")
@@ -205,6 +223,14 @@ pub enum ExprKind {
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
     Div(Box<Expr>, Box<Expr>),
+    Eq(Box<Expr>, Box<Expr>),
+    Ne(Box<Expr>, Box<Expr>),
+    Le(Box<Expr>, Box<Expr>),
+    Ge(Box<Expr>, Box<Expr>),
+    Lt(Box<Expr>, Box<Expr>),
+    Gt(Box<Expr>, Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
 
     Call(String, Vec<Expr>),
     Let {
@@ -447,6 +473,44 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             )
             .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
 
+        // logical operators
+        #[rustfmt::skip]
+        let logical_op1 = bin_op2
+            .clone()
+            .then(
+                op('<').to(ExprKind::Lt as fn(_, _) -> _).or(
+                op('>').to(ExprKind::Gt as fn(_, _) -> _).or(
+                just_token(TokenKind::Le).to(ExprKind::Le as fn(_, _) -> _).or(
+                just_token(TokenKind::Ge).to(ExprKind::Ge as fn(_, _) -> _)
+            )))
+                .then(bin_op2).repeated().at_most(1)
+            )
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
+        // equality operators
+        #[rustfmt::skip]
+        let logical_op2 = logical_op1
+            .clone()
+            .then(
+                just_token(TokenKind::Eq).to(ExprKind::Eq as fn(_, _) -> _).or(
+                just_token(TokenKind::Ne).to(ExprKind::Ne as fn(_, _) -> _)
+            )
+                .then(logical_op1).repeated().at_most(1)
+            )
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
+        // and/or
+        #[rustfmt::skip]
+        let logical_op3 = logical_op2
+            .clone()
+            .then(
+                just_token(TokenKind::And).to(ExprKind::And as fn(_, _) -> _).or(
+                just_token(TokenKind::Or).to(ExprKind::Or as fn(_, _) -> _)
+            )
+                .then(logical_op2).repeated().at_most(1)
+            )
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
         // case
         let case_arm = just_token(TokenKind::When)
             .then(pattern)
@@ -473,7 +537,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                 expr
             });
 
-        case.or(bin_op2)
+        case.or(logical_op3)
     });
 
     let decl = recursive(|decl| {

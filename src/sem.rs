@@ -44,7 +44,15 @@ fn analyze_loop<'a>(
         syntax::ExprKind::Add(a, b)
         | syntax::ExprKind::Sub(a, b)
         | syntax::ExprKind::Mul(a, b)
-        | syntax::ExprKind::Div(a, b) => {
+        | syntax::ExprKind::Div(a, b)
+        | syntax::ExprKind::Eq(a, b)
+        | syntax::ExprKind::Ne(a, b)
+        | syntax::ExprKind::Lt(a, b)
+        | syntax::ExprKind::Gt(a, b)
+        | syntax::ExprKind::Le(a, b)
+        | syntax::ExprKind::Ge(a, b)
+        | syntax::ExprKind::And(a, b)
+        | syntax::ExprKind::Or(a, b) => {
             analyze_loop(a, vars, functions, errors);
             analyze_loop(b, vars, functions, errors)
         }
