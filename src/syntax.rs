@@ -2,6 +2,8 @@ use chumsky::prelude::*;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use crate::typing::Type;
+
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RangeEnd {
     Included, // "..=" taken from Rust language
@@ -77,8 +79,14 @@ pub enum TokenKind {
     Integer(String),
     Identifier(String),
     // Operators
-    RangeIncluded,  // RangeEnd::Included
-    RangeExcluded,  // RangeEnd::Excluded
+    RangeIncluded, // RangeEnd::Included
+    RangeExcluded, // RangeEnd::Excluded
+    Eq,
+    Ne,
+    Le,
+    Ge,
+    And,
+    Or,
     Operator(char), // 1 char
     // Keywords
     Def,
@@ -87,22 +95,32 @@ pub enum TokenKind {
     Else,
     End,
     Puts,
+    True,
+    False,
 }
 
 impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            TokenKind::Integer(n) => write!(f, "{}", n),
-            TokenKind::Identifier(s) => write!(f, "{}", s),
-            TokenKind::RangeIncluded => write!(f, "{}", RangeEnd::Included),
-            TokenKind::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
-            TokenKind::Operator(c) => write!(f, "{}", c),
-            TokenKind::Def => write!(f, "def"),
-            TokenKind::Case => write!(f, "case"),
-            TokenKind::When => write!(f, "when"),
-            TokenKind::Else => write!(f, "else"),
-            TokenKind::End => write!(f, "end"),
-            TokenKind::Puts => write!(f, "puts"),
+            Self::Integer(n) => write!(f, "{}", n),
+            Self::Identifier(s) => write!(f, "{}", s),
+            Self::RangeIncluded => write!(f, "{}", RangeEnd::Included),
+            Self::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
+            Self::Operator(c) => write!(f, "{}", c),
+            Self::Eq => write!(f, "=="),
+            Self::Ne => write!(f, "!="),
+            Self::Le => write!(f, "<="),
+            Self::Ge => write!(f, ">="),
+            Self::And => write!(f, "&&"),
+            Self::Or => write!(f, "||"),
+            Self::Def => write!(f, "def"),
+            Self::Case => write!(f, "case"),
+            Self::When => write!(f, "when"),
+            Self::Else => write!(f, "else"),
+            Self::End => write!(f, "end"),
+            Self::Puts => write!(f, "puts"),
+            Self::True => write!(f, "true"),
+            Self::False => write!(f, "false"),
         }
     }
 }
@@ -115,10 +133,16 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .map(|s| TokenKind::Integer(format!("-{}", s)));
     let integer = pos_integer.or(neg_integer);
 
-    let operator = one_of("+-*/=(),").map(TokenKind::Operator);
-    let range = choice((
+    let operator1 = one_of("+-*/=(),<>").map(TokenKind::Operator);
+    let operator2 = choice((
         just("..=").to(TokenKind::RangeIncluded),
         just("..<").to(TokenKind::RangeExcluded),
+        just("==").to(TokenKind::Eq),
+        just("!=").to(TokenKind::Ne),
+        just("<=").to(TokenKind::Le),
+        just(">=").to(TokenKind::Ge),
+        just("&&").to(TokenKind::And),
+        just("||").to(TokenKind::Or),
     ));
     let identifier = choice((
         text::keyword("def").to(TokenKind::Def),
@@ -127,13 +151,15 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         text::keyword("else").to(TokenKind::Else),
         text::keyword("end").to(TokenKind::End),
         text::keyword("puts").to(TokenKind::Puts),
+        text::keyword("true").to(TokenKind::True),
+        text::keyword("false").to(TokenKind::False),
         text::ident().map(TokenKind::Identifier),
     ));
 
     let token = integer
         .or(identifier)
-        .or(range)
-        .or(operator)
+        .or(operator2)
+        .or(operator1)
         .recover_with(skip_then_retry_until([]));
 
     let comment = just("#")
@@ -195,6 +221,7 @@ impl Expr {
 #[derive(Debug)]
 pub enum ExprKind {
     Integer(i64),
+    Boolean(bool),
     Var(String),
 
     // unary operators
@@ -205,6 +232,14 @@ pub enum ExprKind {
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
     Div(Box<Expr>, Box<Expr>),
+    Eq(Box<Expr>, Box<Expr>),
+    Ne(Box<Expr>, Box<Expr>),
+    Le(Box<Expr>, Box<Expr>),
+    Ge(Box<Expr>, Box<Expr>),
+    Lt(Box<Expr>, Box<Expr>),
+    Gt(Box<Expr>, Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
 
     Call(String, Vec<Expr>),
     Let {
@@ -266,19 +301,25 @@ impl CaseArm {
 #[derive(Debug)]
 pub struct Pattern {
     kind: PatternKind,
+    ty: Type,
     comments: Vec<String>,
 }
 
 impl Pattern {
-    pub fn new(kind: PatternKind) -> Self {
+    pub fn new(kind: PatternKind, ty: Type) -> Self {
         Self {
             kind,
+            ty,
             comments: vec![],
         }
     }
 
     pub fn kind(&self) -> &PatternKind {
         &self.kind
+    }
+
+    pub fn ty(&self) -> Type {
+        self.ty
     }
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
@@ -295,6 +336,7 @@ impl Pattern {
 #[derive(Debug)]
 pub enum PatternKind {
     Integer(i64),
+    Boolean(bool),
     Range { lo: i64, hi: i64, end: RangeEnd },
     Wildcard,
 }
@@ -303,6 +345,7 @@ impl fmt::Display for PatternKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PatternKind::Integer(n) => write!(f, "{}", n),
+            PatternKind::Boolean(b) => write!(f, "{}", b),
             PatternKind::Range { lo, hi, end } => {
                 if *lo == i64::MIN {
                     write!(f, "int64::MIN")?;
@@ -334,27 +377,37 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
 
     let op = |c| just_token(TokenKind::Operator(c));
 
-    let ident = select! {
+    let ident_value = select! {
         Token{ kind: TokenKind::Identifier(ident), ..} => ident,
     }
     .labelled("identifier");
 
-    let integer = select! {
+    let integer_value = select! {
         Token{ kind: TokenKind::Integer(n), ..} => n.parse().unwrap()
     }
     .labelled("integer");
 
+    let boolean_value = choice((
+        just_token(TokenKind::True).to(true),
+        just_token(TokenKind::False).to(false),
+    ))
+    .labelled("boolean");
+
     let pattern = {
-        let integer_pattern = integer.map(|n| {
+        let integer_pattern = integer_value.map(|n| {
             let kind = PatternKind::Integer(n);
-            Pattern::new(kind)
+            Pattern::new(kind, Type::Int64)
         });
-        let range_pattern = integer
+        let boolean_pattern = boolean_value.clone().map(|b| {
+            let kind = PatternKind::Boolean(b);
+            Pattern::new(kind, Type::Boolean)
+        });
+        let range_pattern = integer_value
             .then(choice((
                 just_token(TokenKind::RangeExcluded),
                 just_token(TokenKind::RangeIncluded),
             )))
-            .then(integer)
+            .then(integer_value)
             .map(|((lhs, op), rhs)| {
                 let end = if let TokenKind::RangeIncluded = op.kind() {
                     RangeEnd::Included
@@ -368,19 +421,27 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                     end,
                 };
 
-                Pattern::new(kind)
+                Pattern::new(kind, Type::Int64)
             });
 
-        range_pattern.or(integer_pattern)
+        range_pattern.or(integer_pattern).or(boolean_pattern)
     };
 
     let expr = recursive(|expr| {
-        let value = integer
+        let integer = integer_value
             .map(|n| {
                 let kind = ExprKind::Integer(n);
                 Expr::new(kind)
             })
-            .labelled("value");
+            .labelled("integer");
+
+        let ident = ident_value
+            .map(|s| Expr::new(ExprKind::Var(s)))
+            .labelled("ident");
+
+        let boolean = boolean_value
+            .map(|b| Expr::new(ExprKind::Boolean(b)))
+            .labelled("boolean");
 
         let puts = just_token(TokenKind::Puts)
             .ignore_then(
@@ -395,7 +456,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .map(|args| Expr::new(ExprKind::Puts(args)))
             .labelled("puts");
 
-        let call = ident
+        let call = ident_value
             .then(
                 expr.clone()
                     .separated_by(op(','))
@@ -408,14 +469,17 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .map(|(f, args)| Expr::new(ExprKind::Call(f, args)))
             .labelled("call");
 
-        let atom = value
-            .or(expr.clone().delimited_by(
+        let atom = expr
+            .clone()
+            .delimited_by(
                 token(TokenKind::Operator('(')),
                 token(TokenKind::Operator(')')),
-            ))
+            )
+            .or(integer)
+            .or(boolean)
             .or(puts)
             .or(call)
-            .or(ident.map(|s| Expr::new(ExprKind::Var(s))));
+            .or(ident);
 
         // unary: "-"
         let unary = op('-')
@@ -447,6 +511,44 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             )
             .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
 
+        // comparison operators
+        #[rustfmt::skip]
+        let comp_op = bin_op2
+            .clone()
+            .then(
+                op('<').to(ExprKind::Lt as fn(_, _) -> _).or(
+                op('>').to(ExprKind::Gt as fn(_, _) -> _).or(
+                just_token(TokenKind::Le).to(ExprKind::Le as fn(_, _) -> _).or(
+                just_token(TokenKind::Ge).to(ExprKind::Ge as fn(_, _) -> _)
+            )))
+                .then(bin_op2).repeated().at_most(1)
+            )
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
+        // equality operators
+        #[rustfmt::skip]
+        let eq_op = comp_op
+            .clone()
+            .then(
+                just_token(TokenKind::Eq).to(ExprKind::Eq as fn(_, _) -> _).or(
+                just_token(TokenKind::Ne).to(ExprKind::Ne as fn(_, _) -> _)
+            )
+                .then(comp_op).repeated().at_most(1)
+            )
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
+        // logical operators
+        #[rustfmt::skip]
+        let logical_op = eq_op
+            .clone()
+            .then(
+                just_token(TokenKind::And).to(ExprKind::And as fn(_, _) -> _).or(
+                just_token(TokenKind::Or).to(ExprKind::Or as fn(_, _) -> _)
+            )
+                .then(eq_op).repeated().at_most(1)
+            )
+            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+
         // case
         let case_arm = just_token(TokenKind::When)
             .then(pattern)
@@ -473,12 +575,12 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                 expr
             });
 
-        case.or(bin_op2)
+        case.or(logical_op)
     });
 
     let decl = recursive(|decl| {
         // Variable declaration
-        let r#let = ident
+        let r#let = ident_value
             .then_ignore(op('='))
             .then(expr.clone())
             .then(decl.clone())
@@ -492,11 +594,16 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
 
         // Function declaration
         let r#fn = just_token(TokenKind::Def)
-            .then(ident)
-            .then(ident.separated_by(op(',')).allow_trailing().delimited_by(
-                token(TokenKind::Operator('(')),
-                token(TokenKind::Operator(')')),
-            ))
+            .then(ident_value)
+            .then(
+                ident_value
+                    .separated_by(op(','))
+                    .allow_trailing()
+                    .delimited_by(
+                        token(TokenKind::Operator('(')),
+                        token(TokenKind::Operator(')')),
+                    ),
+            )
             .then(expr.clone())
             .then_ignore(just_token(TokenKind::End))
             .then(decl)

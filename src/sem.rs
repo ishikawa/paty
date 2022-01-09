@@ -1,5 +1,5 @@
 //! Semantic analysis
-use crate::syntax;
+use crate::{syntax, typing::Type};
 
 use self::error::SemanticError;
 mod error;
@@ -40,11 +40,20 @@ fn analyze_loop<'a>(
 ) {
     match expr.kind() {
         syntax::ExprKind::Integer(_) => {}
+        syntax::ExprKind::Boolean(_) => {}
         syntax::ExprKind::Minus(a) => analyze_loop(a, vars, functions, errors),
         syntax::ExprKind::Add(a, b)
         | syntax::ExprKind::Sub(a, b)
         | syntax::ExprKind::Mul(a, b)
-        | syntax::ExprKind::Div(a, b) => {
+        | syntax::ExprKind::Div(a, b)
+        | syntax::ExprKind::Eq(a, b)
+        | syntax::ExprKind::Ne(a, b)
+        | syntax::ExprKind::Lt(a, b)
+        | syntax::ExprKind::Gt(a, b)
+        | syntax::ExprKind::Le(a, b)
+        | syntax::ExprKind::Ge(a, b)
+        | syntax::ExprKind::And(a, b)
+        | syntax::ExprKind::Or(a, b) => {
             analyze_loop(a, vars, functions, errors);
             analyze_loop(b, vars, functions, errors)
         }
@@ -122,9 +131,28 @@ fn analyze_loop<'a>(
             if !errors.is_empty() {
                 return;
             }
+
             // Usefulness check
 
-            if let Err(err) = usefulness::check_match(arms, else_body.is_some()) {
+            // TODO: type inference
+            let head_ty = if matches!(
+                head.kind(),
+                syntax::ExprKind::Boolean(_)
+                    | syntax::ExprKind::Eq(_, _)
+                    | syntax::ExprKind::Ne(_, _)
+                    | syntax::ExprKind::Le(_, _)
+                    | syntax::ExprKind::Ge(_, _)
+                    | syntax::ExprKind::Lt(_, _)
+                    | syntax::ExprKind::Gt(_, _)
+                    | syntax::ExprKind::And(_, _)
+                    | syntax::ExprKind::Or(_, _)
+            ) {
+                Type::Boolean
+            } else {
+                Type::Int64
+            };
+
+            if let Err(err) = usefulness::check_match(head_ty, arms, else_body.is_some()) {
                 errors.extend(err);
             }
         }

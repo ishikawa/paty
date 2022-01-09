@@ -148,12 +148,14 @@ pub enum Expr<'a> {
     Sub(&'a Expr<'a>, &'a Expr<'a>),
     Mul(&'a Expr<'a>, &'a Expr<'a>),
     Div(&'a Expr<'a>, &'a Expr<'a>),
+    Eq(&'a Expr<'a>, &'a Expr<'a>),
+    Ne(&'a Expr<'a>, &'a Expr<'a>),
     Lt(&'a Expr<'a>, &'a Expr<'a>),
     Le(&'a Expr<'a>, &'a Expr<'a>),
     Gt(&'a Expr<'a>, &'a Expr<'a>),
     Ge(&'a Expr<'a>, &'a Expr<'a>),
-    Eq(&'a Expr<'a>, &'a Expr<'a>),
     And(&'a Expr<'a>, &'a Expr<'a>),
+    Or(&'a Expr<'a>, &'a Expr<'a>),
     Call {
         name: String,
         args: Vec<&'a Expr<'a>>,
@@ -169,6 +171,7 @@ pub enum Value<'a> {
     /// Native "int" type.
     Int(i32),
     Int64(i64),
+    Bool(bool),
     TmpVar(&'a TmpVar<'a>),
     Var(String),
 }
@@ -260,6 +263,12 @@ impl<'a> Builder<'a> {
 
                 self.push_expr(expr, stmts)
             }
+            syntax::ExprKind::Boolean(b) => {
+                let value = Value::Bool(*b);
+                let expr = self.expr_arena.alloc(Expr::Value(value));
+
+                self.push_expr(expr, stmts)
+            }
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
                 let expr = self.expr_arena.alloc(Expr::Minus(self.inc_used(a)));
@@ -299,6 +308,78 @@ impl<'a> Builder<'a> {
                 let expr = self
                     .expr_arena
                     .alloc(Expr::Div(self.inc_used(a), self.inc_used(b)));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Eq(a, b) => {
+                let a = self._build(a, program, stmts);
+                let b = self._build(b, program, stmts);
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Eq(self.inc_used(a), self.inc_used(b)));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Ne(a, b) => {
+                let a = self._build(a, program, stmts);
+                let b = self._build(b, program, stmts);
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Ne(self.inc_used(a), self.inc_used(b)));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Lt(a, b) => {
+                let a = self._build(a, program, stmts);
+                let b = self._build(b, program, stmts);
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Lt(self.inc_used(a), self.inc_used(b)));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Gt(a, b) => {
+                let a = self._build(a, program, stmts);
+                let b = self._build(b, program, stmts);
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Gt(self.inc_used(a), self.inc_used(b)));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Le(a, b) => {
+                let a = self._build(a, program, stmts);
+                let b = self._build(b, program, stmts);
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Le(self.inc_used(a), self.inc_used(b)));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Ge(a, b) => {
+                let a = self._build(a, program, stmts);
+                let b = self._build(b, program, stmts);
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Ge(self.inc_used(a), self.inc_used(b)));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::And(a, b) => {
+                let a = self._build(a, program, stmts);
+                let b = self._build(b, program, stmts);
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::And(self.inc_used(a), self.inc_used(b)));
+
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Or(a, b) => {
+                let a = self._build(a, program, stmts);
+                let b = self._build(b, program, stmts);
+                let expr = self
+                    .expr_arena
+                    .alloc(Expr::Or(self.inc_used(a), self.inc_used(b)));
 
                 self.push_expr(expr, stmts)
             }
@@ -388,7 +469,13 @@ impl<'a> Builder<'a> {
                         let condition = match arm.pattern().kind() {
                             PatternKind::Integer(n) => {
                                 let value = self.expr_arena.alloc(Expr::Value(Value::Int64(*n)));
-                                let eq = Expr::Eq(t_head, value);
+                                let eq = Expr::Eq(self.inc_used(t_head), value);
+
+                                self.expr_arena.alloc(eq)
+                            }
+                            PatternKind::Boolean(b) => {
+                                let value = self.expr_arena.alloc(Expr::Value(Value::Bool(*b)));
+                                let eq = Expr::Eq(self.inc_used(t_head), value);
 
                                 self.expr_arena.alloc(eq)
                             }
@@ -540,43 +627,18 @@ impl<'a> Optimizer {
             Expr::Minus(operand) => {
                 self.optimize_expr(operand);
             }
-            Expr::Add(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::Sub(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::Mul(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::Div(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::Lt(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::Le(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::Gt(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::Ge(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::Eq(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            Expr::And(lhs, rhs) => {
+            Expr::Add(lhs, rhs)
+            | Expr::Sub(lhs, rhs)
+            | Expr::Mul(lhs, rhs)
+            | Expr::Div(lhs, rhs)
+            | Expr::Eq(lhs, rhs)
+            | Expr::Ne(lhs, rhs)
+            | Expr::Lt(lhs, rhs)
+            | Expr::Le(lhs, rhs)
+            | Expr::Ge(lhs, rhs)
+            | Expr::Gt(lhs, rhs)
+            | Expr::And(lhs, rhs)
+            | Expr::Or(lhs, rhs) => {
                 self.optimize_expr(lhs);
                 self.optimize_expr(rhs);
             }

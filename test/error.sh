@@ -47,6 +47,24 @@ assert 'Semantic error: unreachable pattern: `1`' "
   else
     puts(n)
   end"
+assert 'Semantic error: unreachable pattern: `false`' "
+  case 5 > 3
+  when true
+    puts(true)
+  when false
+    puts(false)
+  when false
+    puts(0)
+  end"
+assert 'Semantic error: unreachable `else` clause' "
+  case 5 > 3
+  when true
+    puts(true)
+  when false
+    puts(false)
+  else
+    puts(0)
+  end"
 # non-exhaustive pattern
 assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
   n = 100
@@ -55,4 +73,14 @@ assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
     puts(1)
   when 2
     puts(2)
+  end"
+assert 'Semantic error: non-exhaustive pattern: `true`' "
+  case 5 > 3
+  when false
+    puts(false)
+  end"
+assert 'Semantic error: non-exhaustive pattern: `false`' "
+  case 5 > 3
+  when true
+    puts(true)
   end"

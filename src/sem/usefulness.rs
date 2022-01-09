@@ -56,13 +56,14 @@ pub struct IntRange {
 impl IntRange {
     #[inline]
     fn is_integral(ty: Type) -> bool {
-        matches!(ty, Type::Int64)
+        matches!(ty, Type::Int64 | Type::Boolean)
     }
 
     // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
     fn signed_bias(ty: Type) -> i128 {
         match ty {
             Type::Int64 => 1i128 << (i64::BITS as i128 - 1),
+            Type::Boolean => 0,
         }
     }
 
@@ -76,15 +77,22 @@ impl IntRange {
         i64::try_from(i128::try_from(value).unwrap() - bias).unwrap()
     }
 
-    #[inline]
-    fn from_const(value: i64) -> IntRange {
-        let bias = Self::signed_bias(Type::Int64);
+    fn from_const(value: i64, ty: Type) -> IntRange {
+        let bias = Self::signed_bias(ty);
         let val = Self::encode_value(value, bias);
 
         IntRange {
             range: val..=val,
             bias,
         }
+    }
+
+    fn from_i64(value: i64) -> IntRange {
+        Self::from_const(value, Type::Int64)
+    }
+
+    fn from_bool(value: bool) -> IntRange {
+        Self::from_const(i64::try_from(value).unwrap(), Type::Boolean)
     }
 
     #[inline]
@@ -147,14 +155,17 @@ impl IntRange {
     }
 
     /// Only used for displaying the range properly.
-    fn to_pat(&self) -> Pattern {
+    fn to_pat(&self, ty: Type) -> Pattern {
         let (lo, hi) = self.boundaries();
 
         let lo = Self::decode_value(lo, self.bias);
         let hi = Self::decode_value(hi, self.bias);
 
         let kind = if lo == hi {
-            PatternKind::Integer(lo)
+            match ty {
+                Type::Int64 => PatternKind::Integer(lo),
+                Type::Boolean => PatternKind::Boolean(lo != 0),
+            }
         } else {
             PatternKind::Range {
                 lo,
@@ -163,7 +174,7 @@ impl IntRange {
             }
         };
 
-        Pattern::new(kind)
+        Pattern::new(kind, ty)
     }
 
     /// See `Constructor::is_covered_by`
@@ -330,6 +341,15 @@ impl SplitWildcard {
                     i64::MIN,
                     i64::MAX,
                     Type::Int64,
+                    RangeEnd::Included,
+                ));
+                vec![ctor]
+            }
+            Type::Boolean => {
+                let ctor = Constructor::IntRange(IntRange::from_range(
+                    0,
+                    1,
+                    Type::Boolean,
                     RangeEnd::Included,
                 ));
                 vec![ctor]
@@ -826,25 +846,31 @@ impl<'p> DeconstructedPat<'p> {
                 fields = Fields::empty();
             }
             PatternKind::Integer(value) => {
-                let int_range = IntRange::from_const(*value);
+                let int_range = IntRange::from_i64(*value);
 
                 ctor = Constructor::IntRange(int_range);
                 fields = Fields::empty();
             }
-            &PatternKind::Range { lo, hi, end } => {
-                let int_range = IntRange::from_range(lo, hi, Type::Int64, end);
+            PatternKind::Boolean(b) => {
+                let int_range = IntRange::from_bool(*b);
+
+                ctor = Constructor::IntRange(int_range);
+                fields = Fields::empty();
+            }
+            PatternKind::Range { lo, hi, end } => {
+                let int_range = IntRange::from_range(*lo, *hi, Type::Int64, *end);
 
                 ctor = Constructor::IntRange(int_range);
                 fields = Fields::empty();
             }
         }
 
-        DeconstructedPat::new(ctor, fields, Type::Int64)
+        DeconstructedPat::new(ctor, fields, pat.ty())
     }
 
     pub fn to_pat(&self) -> Pattern {
         let pat = match &self.ctor {
-            Constructor::IntRange(range) => return range.to_pat(),
+            Constructor::IntRange(range) => return range.to_pat(self.ty()),
             Constructor::Wildcard => PatternKind::Wildcard,
             Constructor::Missing { .. } => unreachable!(
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
@@ -852,7 +878,7 @@ impl<'p> DeconstructedPat<'p> {
             ),
         };
 
-        Pattern::new(pat)
+        Pattern::new(pat, self.ty())
     }
 
     pub(super) fn ctor(&self) -> &Constructor {
@@ -1218,6 +1244,7 @@ fn is_useful<'p>(
 fn compute_match_usefulness<'p>(
     cx: &MatchCheckCtxt<'p>,
     arms: &[MatchArm<'p>],
+    src_ty: Type,
 ) -> UsefulnessReport<'p> {
     let mut matrix = Matrix::empty();
     let arm_usefulness: Vec<_> = arms
@@ -1238,9 +1265,7 @@ fn compute_match_usefulness<'p>(
         })
         .collect();
 
-    let wild_pattern = cx
-        .pattern_arena
-        .alloc(DeconstructedPat::wildcard(Type::Int64));
+    let wild_pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(src_ty));
     let v = PatStack::from_pattern(wild_pattern);
     let usefulness = is_useful(cx, &matrix, &v, ArmType::FakeExtraWildcard, false, true);
     let non_exhaustiveness_witnesses = match usefulness {
@@ -1253,7 +1278,11 @@ fn compute_match_usefulness<'p>(
     }
 }
 
-pub fn check_match(arms: &[CaseArm], has_else: bool) -> Result<(), Vec<SemanticError>> {
+pub fn check_match(
+    head_ty: Type,
+    arms: &[CaseArm],
+    has_else: bool,
+) -> Result<(), Vec<SemanticError>> {
     let pattern_arena = Arena::default();
     let cx = MatchCheckCtxt {
         pattern_arena: &pattern_arena,
@@ -1274,28 +1303,32 @@ pub fn check_match(arms: &[CaseArm], has_else: bool) -> Result<(), Vec<SemanticE
         .collect();
     // else
     if has_else {
-        let pattern: &_ = cx
-            .pattern_arena
-            .alloc(DeconstructedPat::wildcard(Type::Int64));
+        let pattern: &_ = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
         arms2.push(MatchArm {
             pat: pattern,
             has_guard: false,
         })
     }
 
-    let report = compute_match_usefulness(&cx, &arms2);
+    let report = compute_match_usefulness(&cx, &arms2, head_ty);
 
     // Check if the match is exhaustive.
     let mut errors = vec![];
 
     // unreachable pattern
-    for (arm, reachability) in report.arm_usefulness {
+    for (i, (arm, reachability)) in report.arm_usefulness.iter().enumerate() {
+        dbg!(i);
         if matches!(reachability, Reachability::Unreachable) {
-            let pat = arm.pat.to_pat();
+            if has_else && i == (report.arm_usefulness.len() - 1) {
+                // "else"
+                errors.push(SemanticError::UnreachableElseClause);
+            } else {
+                let pat = arm.pat.to_pat();
 
-            errors.push(SemanticError::UnreachablePattern {
-                pattern: pat.kind().to_string(),
-            })
+                errors.push(SemanticError::UnreachablePattern {
+                    pattern: pat.kind().to_string(),
+                });
+            }
         }
     }
     // non exhaustiveness
@@ -1331,14 +1364,14 @@ mod tests_int_range {
 
     #[test]
     fn i64_min() {
-        let r = IntRange::from_const(i64::MIN);
+        let r = IntRange::from_i64(i64::MIN);
         let (low, high) = r.boundaries();
 
         assert!(r.is_singleton());
         assert_eq!(low, 0);
         assert_eq!(high, 0);
 
-        let pat = r.to_pat();
+        let pat = r.to_pat(Type::Int64);
         let kind = pat.kind();
 
         if let PatternKind::Integer(n) = kind {
@@ -1350,14 +1383,14 @@ mod tests_int_range {
 
     #[test]
     fn i64_max() {
-        let r = IntRange::from_const(i64::MAX);
+        let r = IntRange::from_i64(i64::MAX);
         let (low, high) = r.boundaries();
 
         assert!(r.is_singleton());
         assert_eq!(low, 18446744073709551615u128);
         assert_eq!(high, 18446744073709551615u128);
 
-        let pat = r.to_pat();
+        let pat = r.to_pat(Type::Int64);
         let kind = pat.kind();
 
         if let PatternKind::Integer(n) = kind {
@@ -1393,7 +1426,7 @@ mod tests_deconstructed_pat {
             hi: 2,
             end: RangeEnd::Included,
         };
-        let pat = Pattern::new(kind);
+        let pat = Pattern::new(kind, Type::Int64);
         let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
 
         assert_eq!(dc_pat.ty(), Type::Int64);

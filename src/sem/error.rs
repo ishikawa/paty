@@ -17,6 +17,8 @@ pub enum SemanticError {
     // pattern match errors
     #[error("unreachable pattern: `{pattern}`")]
     UnreachablePattern { pattern: String },
+    #[error("unreachable `else` clause")]
+    UnreachableElseClause,
     #[error("non-exhaustive pattern: `{pattern}`")]
     NonExhaustivePattern { pattern: String },
 }
