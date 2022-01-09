@@ -155,14 +155,17 @@ impl IntRange {
     }
 
     /// Only used for displaying the range properly.
-    fn to_pat(&self) -> Pattern {
+    fn to_pat(&self, ty: Type) -> Pattern {
         let (lo, hi) = self.boundaries();
 
         let lo = Self::decode_value(lo, self.bias);
         let hi = Self::decode_value(hi, self.bias);
 
         let kind = if lo == hi {
-            PatternKind::Integer(lo)
+            match ty {
+                Type::Int64 => PatternKind::Integer(lo),
+                Type::Boolean => PatternKind::Boolean(lo != 0),
+            }
         } else {
             PatternKind::Range {
                 lo,
@@ -171,7 +174,7 @@ impl IntRange {
             }
         };
 
-        Pattern::new(kind)
+        Pattern::new(kind, ty)
     }
 
     /// See `Constructor::is_covered_by`
@@ -862,12 +865,12 @@ impl<'p> DeconstructedPat<'p> {
             }
         }
 
-        DeconstructedPat::new(ctor, fields, Type::Int64)
+        DeconstructedPat::new(ctor, fields, pat.ty())
     }
 
     pub fn to_pat(&self) -> Pattern {
         let pat = match &self.ctor {
-            Constructor::IntRange(range) => return range.to_pat(),
+            Constructor::IntRange(range) => return range.to_pat(self.ty()),
             Constructor::Wildcard => PatternKind::Wildcard,
             Constructor::Missing { .. } => unreachable!(
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
@@ -875,7 +878,7 @@ impl<'p> DeconstructedPat<'p> {
             ),
         };
 
-        Pattern::new(pat)
+        Pattern::new(pat, self.ty())
     }
 
     pub(super) fn ctor(&self) -> &Constructor {
@@ -1364,7 +1367,7 @@ mod tests_int_range {
         assert_eq!(low, 0);
         assert_eq!(high, 0);
 
-        let pat = r.to_pat();
+        let pat = r.to_pat(Type::Int64);
         let kind = pat.kind();
 
         if let PatternKind::Integer(n) = kind {
@@ -1383,7 +1386,7 @@ mod tests_int_range {
         assert_eq!(low, 18446744073709551615u128);
         assert_eq!(high, 18446744073709551615u128);
 
-        let pat = r.to_pat();
+        let pat = r.to_pat(Type::Int64);
         let kind = pat.kind();
 
         if let PatternKind::Integer(n) = kind {
@@ -1419,7 +1422,7 @@ mod tests_deconstructed_pat {
             hi: 2,
             end: RangeEnd::Included,
         };
-        let pat = Pattern::new(kind);
+        let pat = Pattern::new(kind, Type::Int64);
         let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
 
         assert_eq!(dc_pat.ty(), Type::Int64);

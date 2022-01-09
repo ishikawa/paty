@@ -2,6 +2,8 @@ use chumsky::prelude::*;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use crate::typing::Type;
+
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RangeEnd {
     Included, // "..=" taken from Rust language
@@ -299,19 +301,25 @@ impl CaseArm {
 #[derive(Debug)]
 pub struct Pattern {
     kind: PatternKind,
+    ty: Type,
     comments: Vec<String>,
 }
 
 impl Pattern {
-    pub fn new(kind: PatternKind) -> Self {
+    pub fn new(kind: PatternKind, ty: Type) -> Self {
         Self {
             kind,
+            ty,
             comments: vec![],
         }
     }
 
     pub fn kind(&self) -> &PatternKind {
         &self.kind
+    }
+
+    pub fn ty(&self) -> Type {
+        self.ty
     }
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
@@ -388,11 +396,11 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
     let pattern = {
         let integer_pattern = integer_value.map(|n| {
             let kind = PatternKind::Integer(n);
-            Pattern::new(kind)
+            Pattern::new(kind, Type::Int64)
         });
         let boolean_pattern = boolean_value.clone().map(|b| {
             let kind = PatternKind::Boolean(b);
-            Pattern::new(kind)
+            Pattern::new(kind, Type::Boolean)
         });
         let range_pattern = integer_value
             .then(choice((
@@ -413,7 +421,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                     end,
                 };
 
-                Pattern::new(kind)
+                Pattern::new(kind, Type::Int64)
             });
 
         range_pattern.or(integer_pattern).or(boolean_pattern)

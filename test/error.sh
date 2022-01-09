@@ -47,6 +47,15 @@ assert 'Semantic error: unreachable pattern: `1`' "
   else
     puts(n)
   end"
+assert 'Semantic error: unreachable pattern: `false`' "
+  case 5 > 3
+  when true
+    puts(true)
+  when false
+    puts(false)
+  when false
+    puts(0)
+  end"
 # non-exhaustive pattern
 assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
   n = 100
