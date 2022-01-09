@@ -1303,9 +1303,7 @@ pub fn check_match(
         .collect();
     // else
     if has_else {
-        let pattern: &_ = cx
-            .pattern_arena
-            .alloc(DeconstructedPat::wildcard(Type::Int64));
+        let pattern: &_ = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
         arms2.push(MatchArm {
             pat: pattern,
             has_guard: false,
@@ -1318,13 +1316,19 @@ pub fn check_match(
     let mut errors = vec![];
 
     // unreachable pattern
-    for (arm, reachability) in report.arm_usefulness {
+    for (i, (arm, reachability)) in report.arm_usefulness.iter().enumerate() {
+        dbg!(i);
         if matches!(reachability, Reachability::Unreachable) {
-            let pat = arm.pat.to_pat();
+            if has_else && i == (report.arm_usefulness.len() - 1) {
+                // "else"
+                errors.push(SemanticError::UnreachableElseClause);
+            } else {
+                let pat = arm.pat.to_pat();
 
-            errors.push(SemanticError::UnreachablePattern {
-                pattern: pat.kind().to_string(),
-            })
+                errors.push(SemanticError::UnreachablePattern {
+                    pattern: pat.kind().to_string(),
+                });
+            }
         }
     }
     // non exhaustiveness
