@@ -94,6 +94,15 @@ assert 152 "
     end
   end
   puts(pt(1) + pt(5) + pt(10) + pt(20))"
+# boolean
+assert 'true' "
+  n = 5
+  case n > 1 && n <= 5
+  when true
+    puts(true)
+  when false
+    puts(false)
+  end"
 
 # examples
 assert 13 "$(cat examples/foo.paty)"

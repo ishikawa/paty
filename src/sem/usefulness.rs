@@ -63,6 +63,7 @@ impl IntRange {
     fn signed_bias(ty: Type) -> i128 {
         match ty {
             Type::Int64 => 1i128 << (i64::BITS as i128 - 1),
+            Type::Boolean => 0,
         }
     }
 
@@ -330,6 +331,15 @@ impl SplitWildcard {
                     i64::MIN,
                     i64::MAX,
                     Type::Int64,
+                    RangeEnd::Included,
+                ));
+                vec![ctor]
+            }
+            Type::Boolean => {
+                let ctor = Constructor::IntRange(IntRange::from_range(
+                    0,
+                    1,
+                    Type::Boolean,
                     RangeEnd::Included,
                 ));
                 vec![ctor]
