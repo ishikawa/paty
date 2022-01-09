@@ -74,3 +74,13 @@ assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
   when 2
     puts(2)
   end"
+assert 'Semantic error: non-exhaustive pattern: `true`' "
+  case 5 > 3
+  when false
+    puts(false)
+  end"
+assert 'Semantic error: non-exhaustive pattern: `false`' "
+  case 5 > 3
+  when true
+    puts(true)
+  end"
