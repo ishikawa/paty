@@ -4,11 +4,24 @@ use paty::sem;
 use paty::syntax;
 use std::env;
 use std::fs;
+use std::io;
+use std::io::Read;
 use typed_arena::Arena;
 
 fn main() {
-    let filepath = env::args().nth(1).expect("filename");
-    let src = fs::read_to_string(filepath).expect("Read source code");
+    // Read input: use STDIN if no positional argument to point to the file.
+    let src = if let Some(filename) = env::args().nth(1) {
+        fs::read_to_string(filename).expect("Read source code")
+    } else {
+        let mut src = String::new();
+        let stdin = io::stdin();
+
+        stdin
+            .lock()
+            .read_to_string(&mut src)
+            .expect("Read source code");
+        src
+    };
     //eprintln!("---\n{}", src);
 
     let tokens = match syntax::lexer().parse(src) {
