@@ -84,3 +84,10 @@ assert 'Semantic error: non-exhaustive pattern: `false`' "
   when true
     puts(true)
   end"
+# type check
+assert 'Semantic error: expected type `int64`, found `boolean`' "
+def foo(n: int64)
+  n
+end
+foo(true)
+"
