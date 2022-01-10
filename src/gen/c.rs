@@ -134,6 +134,10 @@ impl<'a> Emitter {
                 code.push('-');
                 self.emit_expr(operand, code);
             }
+            Expr::Not(operand) => {
+                code.push('!');
+                self.emit_expr(operand, code);
+            }
             Expr::Add(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
@@ -251,7 +255,7 @@ impl<'a> Emitter {
                         // "true" / "false"
                         code.push('(');
                         self.emit_expr(arg, code);
-                        code.push_str(" ? \"true\": \"false\"");
+                        code.push_str(" ? \"true\" : \"false\"");
                         code.push(')');
                     } else {
                         self.emit_expr(arg, code);

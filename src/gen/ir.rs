@@ -160,6 +160,7 @@ pub struct Branch<'a> {
 #[derive(Debug)]
 pub enum Expr<'a> {
     Minus(&'a Expr<'a>),
+    Not(&'a Expr<'a>),
     Add(&'a Expr<'a>, &'a Expr<'a>),
     Sub(&'a Expr<'a>, &'a Expr<'a>),
     Mul(&'a Expr<'a>, &'a Expr<'a>),
@@ -494,10 +495,12 @@ impl<'a> Builder<'a> {
                                 self.expr_arena.alloc(eq)
                             }
                             PatternKind::Boolean(b) => {
-                                let value = self.expr_arena.alloc(Expr::Value(Value::Bool(*b)));
-                                let eq = Expr::Eq(self.inc_used(t_head), value);
-
-                                self.expr_arena.alloc(eq)
+                                if *b {
+                                    self.inc_used(t_head)
+                                } else {
+                                    let expr = Expr::Not(self.inc_used(t_head));
+                                    self.expr_arena.alloc(expr)
+                                }
                             }
                             PatternKind::Range { lo, hi, end } => {
                                 let lo = self.expr_arena.alloc(Expr::Value(Value::Int64(*lo)));
@@ -644,7 +647,7 @@ impl<'a> Optimizer {
 
     fn optimize_expr(&mut self, expr: &Expr<'a>) {
         match expr {
-            Expr::Minus(operand) => {
+            Expr::Minus(operand) | Expr::Not(operand) => {
                 self.optimize_expr(operand);
             }
             Expr::Add(lhs, rhs)
