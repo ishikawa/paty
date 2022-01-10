@@ -90,11 +90,13 @@ pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, Vec<SemanticError>> {
     }
 }
 
-fn check_expr_type(expected: Type, expr: &syntax::Expr, errors: &mut Vec<SemanticError>) -> bool {
-    let actual = expr
-        .ty()
-        .unwrap_or_else(|| panic!("Untyped expression: {:?}", expr));
-    check_type(expected, actual, errors)
+fn unify_expr_type(expected: Type, expr: &syntax::Expr, errors: &mut Vec<SemanticError>) -> bool {
+    if let Some(actual) = expr.ty() {
+        check_type(expected, actual, errors)
+    } else {
+        expr.assign_ty(expected);
+        true
+    }
 }
 
 fn check_type(expected: Type, actual: Type, errors: &mut Vec<SemanticError>) -> bool {
@@ -114,17 +116,16 @@ fn analyze_loop<'a>(
 ) {
     match expr.kind() {
         syntax::ExprKind::Integer(_) => {
-            expr.assign_ty(Type::Int64);
+            unify_expr_type(Type::Int64, expr, errors);
         }
         syntax::ExprKind::Boolean(_) => {
-            expr.assign_ty(Type::Boolean);
+            unify_expr_type(Type::Boolean, expr, errors);
         }
         syntax::ExprKind::Minus(a) => {
             analyze_loop(a, vars, functions, errors);
 
-            if check_expr_type(Type::Int64, a, errors) {
-                expr.assign_ty(Type::Int64);
-            }
+            unify_expr_type(Type::Int64, a, errors);
+            unify_expr_type(Type::Int64, expr, errors);
         }
         syntax::ExprKind::Add(a, b)
         | syntax::ExprKind::Sub(a, b)
@@ -132,12 +133,9 @@ fn analyze_loop<'a>(
         | syntax::ExprKind::Div(a, b)
         | syntax::ExprKind::Eq(a, b)
         | syntax::ExprKind::Ne(a, b) => {
-            analyze_loop(a, vars, functions, errors);
-            analyze_loop(b, vars, functions, errors);
-
-            if check_expr_type(Type::Int64, a, errors) && check_expr_type(Type::Int64, b, errors) {
-                expr.assign_ty(Type::Int64);
-            }
+            unify_expr_type(Type::Int64, a, errors);
+            unify_expr_type(Type::Int64, b, errors);
+            unify_expr_type(Type::Int64, expr, errors);
         }
         syntax::ExprKind::Lt(a, b)
         | syntax::ExprKind::Gt(a, b)
@@ -146,23 +144,21 @@ fn analyze_loop<'a>(
             analyze_loop(a, vars, functions, errors);
             analyze_loop(b, vars, functions, errors);
 
-            if check_expr_type(Type::Int64, a, errors) && check_expr_type(Type::Int64, b, errors) {
-                expr.assign_ty(Type::Boolean);
-            }
+            unify_expr_type(Type::Int64, a, errors);
+            unify_expr_type(Type::Int64, b, errors);
+            unify_expr_type(Type::Boolean, expr, errors);
         }
         syntax::ExprKind::And(a, b) | syntax::ExprKind::Or(a, b) => {
             analyze_loop(a, vars, functions, errors);
             analyze_loop(b, vars, functions, errors);
 
-            if check_expr_type(Type::Boolean, a, errors)
-                && check_expr_type(Type::Boolean, b, errors)
-            {
-                expr.assign_ty(Type::Boolean);
-            }
+            unify_expr_type(Type::Boolean, a, errors);
+            unify_expr_type(Type::Boolean, b, errors);
+            unify_expr_type(Type::Boolean, expr, errors);
         }
         syntax::ExprKind::Var(name) => {
             if let Some(binding) = vars.get(name) {
-                expr.assign_ty(binding.ty());
+                unify_expr_type(binding.ty(), expr, errors);
             } else {
                 errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
@@ -196,8 +192,14 @@ fn analyze_loop<'a>(
                 } else {
                     for (i, arg) in args.iter().enumerate() {
                         analyze_loop(arg, vars, functions, errors);
-                        check_expr_type(params[i].ty(), arg, errors);
+                        unify_expr_type(params[i].ty(), arg, errors);
                     }
+                }
+
+                // The return type is undefined if the function is called before
+                // defined (recursive function).
+                if let Some(retty) = fun.body().ty() {
+                    unify_expr_type(retty, expr, errors);
                 }
             } else {
                 errors.push(SemanticError::UndefinedFunction { name: name.clone() });
@@ -207,7 +209,7 @@ fn analyze_loop<'a>(
             for arg in args {
                 analyze_loop(arg, vars, functions, errors);
             }
-            expr.assign_ty(Type::Int64);
+            unify_expr_type(Type::Int64, expr, errors);
         }
         syntax::ExprKind::Fn(fun) => {
             // Function definition creates a new scope without a parent scope.
@@ -223,13 +225,6 @@ fn analyze_loop<'a>(
                 let body = fun.body();
 
                 analyze_loop(body, &mut scope, functions, errors);
-
-                // The return type of the function
-                let retty = body
-                    .ty()
-                    .unwrap_or_else(|| panic!("Untyped expression of function `{}`", fun.name()));
-                expr.assign_ty(retty);
-
                 analyze_loop(fun.then(), vars, functions, errors);
             }
             functions.pop();
@@ -256,10 +251,10 @@ fn analyze_loop<'a>(
                 analyze_loop(arm.body(), &mut scope, functions, errors);
 
                 if let Some(expected) = expr_ty {
-                    if check_expr_type(expected, arm.body(), errors) {
-                        expr_ty = Some(arm.body().ty().unwrap());
-                    }
+                    unify_expr_type(expected, arm.body(), errors);
                 }
+
+                expr_ty = Some(arm.body().ty().unwrap());
             }
 
             if let Some(else_body) = else_body {
@@ -267,17 +262,17 @@ fn analyze_loop<'a>(
                 analyze_loop(else_body, &mut scope, functions, errors);
 
                 if let Some(expected) = expr_ty {
-                    if check_expr_type(expected, else_body, errors) {
-                        expr_ty = Some(else_body.ty().unwrap());
-                    }
+                    unify_expr_type(expected, else_body, errors);
                 }
+
+                expr_ty = Some(else_body.ty().unwrap());
             }
+
+            unify_expr_type(expr_ty.unwrap(), expr, errors);
 
             if !errors.is_empty() {
                 return;
             }
-
-            expr.assign_ty(expr_ty.unwrap());
 
             // Usefulness check
 
