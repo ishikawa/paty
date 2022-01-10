@@ -1,3 +1,4 @@
+use crate::typing::Type;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -14,6 +15,9 @@ pub enum SemanticError {
         expected: usize,
         actual: usize,
     },
+    // Type errors
+    #[error("expected type `{expected}`, found `{actual}`")]
+    MismatchedType { expected: Type, actual: Type },
     // pattern match errors
     #[error("unreachable pattern: `{pattern}`")]
     UnreachablePattern { pattern: String },

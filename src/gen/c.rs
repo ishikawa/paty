@@ -1,4 +1,6 @@
 //! C code generator
+use crate::typing::Type;
+
 use super::ir::{Expr, Function, Program, Stmt, Value};
 
 #[derive(Debug)]
@@ -36,18 +38,20 @@ impl<'a> Emitter {
     fn emit_function(&mut self, fun: &Function<'a>, code: &mut String) {
         if fun.is_entry_point {
             // 'main' must return 'int'
-            code.push_str("int ");
+            code.push_str("int");
         } else {
-            code.push_str("int64_t ");
+            code.push_str(native_ty(Type::Int64));
         }
+        code.push(' ');
 
         code.push_str(&fun.name);
         code.push('(');
-        for (i, arg) in fun.args.iter().enumerate() {
-            code.push_str("int64_t ");
-            code.push_str(arg);
+        for (i, param) in fun.params.iter().enumerate() {
+            code.push_str(native_ty(param.ty));
+            code.push(' ');
+            code.push_str(&param.name);
 
-            if i != (fun.args.len() - 1) {
+            if i != (fun.params.len() - 1) {
                 code.push_str(", ");
             }
         }
@@ -300,4 +304,11 @@ fn immediate<'a>(expr: &'a Expr<'a>) -> &'a Expr<'a> {
         }
     }
     expr
+}
+
+fn native_ty(ty: Type) -> &'static str {
+    match ty {
+        Type::Int64 => "int64_t",
+        Type::Boolean => "bool",
+    }
 }

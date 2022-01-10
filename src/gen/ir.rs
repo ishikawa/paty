@@ -1,4 +1,5 @@
 use crate::syntax::PatternKind;
+use crate::typing::Type;
 use crate::{sem, syntax};
 use std::cell::Cell;
 use std::fmt;
@@ -21,7 +22,7 @@ impl fmt::Display for Program<'_> {
 #[derive(Debug)]
 pub struct Function<'a> {
     pub name: String,
-    pub args: Vec<String>,
+    pub params: Vec<Parameter>,
     pub body: Vec<Stmt<'a>>,
     /// Whether this function is `main` or not.
     pub is_entry_point: bool,
@@ -31,9 +32,9 @@ impl fmt::Display for Function<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)?;
         write!(f, "(")?;
-        for (i, arg) in self.args.iter().enumerate() {
-            write!(f, "{}", arg)?;
-            if i < (self.args.len() - 1) {
+        for (i, param) in self.params.iter().enumerate() {
+            write!(f, "{}", param)?;
+            if i < (self.params.len() - 1) {
                 write!(f, ", ")?;
             }
         }
@@ -45,6 +46,21 @@ impl fmt::Display for Function<'_> {
                 writeln!(f, "  {}", line)?;
             }
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct Parameter {
+    pub name: String,
+    pub ty: Type,
+}
+
+impl fmt::Display for Parameter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        write!(f, ": ")?;
+        write!(f, "{}", self.ty)?;
         Ok(())
     }
 }
@@ -211,7 +227,7 @@ impl<'a> Builder<'a> {
 
         let main = Function {
             name: "main".to_string(),
-            args: vec![],
+            params: vec![],
             body: stmts,
             is_entry_point: true,
         };
@@ -427,23 +443,27 @@ impl<'a> Builder<'a> {
                 stmts.push(stmt);
                 self._build(then, program, stmts)
             }
-            syntax::ExprKind::Fn {
-                name,
-                args,
-                body,
-                then,
-            } => {
+            syntax::ExprKind::Fn(syntax_fun) => {
                 // save and reset temp var index
                 let saved_tmp_var_index = self.tmp_var_index;
                 self.tmp_var_index = 0;
 
                 let mut body_stmts = vec![];
-                let ret = self._build(body, program, &mut body_stmts);
+                let ret = self._build(syntax_fun.body(), program, &mut body_stmts);
                 body_stmts.push(Stmt::Ret(self.inc_used(ret)));
 
+                let params = syntax_fun
+                    .params()
+                    .iter()
+                    .map(|p| Parameter {
+                        name: p.name().to_string(),
+                        ty: p.ty(),
+                    })
+                    .collect();
+
                 let fun = Function {
-                    name: name.clone(),
-                    args: args.clone(),
+                    name: syntax_fun.name().to_string(),
+                    params,
                     body: body_stmts,
                     is_entry_point: false,
                 };
@@ -451,7 +471,7 @@ impl<'a> Builder<'a> {
 
                 // restore
                 self.tmp_var_index = saved_tmp_var_index;
-                self._build(then, program, stmts)
+                self._build(syntax_fun.then(), program, stmts)
             }
             syntax::ExprKind::Case {
                 head,
