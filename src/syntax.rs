@@ -79,6 +79,7 @@ impl fmt::Display for Token {
 pub enum TokenKind {
     Integer(String),
     Identifier(String),
+    String(String),
     // Operators
     RangeIncluded, // RangeEnd::Included
     RangeExcluded, // RangeEnd::Excluded
@@ -107,7 +108,8 @@ impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Integer(n) => write!(f, "{}", n),
-            Self::Identifier(s) => write!(f, "{}", s),
+            Self::Identifier(s) => write!(f, "\"{}\"", s),
+            Self::String(s) => write!(f, "{}", s),
             Self::RangeIncluded => write!(f, "{}", RangeEnd::Included),
             Self::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
             Self::Operator(c) => write!(f, "{}", c),
@@ -150,6 +152,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         just("&&").to(TokenKind::And),
         just("||").to(TokenKind::Or),
     ));
+
     let identifier = choice((
         text::keyword("def").to(TokenKind::Def),
         text::keyword("case").to(TokenKind::Case),
@@ -164,8 +167,28 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         text::ident().map(TokenKind::Identifier),
     ));
 
+    // string
+    let escape = just('\\').ignore_then(
+        just('\\')
+            .or(just('/'))
+            .or(just('"'))
+            .or(just('b').to('\x08'))
+            .or(just('f').to('\x0C'))
+            .or(just('n').to('\n'))
+            .or(just('r').to('\r'))
+            .or(just('t').to('\t')),
+    );
+
+    let string = just('"')
+        .ignore_then(filter(|c| *c != '\\' && *c != '"').or(escape).repeated())
+        .then_ignore(just('"'))
+        .collect::<String>()
+        .map(TokenKind::String)
+        .labelled("string");
+
     let token = integer
         .or(identifier)
+        .or(string)
         .or(operator2)
         .or(operator1)
         .recover_with(skip_then_retry_until([]));
