@@ -1,4 +1,5 @@
 use chumsky::prelude::*;
+use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -97,6 +98,9 @@ pub enum TokenKind {
     Puts,
     True,
     False,
+    // Types
+    Int64,
+    Boolean,
 }
 
 impl fmt::Display for TokenKind {
@@ -121,6 +125,8 @@ impl fmt::Display for TokenKind {
             Self::Puts => write!(f, "puts"),
             Self::True => write!(f, "true"),
             Self::False => write!(f, "false"),
+            Self::Int64 => write!(f, "int64"),
+            Self::Boolean => write!(f, "boolean"),
         }
     }
 }
@@ -133,7 +139,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .map(|s| TokenKind::Integer(format!("-{}", s)));
     let integer = pos_integer.or(neg_integer);
 
-    let operator1 = one_of("+-*/=(),<>").map(TokenKind::Operator);
+    let operator1 = one_of("+-*/=(),<>:").map(TokenKind::Operator);
     let operator2 = choice((
         just("..=").to(TokenKind::RangeIncluded),
         just("..<").to(TokenKind::RangeExcluded),
@@ -153,6 +159,8 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         text::keyword("puts").to(TokenKind::Puts),
         text::keyword("true").to(TokenKind::True),
         text::keyword("false").to(TokenKind::False),
+        text::keyword("int64").to(TokenKind::Int64),
+        text::keyword("boolean").to(TokenKind::Boolean),
         text::ident().map(TokenKind::Identifier),
     ));
 
@@ -191,6 +199,8 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
 #[derive(Debug)]
 pub struct Expr {
     kind: ExprKind,
+    // The type of expression is determined in later phase.
+    ty: Cell<Option<Type>>,
     // comments followed by this token.
     comments: Vec<String>,
 }
@@ -199,12 +209,21 @@ impl Expr {
     pub fn new(kind: ExprKind) -> Self {
         Self {
             kind,
+            ty: Cell::new(None),
             comments: vec![],
         }
     }
 
     pub fn kind(&self) -> &ExprKind {
         &self.kind
+    }
+
+    pub fn ty(&self) -> Option<Type> {
+        self.ty.get()
+    }
+
+    pub fn assign_ty(&self, ty: Type) {
+        self.ty.set(Some(ty))
     }
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
@@ -247,12 +266,7 @@ pub enum ExprKind {
         rhs: Box<Expr>,
         then: Box<Expr>,
     },
-    Fn {
-        name: String,
-        args: Vec<String>,
-        body: Box<Expr>,
-        then: Box<Expr>,
-    },
+    Fn(Function),
     Case {
         head: Box<Expr>,
         arms: Vec<CaseArm>,
@@ -261,6 +275,56 @@ pub enum ExprKind {
 
     // Built-in functions
     Puts(Vec<Expr>),
+}
+
+#[derive(Debug)]
+pub struct Function {
+    name: String,
+    params: Vec<Parameter>,
+    body: Box<Expr>,
+    then: Box<Expr>,
+}
+
+impl Function {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn params(&self) -> &[Parameter] {
+        &self.params
+    }
+
+    pub fn body(&self) -> &Expr {
+        &self.body
+    }
+
+    pub fn then(&self) -> &Expr {
+        &self.then
+    }
+}
+
+/// Formal parameter for a function
+#[derive(Debug)]
+pub struct Parameter {
+    name: String,
+    ty: Type,
+}
+
+impl Parameter {
+    pub fn new(name: &str, ty: Type) -> Self {
+        Self {
+            name: name.to_string(),
+            ty,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn ty(&self) -> Type {
+        self.ty
+    }
 }
 
 #[derive(Debug)]
@@ -392,6 +456,12 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         just_token(TokenKind::False).to(false),
     ))
     .labelled("boolean");
+
+    let type_value = choice((
+        just_token(TokenKind::Int64).to(Type::Int64),
+        just_token(TokenKind::Boolean).to(Type::Boolean),
+    ))
+    .labelled("type");
 
     let pattern = {
         let integer_pattern = integer_value.map(|n| {
@@ -593,27 +663,33 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             });
 
         // Function declaration
+        let param = ident_value
+            .then(op(':').ignore_then(type_value).repeated().at_most(1))
+            .map(|(name, ty)| {
+                let ty = if ty.is_empty() {
+                    // Int64 for omitted type
+                    Type::Int64
+                } else {
+                    ty[0]
+                };
+                Parameter::new(&name, ty)
+            });
         let r#fn = just_token(TokenKind::Def)
             .then(ident_value)
-            .then(
-                ident_value
-                    .separated_by(op(','))
-                    .allow_trailing()
-                    .delimited_by(
-                        token(TokenKind::Operator('(')),
-                        token(TokenKind::Operator(')')),
-                    ),
-            )
+            .then(param.separated_by(op(',')).allow_trailing().delimited_by(
+                token(TokenKind::Operator('(')),
+                token(TokenKind::Operator(')')),
+            ))
             .then(expr.clone())
             .then_ignore(just_token(TokenKind::End))
             .then(decl)
             .map(|((((def_tok, name), args), body), then)| {
-                let mut expr = Expr::new(ExprKind::Fn {
+                let mut expr = Expr::new(ExprKind::Fn(Function {
                     name,
-                    args,
+                    params: args,
                     body: Box::new(body),
                     then: Box::new(then),
-                });
+                }));
                 // Copy leading comments from "def" token
                 expr.append_comments_from(&def_tok);
                 expr

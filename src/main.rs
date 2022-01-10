@@ -56,6 +56,7 @@ fn main() {
         }
         Ok(ast) => ast,
     };
+    //eprintln!("ast = {:?}", ast);
 
     {
         let expr_arena = Arena::new();

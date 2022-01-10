@@ -1,4 +1,5 @@
 use crate::syntax::PatternKind;
+use crate::typing::Type;
 use crate::{sem, syntax};
 use std::cell::Cell;
 use std::fmt;
@@ -21,7 +22,7 @@ impl fmt::Display for Program<'_> {
 #[derive(Debug)]
 pub struct Function<'a> {
     pub name: String,
-    pub args: Vec<String>,
+    pub params: Vec<Parameter>,
     pub body: Vec<Stmt<'a>>,
     /// Whether this function is `main` or not.
     pub is_entry_point: bool,
@@ -31,9 +32,9 @@ impl fmt::Display for Function<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)?;
         write!(f, "(")?;
-        for (i, arg) in self.args.iter().enumerate() {
-            write!(f, "{}", arg)?;
-            if i < (self.args.len() - 1) {
+        for (i, param) in self.params.iter().enumerate() {
+            write!(f, "{}", param)?;
+            if i < (self.params.len() - 1) {
                 write!(f, ", ")?;
             }
         }
@@ -50,16 +51,33 @@ impl fmt::Display for Function<'_> {
 }
 
 #[derive(Debug)]
+pub struct Parameter {
+    pub name: String,
+    pub ty: Type,
+}
+
+impl fmt::Display for Parameter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        write!(f, ": ")?;
+        write!(f, "{}", self.ty)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
 pub struct TmpVar<'a> {
     pub index: usize,
+    pub ty: Type,
     pub used: Cell<usize>,
     pub immediate: Cell<Option<&'a Expr<'a>>>,
 }
 
 impl<'a> TmpVar<'a> {
-    pub fn new(index: usize) -> Self {
+    pub fn new(index: usize, ty: Type) -> Self {
         Self {
             index,
+            ty,
             used: Cell::new(0),
             immediate: Cell::new(None),
         }
@@ -142,8 +160,43 @@ pub struct Branch<'a> {
 }
 
 #[derive(Debug)]
-pub enum Expr<'a> {
+pub struct Expr<'a> {
+    kind: ExprKind<'a>,
+    ty: Type,
+}
+
+impl<'a> Expr<'a> {
+    pub fn new(kind: ExprKind<'a>, ty: Type) -> Self {
+        Self { kind, ty }
+    }
+
+    pub fn int64(value: i64) -> Self {
+        Self {
+            kind: ExprKind::Value(Value::Int64(value)),
+            ty: Type::Int64,
+        }
+    }
+
+    pub fn bool(value: bool) -> Self {
+        Self {
+            kind: ExprKind::Value(Value::Bool(value)),
+            ty: Type::Boolean,
+        }
+    }
+
+    pub fn kind(&self) -> &ExprKind<'a> {
+        &self.kind
+    }
+
+    pub fn ty(&self) -> Type {
+        self.ty
+    }
+}
+
+#[derive(Debug)]
+pub enum ExprKind<'a> {
     Minus(&'a Expr<'a>),
+    Not(&'a Expr<'a>),
     Add(&'a Expr<'a>, &'a Expr<'a>),
     Sub(&'a Expr<'a>, &'a Expr<'a>),
     Mul(&'a Expr<'a>, &'a Expr<'a>),
@@ -173,7 +226,7 @@ pub enum Value<'a> {
     Int64(i64),
     Bool(bool),
     TmpVar(&'a TmpVar<'a>),
-    Var(String),
+    Var(String, Type),
 }
 
 pub struct Builder<'a> {
@@ -203,7 +256,8 @@ impl<'a> Builder<'a> {
         self._build(ast.expr(), &mut program, &mut stmts);
         // Add `return 0` statement for the entry point function if needed.
         if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
-            let expr = Expr::Value(Value::Int(0));
+            let kind = ExprKind::Value(Value::Int(0));
+            let expr = Expr::new(kind, Type::Int64);
             let expr = self.expr_arena.alloc(expr);
 
             stmts.push(Stmt::Ret(expr))
@@ -211,7 +265,7 @@ impl<'a> Builder<'a> {
 
         let main = Function {
             name: "main".to_string(),
-            args: vec![],
+            params: vec![],
             body: stmts,
             is_entry_point: true,
         };
@@ -224,14 +278,27 @@ impl<'a> Builder<'a> {
         program
     }
 
-    fn next_temp_var(&mut self) -> &'a TmpVar<'a> {
+    fn next_temp_var(&mut self, ty: Type) -> &'a TmpVar<'a> {
         let t = self.tmp_var_index;
         self.tmp_var_index += 1;
-        self.tmp_var_arena.alloc(TmpVar::new(t))
+        self.tmp_var_arena.alloc(TmpVar::new(t, ty))
     }
 
-    fn push_expr(&mut self, expr: &'a Expr<'a>, stmts: &mut Vec<Stmt<'a>>) -> &'a Expr<'a> {
-        let t = self.next_temp_var();
+    fn push_expr(
+        &mut self,
+        kind: ExprKind<'a>,
+        syntax_expr: &syntax::Expr,
+        stmts: &mut Vec<Stmt<'a>>,
+    ) -> &'a Expr<'a> {
+        let expr_ty = syntax_expr.ty().unwrap_or_else(|| {
+            panic!(
+                "Semantic analyzer can't assign type for expression {:?}",
+                syntax_expr
+            );
+        });
+
+        let expr = self.expr_arena.alloc(Expr::new(kind, expr_ty));
+        let t = self.next_temp_var(expr.ty());
         let stmt = Stmt::TmpVarDef {
             var: t,
             init: expr,
@@ -239,11 +306,12 @@ impl<'a> Builder<'a> {
         };
         stmts.push(stmt);
 
-        self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))
+        let kind = ExprKind::Value(Value::TmpVar(t));
+        self.expr_arena.alloc(Expr::new(kind, expr.ty()))
     }
 
     fn inc_used(&self, expr: &'a Expr<'a>) -> &'a Expr<'a> {
-        if let Expr::Value(Value::TmpVar(t)) = expr {
+        if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
             t.used.set(t.used.get() + 1);
         }
 
@@ -259,138 +327,114 @@ impl<'a> Builder<'a> {
         match expr.kind() {
             syntax::ExprKind::Integer(n) => {
                 let value = Value::Int64(*n);
-                let expr = self.expr_arena.alloc(Expr::Value(value));
+                let kind = ExprKind::Value(value);
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Boolean(b) => {
                 let value = Value::Bool(*b);
-                let expr = self.expr_arena.alloc(Expr::Value(value));
+                let kind = ExprKind::Value(value);
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
-                let expr = self.expr_arena.alloc(Expr::Minus(self.inc_used(a)));
+                let kind = ExprKind::Minus(self.inc_used(a));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Add(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Add(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Add(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Sub(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Sub(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Sub(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Mul(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Mul(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Mul(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Div(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Div(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Div(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Eq(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Eq(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Eq(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Ne(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Ne(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Ne(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Lt(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Lt(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Lt(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Gt(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Gt(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Gt(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Le(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Le(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Le(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Ge(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Ge(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Ge(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::And(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::And(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::And(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Or(a, b) => {
                 let a = self._build(a, program, stmts);
                 let b = self._build(b, program, stmts);
-                let expr = self
-                    .expr_arena
-                    .alloc(Expr::Or(self.inc_used(a), self.inc_used(b)));
+                let kind = ExprKind::Or(self.inc_used(a), self.inc_used(b));
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Var(name) => {
-                let value = Value::Var(name.clone());
-                let expr = self.expr_arena.alloc(Expr::Value(value));
+                let value = Value::Var(name.clone(), expr.ty().unwrap());
+                let kind = ExprKind::Value(value);
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Call(name, args) => {
-                let expr = Expr::Call {
+                let kind = ExprKind::Call {
                     name: name.clone(),
                     args: args
                         .iter()
@@ -400,12 +444,11 @@ impl<'a> Builder<'a> {
                         })
                         .collect(),
                 };
-                let expr = self.expr_arena.alloc(expr);
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Puts(args) => {
-                let expr = Expr::Printf {
+                let kind = ExprKind::Printf {
                     args: args
                         .iter()
                         .map(|a| {
@@ -414,9 +457,8 @@ impl<'a> Builder<'a> {
                         })
                         .collect(),
                 };
-                let expr = self.expr_arena.alloc(expr);
 
-                self.push_expr(expr, stmts)
+                self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Let { name, rhs, then } => {
                 let init = self._build(rhs, program, stmts);
@@ -427,23 +469,27 @@ impl<'a> Builder<'a> {
                 stmts.push(stmt);
                 self._build(then, program, stmts)
             }
-            syntax::ExprKind::Fn {
-                name,
-                args,
-                body,
-                then,
-            } => {
+            syntax::ExprKind::Fn(syntax_fun) => {
                 // save and reset temp var index
                 let saved_tmp_var_index = self.tmp_var_index;
                 self.tmp_var_index = 0;
 
                 let mut body_stmts = vec![];
-                let ret = self._build(body, program, &mut body_stmts);
+                let ret = self._build(syntax_fun.body(), program, &mut body_stmts);
                 body_stmts.push(Stmt::Ret(self.inc_used(ret)));
 
+                let params = syntax_fun
+                    .params()
+                    .iter()
+                    .map(|p| Parameter {
+                        name: p.name().to_string(),
+                        ty: p.ty(),
+                    })
+                    .collect();
+
                 let fun = Function {
-                    name: name.clone(),
-                    args: args.clone(),
+                    name: syntax_fun.name().to_string(),
+                    params,
                     body: body_stmts,
                     is_entry_point: false,
                 };
@@ -451,14 +497,14 @@ impl<'a> Builder<'a> {
 
                 // restore
                 self.tmp_var_index = saved_tmp_var_index;
-                self._build(then, program, stmts)
+                self._build(syntax_fun.then(), program, stmts)
             }
             syntax::ExprKind::Case {
                 head,
                 arms,
                 else_body,
             } => {
-                let t = self.next_temp_var();
+                let t = self.next_temp_var(expr.ty().unwrap());
                 let t_head = self._build(head, program, stmts);
 
                 // Construct "if-else" statement from each branches.
@@ -468,36 +514,42 @@ impl<'a> Builder<'a> {
                         // Build an immediate value from the pattern
                         let condition = match arm.pattern().kind() {
                             PatternKind::Integer(n) => {
-                                let value = self.expr_arena.alloc(Expr::Value(Value::Int64(*n)));
-                                let eq = Expr::Eq(self.inc_used(t_head), value);
+                                let value = self.expr_arena.alloc(Expr::int64(*n));
+                                let eq = ExprKind::Eq(self.inc_used(t_head), value);
 
-                                self.expr_arena.alloc(eq)
+                                self.expr_arena.alloc(Expr::new(eq, Type::Boolean))
                             }
                             PatternKind::Boolean(b) => {
-                                let value = self.expr_arena.alloc(Expr::Value(Value::Bool(*b)));
-                                let eq = Expr::Eq(self.inc_used(t_head), value);
-
-                                self.expr_arena.alloc(eq)
+                                if *b {
+                                    self.inc_used(t_head)
+                                } else {
+                                    let expr = ExprKind::Not(self.inc_used(t_head));
+                                    self.expr_arena.alloc(Expr::new(expr, Type::Boolean))
+                                }
                             }
                             PatternKind::Range { lo, hi, end } => {
-                                let lo = self.expr_arena.alloc(Expr::Value(Value::Int64(*lo)));
-                                let hi = self.expr_arena.alloc(Expr::Value(Value::Int64(*hi)));
-                                let lhs =
-                                    self.expr_arena.alloc(Expr::Ge(self.inc_used(t_head), lo));
+                                let lo = self.expr_arena.alloc(Expr::int64(*lo));
+                                let hi = self.expr_arena.alloc(Expr::int64(*hi));
+
+                                let lhs = ExprKind::Ge(self.inc_used(t_head), lo);
 
                                 let rhs = match end {
                                     syntax::RangeEnd::Included => {
-                                        self.expr_arena.alloc(Expr::Le(self.inc_used(t_head), hi))
+                                        ExprKind::Le(self.inc_used(t_head), hi)
                                     }
                                     syntax::RangeEnd::Excluded => {
-                                        self.expr_arena.alloc(Expr::Lt(self.inc_used(t_head), hi))
+                                        ExprKind::Lt(self.inc_used(t_head), hi)
                                     }
                                 };
-                                self.expr_arena.alloc(Expr::And(lhs, rhs))
+
+                                let kind = ExprKind::And(
+                                    self.expr_arena.alloc(Expr::new(lhs, Type::Boolean)),
+                                    self.expr_arena.alloc(Expr::new(rhs, Type::Boolean)),
+                                );
+
+                                self.expr_arena.alloc(Expr::new(kind, Type::Boolean))
                             }
-                            PatternKind::Wildcard => {
-                                self.expr_arena.alloc(Expr::Value(Value::Int64(1)))
-                            }
+                            PatternKind::Wildcard => self.expr_arena.alloc(Expr::bool(true)),
                         };
 
                         let mut branch_stmts = vec![];
@@ -534,7 +586,8 @@ impl<'a> Builder<'a> {
                 let stmt = Stmt::Cond { branches, var: t };
                 stmts.push(stmt);
 
-                self.expr_arena.alloc(Expr::Value(Value::TmpVar(t)))
+                let kind = ExprKind::Value(Value::TmpVar(t));
+                self.expr_arena.alloc(Expr::new(kind, t.ty))
             }
         }
     }
@@ -555,7 +608,7 @@ impl<'a> Optimizer {
     }
 
     fn decr_used_and_prunable(&self, expr: &'a Expr<'a>) -> bool {
-        if let Expr::Value(Value::TmpVar(t)) = expr {
+        if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
             let u = t.used.get();
             if u > 0 {
                 let u = u - 1;
@@ -623,36 +676,36 @@ impl<'a> Optimizer {
     }
 
     fn optimize_expr(&mut self, expr: &Expr<'a>) {
-        match expr {
-            Expr::Minus(operand) => {
+        match expr.kind() {
+            ExprKind::Minus(operand) | ExprKind::Not(operand) => {
                 self.optimize_expr(operand);
             }
-            Expr::Add(lhs, rhs)
-            | Expr::Sub(lhs, rhs)
-            | Expr::Mul(lhs, rhs)
-            | Expr::Div(lhs, rhs)
-            | Expr::Eq(lhs, rhs)
-            | Expr::Ne(lhs, rhs)
-            | Expr::Lt(lhs, rhs)
-            | Expr::Le(lhs, rhs)
-            | Expr::Ge(lhs, rhs)
-            | Expr::Gt(lhs, rhs)
-            | Expr::And(lhs, rhs)
-            | Expr::Or(lhs, rhs) => {
+            ExprKind::Add(lhs, rhs)
+            | ExprKind::Sub(lhs, rhs)
+            | ExprKind::Mul(lhs, rhs)
+            | ExprKind::Div(lhs, rhs)
+            | ExprKind::Eq(lhs, rhs)
+            | ExprKind::Ne(lhs, rhs)
+            | ExprKind::Lt(lhs, rhs)
+            | ExprKind::Le(lhs, rhs)
+            | ExprKind::Ge(lhs, rhs)
+            | ExprKind::Gt(lhs, rhs)
+            | ExprKind::And(lhs, rhs)
+            | ExprKind::Or(lhs, rhs) => {
                 self.optimize_expr(lhs);
                 self.optimize_expr(rhs);
             }
-            Expr::Call { args, .. } => {
+            ExprKind::Call { args, .. } => {
                 for arg in args {
                     self.optimize_expr(arg);
                 }
             }
-            Expr::Printf { args } => {
+            ExprKind::Printf { args } => {
                 for arg in args {
                     self.optimize_expr(arg);
                 }
             }
-            Expr::Value(value) => self.optimize_value(value),
+            ExprKind::Value(value) => self.optimize_value(value),
         }
     }
 

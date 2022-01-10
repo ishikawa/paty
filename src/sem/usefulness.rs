@@ -1317,7 +1317,6 @@ pub fn check_match(
 
     // unreachable pattern
     for (i, (arm, reachability)) in report.arm_usefulness.iter().enumerate() {
-        dbg!(i);
         if matches!(reachability, Reachability::Unreachable) {
             if has_else && i == (report.arm_usefulness.len() - 1) {
                 // "else"
