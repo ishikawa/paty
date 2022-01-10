@@ -133,6 +133,9 @@ fn analyze_loop<'a>(
         | syntax::ExprKind::Div(a, b)
         | syntax::ExprKind::Eq(a, b)
         | syntax::ExprKind::Ne(a, b) => {
+            analyze_loop(a, vars, functions, errors);
+            analyze_loop(b, vars, functions, errors);
+
             unify_expr_type(Type::Int64, a, errors);
             unify_expr_type(Type::Int64, b, errors);
             unify_expr_type(Type::Int64, expr, errors);

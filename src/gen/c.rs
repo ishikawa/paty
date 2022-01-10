@@ -1,7 +1,7 @@
 //! C code generator
 use crate::typing::Type;
 
-use super::ir::{Expr, Function, Program, Stmt, Value};
+use super::ir::{Expr, ExprKind, Function, Program, Stmt, Value};
 
 #[derive(Debug)]
 pub struct Emitter {}
@@ -129,96 +129,96 @@ impl<'a> Emitter {
     }
 
     fn emit_expr(&mut self, expr: &Expr<'a>, code: &mut String) {
-        match expr {
-            Expr::Minus(operand) => {
+        match expr.kind() {
+            ExprKind::Minus(operand) => {
                 code.push('-');
                 self.emit_expr(operand, code);
             }
-            Expr::Not(operand) => {
+            ExprKind::Not(operand) => {
                 code.push('!');
                 self.emit_expr(operand, code);
             }
-            Expr::Add(lhs, rhs) => {
+            ExprKind::Add(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" + ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Sub(lhs, rhs) => {
+            ExprKind::Sub(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" - ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Mul(lhs, rhs) => {
+            ExprKind::Mul(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" * ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Div(lhs, rhs) => {
+            ExprKind::Div(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" / ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Lt(lhs, rhs) => {
+            ExprKind::Lt(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" < ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Le(lhs, rhs) => {
+            ExprKind::Le(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" <= ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Gt(lhs, rhs) => {
+            ExprKind::Gt(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" > ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Ge(lhs, rhs) => {
+            ExprKind::Ge(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" >= ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Eq(lhs, rhs) => {
+            ExprKind::Eq(lhs, rhs) => {
                 self.emit_expr(lhs, code);
                 code.push_str(" == ");
                 self.emit_expr(rhs, code);
             }
-            Expr::Ne(lhs, rhs) => {
+            ExprKind::Ne(lhs, rhs) => {
                 self.emit_expr(lhs, code);
                 code.push_str(" != ");
                 self.emit_expr(rhs, code);
             }
-            Expr::And(lhs, rhs) => {
+            ExprKind::And(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" && ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Or(lhs, rhs) => {
+            ExprKind::Or(lhs, rhs) => {
                 code.push('(');
                 self.emit_expr(lhs, code);
                 code.push_str(" || ");
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            Expr::Call { name, args } => {
+            ExprKind::Call { name, args } => {
                 code.push_str(&format!("{}(", name));
                 for (i, arg) in args.iter().enumerate() {
                     self.emit_expr(arg, code);
@@ -229,12 +229,10 @@ impl<'a> Emitter {
                 }
                 code.push(')');
             }
-            Expr::Printf { args } => {
+            ExprKind::Printf { args } => {
                 code.push_str("printf(\"");
                 for (i, arg) in args.iter().enumerate() {
-                    // TODO: type inference
-
-                    if let Expr::Value(Value::Bool(_)) = immediate(arg) {
+                    if immediate(arg).ty() == Type::Boolean {
                         // "true" / "false"
                         code.push_str("%s");
                     } else {
@@ -249,9 +247,7 @@ impl<'a> Emitter {
                 code.push_str("\\n\", ");
 
                 for (i, arg) in args.iter().enumerate() {
-                    // TODO: type inference
-
-                    if let Expr::Value(Value::Bool(_)) = immediate(arg) {
+                    if immediate(arg).ty() == Type::Boolean {
                         // "true" / "false"
                         code.push('(');
                         self.emit_expr(arg, code);
@@ -267,7 +263,7 @@ impl<'a> Emitter {
                 }
                 code.push(')');
             }
-            Expr::Value(value) => self.emit_value(value, code),
+            ExprKind::Value(value) => self.emit_value(value, code),
         }
     }
 
@@ -296,13 +292,13 @@ impl<'a> Emitter {
                     code.push_str(&format!("t{}", t.index));
                 }
             }
-            Value::Var(name) => code.push_str(name),
+            Value::Var(name, _) => code.push_str(name),
         }
     }
 }
 
 fn immediate<'a>(expr: &'a Expr<'a>) -> &'a Expr<'a> {
-    if let Expr::Value(Value::TmpVar(t)) = expr {
+    if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
         if let Some(expr) = t.immediate.get() {
             return expr;
         }
