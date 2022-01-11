@@ -178,6 +178,13 @@ impl<'a> Expr<'a> {
         }
     }
 
+    pub fn native_int(value: i32) -> Self {
+        Self {
+            kind: ExprKind::Value(Value::Int(value)),
+            ty: Type::NativeInt,
+        }
+    }
+
     pub fn bool(value: bool) -> Self {
         Self {
             kind: ExprKind::Value(Value::Bool(value)),
@@ -556,7 +563,7 @@ impl<'a> Builder<'a> {
                                 };
                                 let strcmp = self.expr_arena.alloc(Expr::new(kind, Type::Int64));
 
-                                let zero = self.expr_arena.alloc(Expr::int64(0));
+                                let zero = self.expr_arena.alloc(Expr::native_int(0));
                                 let eq = ExprKind::Eq(self.inc_used(strcmp), zero);
 
                                 self.expr_arena.alloc(Expr::new(eq, Type::Boolean))

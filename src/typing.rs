@@ -8,6 +8,10 @@ pub enum Type {
     Boolean,
     /// string
     String,
+
+    // C types for internal uses
+    /// int
+    NativeInt,
 }
 
 impl fmt::Display for Type {
@@ -16,6 +20,7 @@ impl fmt::Display for Type {
             Type::Int64 => write!(f, "int64"),
             Type::Boolean => write!(f, "boolean"),
             Type::String => write!(f, "string"),
+            Type::NativeInt => write!(f, "int"),
         }
     }
 }

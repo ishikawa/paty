@@ -358,6 +358,7 @@ impl SplitWildcard {
             }
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String => vec![Constructor::NonExhaustive],
+            Type::NativeInt => unreachable!("Native C types are not supported."),
         };
 
         SplitWildcard {

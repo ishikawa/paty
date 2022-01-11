@@ -39,7 +39,7 @@ impl<'a> Emitter {
     fn emit_function(&mut self, fun: &Function<'a>, code: &mut String) {
         if fun.is_entry_point {
             // 'main' must return 'int'
-            code.push_str("int");
+            code.push_str(native_ty(Type::NativeInt));
         } else {
             code.push_str(native_ty(fun.retty));
         }
@@ -236,29 +236,42 @@ impl<'a> Emitter {
             ExprKind::Printf { args } => {
                 code.push_str("printf(\"");
                 for (i, arg) in args.iter().enumerate() {
-                    if immediate(arg).ty() == Type::Boolean {
-                        // "true" / "false"
-                        code.push_str("%s");
-                    } else {
-                        // Use standard conversion specifier macros for integer types.
-                        code.push_str("%\" PRId64 \"");
+                    match immediate(arg).ty() {
+                        Type::Int64 => {
+                            // Use standard conversion specifier macros for integer types.
+                            code.push_str("%\" PRId64 \"");
+                        }
+                        Type::Boolean => {
+                            // "true" / "false"
+                            code.push_str("%s");
+                        }
+                        Type::String => {
+                            code.push_str("%s");
+                        }
+                        Type::NativeInt => {
+                            code.push_str("%d");
+                        }
                     }
 
+                    // separated by a space
                     if i != (args.len() - 1) {
-                        code.push_str(", ");
+                        code.push(' ');
                     }
                 }
                 code.push_str("\\n\", ");
 
                 for (i, arg) in args.iter().enumerate() {
-                    if immediate(arg).ty() == Type::Boolean {
-                        // "true" / "false"
-                        code.push('(');
-                        self.emit_expr(arg, code);
-                        code.push_str(" ? \"true\" : \"false\"");
-                        code.push(')');
-                    } else {
-                        self.emit_expr(arg, code);
+                    match immediate(arg).ty() {
+                        Type::Int64 | Type::String | Type::NativeInt => {
+                            self.emit_expr(arg, code);
+                        }
+                        Type::Boolean => {
+                            // "true" / "false"
+                            code.push('(');
+                            self.emit_expr(arg, code);
+                            code.push_str(" ? \"true\" : \"false\"");
+                            code.push(')');
+                        }
                     }
 
                     if i != (args.len() - 1) {
@@ -320,5 +333,6 @@ fn native_ty(ty: Type) -> &'static str {
         Type::Int64 => "int64_t",
         Type::Boolean => "bool",
         Type::String => "const char *",
+        Type::NativeInt => "int",
     }
 }

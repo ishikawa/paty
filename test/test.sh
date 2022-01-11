@@ -113,7 +113,30 @@ assert 'true' "
   when false
     puts(false)
   end"
-
+# string
+assert "Hello, World!" "
+  puts(\"Hello, World!\\n\")
+"
+assert '1 2 3 4' "
+  def fruit_to_num(fruit: string)
+    case fruit
+    when \"Apple\"
+      1
+    when \"Orange\"
+      2
+    when \"Strawberry\"
+      3
+    else
+      4
+    end
+  end
+  puts(
+    fruit_to_num(\"Apple\"),
+    fruit_to_num(\"Orange\"),
+    fruit_to_num(\"Strawberry\"),
+    fruit_to_num(\"Grape\")
+  )
+"
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

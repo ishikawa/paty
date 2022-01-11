@@ -79,7 +79,7 @@ impl fmt::Display for Token {
 pub enum TokenKind {
     Integer(String),
     Identifier(String),
-    String(String),
+    LiteralString(String),
     // Operators
     RangeIncluded, // RangeEnd::Included
     RangeExcluded, // RangeEnd::Excluded
@@ -102,6 +102,7 @@ pub enum TokenKind {
     // Types
     Int64,
     Boolean,
+    String,
 }
 
 impl fmt::Display for TokenKind {
@@ -109,7 +110,7 @@ impl fmt::Display for TokenKind {
         match self {
             Self::Integer(n) => write!(f, "{}", n),
             Self::Identifier(s) => write!(f, "`{}`", s),
-            Self::String(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
+            Self::LiteralString(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
             Self::RangeIncluded => write!(f, "{}", RangeEnd::Included),
             Self::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
             Self::Operator(c) => write!(f, "{}", c),
@@ -129,6 +130,7 @@ impl fmt::Display for TokenKind {
             Self::False => write!(f, "false"),
             Self::Int64 => write!(f, "int64"),
             Self::Boolean => write!(f, "boolean"),
+            Self::String => write!(f, "string"),
         }
     }
 }
@@ -164,6 +166,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         text::keyword("false").to(TokenKind::False),
         text::keyword("int64").to(TokenKind::Int64),
         text::keyword("boolean").to(TokenKind::Boolean),
+        text::keyword("string").to(TokenKind::String),
         text::ident().map(TokenKind::Identifier),
     ));
 
@@ -183,7 +186,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .ignore_then(filter(|c| *c != '\\' && *c != '"').or(escape).repeated())
         .then_ignore(just('"'))
         .collect::<String>()
-        .map(TokenKind::String)
+        .map(TokenKind::LiteralString)
         .labelled("string");
 
     let token = integer
@@ -478,7 +481,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
     .labelled("integer");
 
     let string_value = select! {
-        Token{ kind: TokenKind::String(s), ..} => s
+        Token{ kind: TokenKind::LiteralString(s), ..} => s
     }
     .labelled("string");
 
@@ -491,6 +494,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
     let type_value = choice((
         just_token(TokenKind::Int64).to(Type::Int64),
         just_token(TokenKind::Boolean).to(Type::Boolean),
+        just_token(TokenKind::String).to(Type::String),
     ))
     .labelled("type");
 
