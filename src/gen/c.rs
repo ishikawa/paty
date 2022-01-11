@@ -39,16 +39,16 @@ impl<'a> Emitter {
     fn emit_function(&mut self, fun: &Function<'a>, code: &mut String) {
         if fun.is_entry_point {
             // 'main' must return 'int'
-            code.push_str(native_ty(Type::NativeInt));
+            code.push_str(c_type(Type::NativeInt));
         } else {
-            code.push_str(native_ty(fun.retty));
+            code.push_str(c_type(fun.retty));
         }
         code.push(' ');
 
         code.push_str(&fun.name);
         code.push('(');
         for (i, param) in fun.params.iter().enumerate() {
-            code.push_str(native_ty(param.ty));
+            code.push_str(c_type(param.ty));
             code.push(' ');
             code.push_str(&param.name);
 
@@ -71,7 +71,7 @@ impl<'a> Emitter {
             Stmt::TmpVarDef { var, init, pruned } => {
                 if !pruned.get() {
                     if var.used.get() > 0 {
-                        code.push_str(native_ty(init.ty()));
+                        code.push_str(c_type(init.ty()));
                         code.push(' ');
                         code.push_str(&format!("t{} = ", var.index));
                     }
@@ -80,7 +80,7 @@ impl<'a> Emitter {
                 }
             }
             Stmt::VarDef { name, init } => {
-                code.push_str(native_ty(init.ty()));
+                code.push_str(c_type(init.ty()));
                 code.push(' ');
                 code.push_str(name);
                 code.push_str(" = ");
@@ -103,7 +103,7 @@ impl<'a> Emitter {
             }
             Stmt::Cond { branches, var } => {
                 if var.used.get() > 0 {
-                    code.push_str(native_ty(var.ty));
+                    code.push_str(c_type(var.ty));
                     code.push(' ');
                     code.push_str(&format!("t{}", var.index));
                     code.push_str(";\n");
@@ -328,7 +328,7 @@ fn immediate<'a>(expr: &'a Expr<'a>) -> &'a Expr<'a> {
     expr
 }
 
-fn native_ty(ty: Type) -> &'static str {
+fn c_type(ty: Type) -> &'static str {
     match ty {
         Type::Int64 => "int64_t",
         Type::Boolean => "bool",
