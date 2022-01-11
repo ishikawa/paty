@@ -93,6 +93,13 @@ assert 'Semantic error: non-exhaustive pattern: `false`' "
   when true
     puts(true)
   end"
+assert 'Semantic error: non-exhaustive pattern: `_`' "
+  case \"A\"
+  when \"A\"
+    puts(1)
+  when \"B\"
+    puts(2)
+  end"
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
