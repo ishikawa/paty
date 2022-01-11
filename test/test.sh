@@ -103,6 +103,16 @@ assert 'true' "
   when false
     puts(false)
   end"
+assert 'true' "
+  def is_positive(n)
+    n >= 0
+  end
+  case is_positive(1)
+  when true
+    puts(true)
+  when false
+    puts(false)
+  end"
 
 # examples
 assert 13 "$(cat examples/foo.paty)"

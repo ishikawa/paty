@@ -24,6 +24,7 @@ pub struct Function<'a> {
     pub name: String,
     pub params: Vec<Parameter>,
     pub body: Vec<Stmt<'a>>,
+    pub retty: Type,
     /// Whether this function is `main` or not.
     pub is_entry_point: bool,
 }
@@ -184,6 +185,13 @@ impl<'a> Expr<'a> {
         }
     }
 
+    pub fn const_string(value: &str) -> Self {
+        Self {
+            kind: ExprKind::Value(Value::String(value.to_string())),
+            ty: Type::String,
+        }
+    }
+
     pub fn kind(&self) -> &ExprKind<'a> {
         &self.kind
     }
@@ -225,6 +233,7 @@ pub enum Value<'a> {
     Int(i32),
     Int64(i64),
     Bool(bool),
+    String(String),
     TmpVar(&'a TmpVar<'a>),
     Var(String, Type),
 }
@@ -267,6 +276,7 @@ impl<'a> Builder<'a> {
             name: "main".to_string(),
             params: vec![],
             body: stmts,
+            retty: Type::Int64,
             is_entry_point: true,
         };
         program.functions.push(main);
@@ -333,6 +343,12 @@ impl<'a> Builder<'a> {
             }
             syntax::ExprKind::Boolean(b) => {
                 let value = Value::Bool(*b);
+                let kind = ExprKind::Value(value);
+
+                self.push_expr(kind, expr, stmts)
+            }
+            syntax::ExprKind::String(s) => {
+                let value = Value::String(s.to_string());
                 let kind = ExprKind::Value(value);
 
                 self.push_expr(kind, expr, stmts)
@@ -478,6 +494,8 @@ impl<'a> Builder<'a> {
                 let ret = self._build(syntax_fun.body(), program, &mut body_stmts);
                 body_stmts.push(Stmt::Ret(self.inc_used(ret)));
 
+                let retty = syntax_fun.body().ty().unwrap();
+
                 let params = syntax_fun
                     .params()
                     .iter()
@@ -491,6 +509,7 @@ impl<'a> Builder<'a> {
                     name: syntax_fun.name().to_string(),
                     params,
                     body: body_stmts,
+                    retty,
                     is_entry_point: false,
                 };
                 program.functions.push(fun);
@@ -526,6 +545,21 @@ impl<'a> Builder<'a> {
                                     let expr = ExprKind::Not(self.inc_used(t_head));
                                     self.expr_arena.alloc(Expr::new(expr, Type::Boolean))
                                 }
+                            }
+                            PatternKind::String(s) => {
+                                // Compare the value of head expression and pattern string with
+                                // POSIX `strcmp` function.
+                                let value = self.expr_arena.alloc(Expr::const_string(s));
+                                let kind = ExprKind::Call {
+                                    name: "strcmp".to_string(),
+                                    args: vec![self.inc_used(t_head), value],
+                                };
+                                let strcmp = self.expr_arena.alloc(Expr::new(kind, Type::Int64));
+
+                                let zero = self.expr_arena.alloc(Expr::int64(0));
+                                let eq = ExprKind::Eq(self.inc_used(strcmp), zero);
+
+                                self.expr_arena.alloc(Expr::new(eq, Type::Boolean))
                             }
                             PatternKind::Range { lo, hi, end } => {
                                 let lo = self.expr_arena.alloc(Expr::int64(*lo));

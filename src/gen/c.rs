@@ -23,6 +23,7 @@ impl<'a> Emitter {
             "#include <stdint.h>",
             "#include <stdbool.h>",
             "#include <inttypes.h>",
+            "#include <string.h>",
             "\n",
         ]
         .join("\n");
@@ -40,7 +41,7 @@ impl<'a> Emitter {
             // 'main' must return 'int'
             code.push_str("int");
         } else {
-            code.push_str(native_ty(Type::Int64));
+            code.push_str(native_ty(fun.retty));
         }
         code.push(' ');
 
@@ -70,7 +71,8 @@ impl<'a> Emitter {
             Stmt::TmpVarDef { var, init, pruned } => {
                 if !pruned.get() {
                     if var.used.get() > 0 {
-                        code.push_str("int64_t ");
+                        code.push_str(native_ty(init.ty()));
+                        code.push(' ');
                         code.push_str(&format!("t{} = ", var.index));
                     }
                     self.emit_expr(init, code);
@@ -78,7 +80,8 @@ impl<'a> Emitter {
                 }
             }
             Stmt::VarDef { name, init } => {
-                code.push_str("int64_t ");
+                code.push_str(native_ty(init.ty()));
+                code.push(' ');
                 code.push_str(name);
                 code.push_str(" = ");
                 self.emit_expr(init, code);
@@ -100,7 +103,8 @@ impl<'a> Emitter {
             }
             Stmt::Cond { branches, var } => {
                 if var.used.get() > 0 {
-                    code.push_str("int64_t ");
+                    code.push_str(native_ty(var.ty));
+                    code.push(' ');
                     code.push_str(&format!("t{}", var.index));
                     code.push_str(";\n");
                 }
@@ -270,20 +274,25 @@ impl<'a> Emitter {
     fn emit_value(&mut self, value: &Value, code: &mut String) {
         match value {
             Value::Int(n) => code.push_str(&format!("{}", *n)),
-            Value::Int64(n) =>
-            // Use standard macros for integer constant expression to expand
-            // a value to the type int_least_N.
-            {
+            Value::Int64(n) => {
+                // Use standard macros for integer constant expression to expand
+                // a value to the type int_least_N.
                 code.push_str(&format!("INT64_C({})", *n))
             }
-            Value::Bool(b) =>
-            // Use standard macros for boolean constant expression.
-            {
+            Value::Bool(b) => {
+                // Use standard macros for boolean constant expression.
                 if *b {
                     code.push_str("true");
                 } else {
                     code.push_str("false");
                 }
+            }
+            Value::String(s) => {
+                code.push_str("u8\"");
+                for c in s.escape_default() {
+                    code.push(c);
+                }
+                code.push('"');
             }
             Value::TmpVar(t) => {
                 if let Some(expr) = t.immediate.get() {
@@ -310,5 +319,6 @@ fn native_ty(ty: Type) -> &'static str {
     match ty {
         Type::Int64 => "int64_t",
         Type::Boolean => "bool",
+        Type::String => "const char *",
     }
 }

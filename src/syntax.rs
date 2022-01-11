@@ -108,8 +108,8 @@ impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Integer(n) => write!(f, "{}", n),
-            Self::Identifier(s) => write!(f, "\"{}\"", s),
-            Self::String(s) => write!(f, "{}", s),
+            Self::Identifier(s) => write!(f, "`{}`", s),
+            Self::String(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
             Self::RangeIncluded => write!(f, "{}", RangeEnd::Included),
             Self::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
             Self::Operator(c) => write!(f, "{}", c),
@@ -264,6 +264,7 @@ impl Expr {
 pub enum ExprKind {
     Integer(i64),
     Boolean(bool),
+    String(String),
     Var(String),
 
     // unary operators
@@ -424,6 +425,7 @@ impl Pattern {
 pub enum PatternKind {
     Integer(i64),
     Boolean(bool),
+    String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
     Wildcard,
 }
@@ -433,6 +435,7 @@ impl fmt::Display for PatternKind {
         match self {
             PatternKind::Integer(n) => write!(f, "{}", n),
             PatternKind::Boolean(b) => write!(f, "{}", b),
+            PatternKind::String(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
             PatternKind::Range { lo, hi, end } => {
                 if *lo == i64::MIN {
                     write!(f, "int64::MIN")?;
@@ -474,6 +477,11 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
     }
     .labelled("integer");
 
+    let string_value = select! {
+        Token{ kind: TokenKind::String(s), ..} => s
+    }
+    .labelled("string");
+
     let boolean_value = choice((
         just_token(TokenKind::True).to(true),
         just_token(TokenKind::False).to(false),
@@ -494,6 +502,10 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         let boolean_pattern = boolean_value.clone().map(|b| {
             let kind = PatternKind::Boolean(b);
             Pattern::new(kind, Type::Boolean)
+        });
+        let string_pattern = string_value.map(|s| {
+            let kind = PatternKind::String(s);
+            Pattern::new(kind, Type::String)
         });
         let range_pattern = integer_value
             .then(choice((
@@ -517,7 +529,10 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                 Pattern::new(kind, Type::Int64)
             });
 
-        range_pattern.or(integer_pattern).or(boolean_pattern)
+        range_pattern
+            .or(integer_pattern)
+            .or(boolean_pattern)
+            .or(string_pattern)
     };
 
     let expr = recursive(|expr| {
@@ -531,6 +546,10 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         let ident = ident_value
             .map(|s| Expr::new(ExprKind::Var(s)))
             .labelled("ident");
+
+        let string = string_value
+            .map(|s| Expr::new(ExprKind::String(s)))
+            .labelled("string");
 
         let boolean = boolean_value
             .map(|b| Expr::new(ExprKind::Boolean(b)))
@@ -570,6 +589,7 @@ pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             )
             .or(integer)
             .or(boolean)
+            .or(string)
             .or(puts)
             .or(call)
             .or(ident);
