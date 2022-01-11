@@ -56,6 +56,15 @@ assert 'Semantic error: unreachable pattern: `false`' "
   when false
     puts(0)
   end"
+assert 'Semantic error: unreachable pattern: `"A"`' "
+  case \"A\"
+  when \"A\"
+    puts(1)
+  when \"A\"
+    puts(2)
+  else
+    puts(3)
+  end"
 assert 'Semantic error: unreachable `else` clause' "
   case 5 > 3
   when true
