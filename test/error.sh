@@ -56,6 +56,15 @@ assert 'Semantic error: unreachable pattern: `false`' "
   when false
     puts(0)
   end"
+assert 'Semantic error: unreachable pattern: `"A"`' "
+  case \"A\"
+  when \"A\"
+    puts(1)
+  when \"A\"
+    puts(2)
+  else
+    puts(3)
+  end"
 assert 'Semantic error: unreachable `else` clause' "
   case 5 > 3
   when true
@@ -84,3 +93,17 @@ assert 'Semantic error: non-exhaustive pattern: `false`' "
   when true
     puts(true)
   end"
+assert 'Semantic error: non-exhaustive pattern: `_`' "
+  case \"A\"
+  when \"A\"
+    puts(1)
+  when \"B\"
+    puts(2)
+  end"
+# type check
+assert 'Semantic error: expected type `int64`, found `boolean`' "
+def foo(n: int64)
+  n
+end
+foo(true)
+"

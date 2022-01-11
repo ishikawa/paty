@@ -64,6 +64,7 @@ impl IntRange {
         match ty {
             Type::Int64 => 1i128 << (i64::BITS as i128 - 1),
             Type::Boolean => 0,
+            _ => 0,
         }
     }
 
@@ -165,6 +166,7 @@ impl IntRange {
             match ty {
                 Type::Int64 => PatternKind::Integer(lo),
                 Type::Boolean => PatternKind::Boolean(lo != 0),
+                _ => unreachable!("unexpected type ({}) for int range", ty),
             }
         } else {
             PatternKind::Range {
@@ -354,6 +356,9 @@ impl SplitWildcard {
                 ));
                 vec![ctor]
             }
+            // This type is one for which we cannot list constructors, like `str` or `f64`.
+            Type::String => vec![Constructor::NonExhaustive],
+            Type::NativeInt => unreachable!("Native C types are not supported."),
         };
 
         SplitWildcard {
@@ -621,6 +626,11 @@ pub enum Constructor {
     Wildcard,
     /// Ranges of integer literal values (`2`, `2..=5` or `2..5`).
     IntRange(IntRange),
+    /// String constant
+    Str(String),
+    /// Fake extra constructor for enums that aren't allowed to be matched exhaustively. Also used
+    /// for those types for which we cannot list constructors explicitly, like `f64` and `str`.
+    NonExhaustive,
     /// Stands for constructors that are not seen in the matrix, as explained in the documentation
     /// for [`SplitWildcard`]. The carried `bool` is used for the `non_exhaustive_omitted_patterns`
     /// lint.
@@ -632,7 +642,7 @@ pub enum Constructor {
 #[allow(dead_code)]
 impl Constructor {
     pub(super) fn is_wildcard(&self) -> bool {
-        matches!(self, Constructor::Wildcard)
+        matches!(self, Self::Wildcard)
     }
 
     fn as_int_range(&self) -> Option<&IntRange> {
@@ -642,8 +652,8 @@ impl Constructor {
         }
     }
 
-    pub fn is_non_exhaustive(&self) -> bool {
-        false
+    pub(super) fn is_non_exhaustive(&self) -> bool {
+        matches!(self, Self::NonExhaustive)
     }
 
     /// Checks if the `Constructor` is a variant and `TyCtxt::eval_stability` returns
@@ -652,6 +662,12 @@ impl Constructor {
     /// This means that the variant has a stdlib unstable feature marking it.
     pub fn is_unstable_variant(&self, _pcx: PatCtxt<'_, '_>) -> bool {
         false
+    }
+
+    /// The number of fields for this constructor. This must be kept in sync with
+    /// `Fields::wildcards`.
+    pub fn arity(&self) -> usize {
+        0
     }
 
     /// Returns whether `self` is covered by `other`, i.e. whether `self` is a subset of `other`.
@@ -668,6 +684,9 @@ impl Constructor {
             (Self::IntRange(self_range), Self::IntRange(other_range)) => {
                 self_range.is_covered_by(other_range)
             }
+            (Self::Str(self_val), Self::Str(other_val)) => self_val == other_val,
+            // Only a wildcard pattern can match the special extra constructor.
+            (Self::NonExhaustive, _) => false,
             _ => unreachable!(
                 "trying to compare incompatible constructors {:?} and {:?}",
                 self, other
@@ -689,16 +708,12 @@ impl Constructor {
                 .iter()
                 .filter_map(|c| c.as_int_range())
                 .any(|other| range.is_covered_by(other)),
-            Self::Wildcard | Self::Missing { .. } => {
+            // This constructor is never covered by anything else
+            Self::NonExhaustive => false,
+            Self::Str(..) | Self::Wildcard | Self::Missing { .. } => {
                 unreachable!("found unexpected ctor in all_ctors: {:?}", self)
             }
         }
-    }
-
-    /// The number of fields for this constructor. This must be kept in sync with
-    /// `Fields::wildcards`.
-    pub fn arity(&self) -> usize {
-        0
     }
 
     /// Some constructors (namely `Wildcard`, `IntRange` and `Slice`) actually stand for a set of actual
@@ -782,9 +797,11 @@ impl<'p> Fields<'p> {
     /// length of `constructor.arity()`.
     pub fn wildcards(_cx: &MatchCheckCtxt<'p>, _ty: Type, constructor: &Constructor) -> Self {
         match constructor {
-            Constructor::IntRange(..) | Constructor::Wildcard | Constructor::Missing { .. } => {
-                Fields::empty()
-            }
+            Constructor::IntRange(..)
+            | Constructor::Str(..)
+            | Constructor::NonExhaustive
+            | Constructor::Wildcard
+            | Constructor::Missing { .. } => Fields::empty(),
         }
     }
 
@@ -863,6 +880,10 @@ impl<'p> DeconstructedPat<'p> {
                 ctor = Constructor::IntRange(int_range);
                 fields = Fields::empty();
             }
+            PatternKind::String(s) => {
+                ctor = Constructor::Str(s.clone());
+                fields = Fields::empty();
+            }
         }
 
         DeconstructedPat::new(ctor, fields, pat.ty())
@@ -871,7 +892,8 @@ impl<'p> DeconstructedPat<'p> {
     pub fn to_pat(&self) -> Pattern {
         let pat = match &self.ctor {
             Constructor::IntRange(range) => return range.to_pat(self.ty()),
-            Constructor::Wildcard => PatternKind::Wildcard,
+            Constructor::Str(s) => PatternKind::String(s.clone()),
+            Constructor::Wildcard | Constructor::NonExhaustive => PatternKind::Wildcard,
             Constructor::Missing { .. } => unreachable!(
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
                 `Missing` should have been processed in `apply_constructors`"

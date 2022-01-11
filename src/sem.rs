@@ -121,6 +121,9 @@ fn analyze_loop<'a>(
         syntax::ExprKind::Boolean(_) => {
             unify_expr_type(Type::Boolean, expr, errors);
         }
+        syntax::ExprKind::String(_) => {
+            unify_expr_type(Type::String, expr, errors);
+        }
         syntax::ExprKind::Minus(a) => {
             analyze_loop(a, vars, functions, errors);
 
