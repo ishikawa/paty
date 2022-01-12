@@ -3,7 +3,7 @@
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/deconstruct_pat.rs
 use crate::{
     syntax::{CaseArm, Pattern, PatternKind, RangeEnd},
-    typing::Type,
+    ty::Type,
 };
 use std::{
     cell::Cell,

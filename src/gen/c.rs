@@ -1,5 +1,5 @@
 //! C code generator
-use crate::typing::Type;
+use crate::ty::Type;
 
 use super::ir::{Expr, ExprKind, Function, Program, Stmt, Value};
 

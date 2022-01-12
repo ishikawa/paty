@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use crate::typing::Type;
+use crate::ty::Type;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RangeEnd {

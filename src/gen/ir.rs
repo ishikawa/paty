@@ -1,5 +1,5 @@
 use crate::syntax::PatternKind;
-use crate::typing::Type;
+use crate::ty::Type;
 use crate::{sem, syntax};
 use std::cell::Cell;
 use std::fmt;

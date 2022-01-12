@@ -1,6 +1,6 @@
 //! Semantic analysis
 use self::error::SemanticError;
-use crate::{syntax, typing::Type};
+use crate::{syntax, ty::Type};
 use std::collections::HashMap;
 
 mod error;
