@@ -20,7 +20,6 @@ pub struct MatchCheckCtxt<'p> {
     pub pattern_arena: &'p Arena<DeconstructedPat<'p>>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct PatCtxt<'a, 'p> {
     pub cx: &'a MatchCheckCtxt<'p>,
@@ -52,7 +51,6 @@ pub struct IntRange {
     bias: i128,
 }
 
-#[allow(dead_code)]
 impl IntRange {
     #[inline]
     fn is_integral(ty: Type) -> bool {
@@ -138,23 +136,6 @@ impl IntRange {
         }
     }
 
-    fn suspicious_intersection(&self, other: &Self) -> bool {
-        // `false` in the following cases:
-        // 1     ----      // 1  ----------   // 1 ----        // 1       ----
-        // 2  ----------   // 2     ----      // 2       ----  // 2 ----
-        //
-        // The following are currently `false`, but could be `true` in the future (#64007):
-        // 1 ---------       // 1     ---------
-        // 2     ----------  // 2 ----------
-        //
-        // `true` in the following cases:
-        // 1 -------          // 1       -------
-        // 2       --------   // 2 -------
-        let (lo, hi) = self.boundaries();
-        let (other_lo, other_hi) = other.boundaries();
-        (lo == other_hi || hi == other_lo) && !self.is_singleton() && !other.is_singleton()
-    }
-
     /// Only used for displaying the range properly.
     fn to_pat(&self, ty: Type) -> Pattern {
         let (lo, hi) = self.boundaries();
@@ -208,7 +189,7 @@ impl fmt::Debug for IntRange {
 
 /// Represents a border between 2 integers. Because the intervals spanning borders must be able to
 /// cover every integer, we need to be able to represent 2^128 + 1 such borders.
-#[allow(dead_code)]
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum IntBorder {
     JustBefore(u128),
@@ -232,7 +213,7 @@ enum IntBorder {
 /// ```ignore
 ///   ||---|--||-|---|---|---|--|
 /// ```
-#[allow(dead_code)]
+
 #[derive(Debug, Clone)]
 struct SplitIntRange {
     /// The range we are splitting
@@ -242,7 +223,6 @@ struct SplitIntRange {
     borders: Vec<IntBorder>,
 }
 
-#[allow(dead_code)]
 impl SplitIntRange {
     fn new(range: IntRange) -> Self {
         SplitIntRange {
@@ -325,7 +305,7 @@ impl SplitIntRange {
 /// This will not preserve the whole list of witnesses, but will preserve whether the list is empty
 /// or not. In fact this is quite natural from the point of view of diagnostics too. This is done
 /// in `to_ctors`: in some cases we only return `Missing`.
-#[allow(dead_code)]
+
 #[derive(Debug)]
 pub(super) struct SplitWildcard {
     /// Constructors seen in the matrix.
@@ -334,7 +314,6 @@ pub(super) struct SplitWildcard {
     all_ctors: Vec<Constructor>,
 }
 
-#[allow(dead_code)]
 impl SplitWildcard {
     pub(super) fn new(pcx: PatCtxt) -> Self {
         let all_ctors = match pcx.ty {
@@ -460,7 +439,6 @@ struct PatStack<'p> {
     pats: Vec<&'p DeconstructedPat<'p>>,
 }
 
-#[allow(dead_code)]
 impl<'p> PatStack<'p> {
     fn from_pattern(pat: &'p DeconstructedPat) -> Self {
         Self::from_vec(vec![pat])
@@ -518,15 +496,9 @@ pub(super) struct Matrix<'p> {
     patterns: Vec<PatStack<'p>>,
 }
 
-#[allow(dead_code)]
 impl<'p> Matrix<'p> {
     fn empty() -> Self {
         Matrix { patterns: vec![] }
-    }
-
-    /// Number of columns of this matrix. `None` is the matrix is empty.
-    pub(super) fn column_count(&self) -> Option<usize> {
-        self.patterns.get(0).map(|r| r.len())
     }
 
     /// Pushes a new row to the matrix. If the row starts with an or-pattern, this recursively
@@ -619,7 +591,7 @@ impl<'p> fmt::Debug for PatStack<'p> {
 /// `specialize_constructor` returns the list of fields corresponding to a pattern, given a
 /// constructor. `Constructor::apply` reconstructs the pattern from a pair of `Constructor` and
 /// `Fields`.
-#[allow(dead_code)]
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Constructor {
     /// Wildcard pattern.
@@ -639,7 +611,6 @@ pub enum Constructor {
     },
 }
 
-#[allow(dead_code)]
 impl Constructor {
     pub(super) fn is_wildcard(&self) -> bool {
         matches!(self, Self::Wildcard)
@@ -817,7 +788,7 @@ impl<'p> Fields<'p> {
 /// reason we should be careful not to clone patterns for which we care about that. Use
 /// `clone_and_forget_reachability` if you're sure.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+
 pub struct DeconstructedPat<'p> {
     ctor: Constructor,
     fields: Fields<'p>,
@@ -825,7 +796,6 @@ pub struct DeconstructedPat<'p> {
     reachable: Cell<bool>,
 }
 
-#[allow(dead_code)]
 impl<'p> DeconstructedPat<'p> {
     pub(super) fn wildcard(ty: Type) -> Self {
         Self::new(Constructor::Wildcard, Fields::empty(), ty)
@@ -958,7 +928,7 @@ pub struct MatchArm<'p> {
 
 /// Indicates whether or not a given arm is reachable.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+
 pub enum Reachability {
     /// The arm is reachable.
     Reachable,
@@ -967,7 +937,7 @@ pub enum Reachability {
 }
 
 /// The output of checking a match for exhaustiveness and arm reachability.
-#[allow(dead_code)]
+
 pub struct UsefulnessReport<'p> {
     /// For each arm of the input, whether that arm is reachable after the arms above it.
     pub arm_usefulness: Vec<(MatchArm<'p>, Reachability)>,
