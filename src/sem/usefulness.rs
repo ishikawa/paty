@@ -16,15 +16,14 @@ use typed_arena::Arena;
 
 use super::error::SemanticError;
 
-pub struct MatchCheckCtxt<'p> {
-    pub pattern_arena: &'p Arena<DeconstructedPat<'p>>,
+pub struct MatchCheckCtxt<'p, 'tcx> {
+    pub pattern_arena: &'p Arena<DeconstructedPat<'p, 'tcx>>,
 }
 
-#[derive(Clone, Copy)]
-pub struct PatCtxt<'a, 'p> {
-    pub cx: &'a MatchCheckCtxt<'p>,
+pub struct PatCtxt<'a, 'p, 'tcx> {
+    pub cx: &'a MatchCheckCtxt<'p, 'tcx>,
     /// Type of the current column under investigation.
-    pub ty: Type,
+    pub ty: &'tcx Type,
     /// Whether the current pattern is the whole pattern as found in a match arm, or if it's a
     /// subpattern.
     pub(super) is_top_level: bool,
@@ -53,12 +52,12 @@ pub struct IntRange {
 
 impl IntRange {
     #[inline]
-    fn is_integral(ty: Type) -> bool {
+    fn is_integral(ty: &Type) -> bool {
         matches!(ty, Type::Int64 | Type::Boolean)
     }
 
     // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
-    fn signed_bias(ty: Type) -> i128 {
+    fn signed_bias(ty: &Type) -> i128 {
         match ty {
             Type::Int64 => 1i128 << (i64::BITS as i128 - 1),
             Type::Boolean => 0,
@@ -76,7 +75,7 @@ impl IntRange {
         i64::try_from(i128::try_from(value).unwrap() - bias).unwrap()
     }
 
-    fn from_const(value: i64, ty: Type) -> IntRange {
+    fn from_const(value: i64, ty: &Type) -> IntRange {
         let bias = Self::signed_bias(ty);
         let val = Self::encode_value(value, bias);
 
@@ -87,15 +86,15 @@ impl IntRange {
     }
 
     fn from_i64(value: i64) -> IntRange {
-        Self::from_const(value, Type::Int64)
+        Self::from_const(value, &Type::Int64)
     }
 
     fn from_bool(value: bool) -> IntRange {
-        Self::from_const(i64::try_from(value).unwrap(), Type::Boolean)
+        Self::from_const(i64::try_from(value).unwrap(), &Type::Boolean)
     }
 
     #[inline]
-    fn from_range(lo: i64, hi: i64, ty: Type, end: RangeEnd) -> IntRange {
+    fn from_range(lo: i64, hi: i64, ty: &Type, end: RangeEnd) -> IntRange {
         let bias = IntRange::signed_bias(ty);
         let lo = Self::encode_value(lo, bias);
         let hi = Self::encode_value(hi, bias);
@@ -137,7 +136,7 @@ impl IntRange {
     }
 
     /// Only used for displaying the range properly.
-    fn to_pat(&self, ty: Type) -> Pattern {
+    fn to_pat<'tcx>(&self, ty: &'tcx Type) -> Pattern<'tcx> {
         let (lo, hi) = self.boundaries();
 
         let lo = Self::decode_value(lo, self.bias);
@@ -314,14 +313,14 @@ pub(super) struct SplitWildcard {
     all_ctors: Vec<Constructor>,
 }
 
-impl SplitWildcard {
+impl<'tcx> SplitWildcard {
     pub(super) fn new(pcx: PatCtxt) -> Self {
         let all_ctors = match pcx.ty {
             Type::Int64 => {
                 let ctor = Constructor::IntRange(IntRange::from_range(
                     i64::MIN,
                     i64::MAX,
-                    Type::Int64,
+                    &Type::Int64,
                     RangeEnd::Included,
                 ));
                 vec![ctor]
@@ -330,7 +329,7 @@ impl SplitWildcard {
                 let ctor = Constructor::IntRange(IntRange::from_range(
                     0,
                     1,
-                    Type::Boolean,
+                    &Type::Boolean,
                     RangeEnd::Included,
                 ));
                 vec![ctor]
@@ -348,9 +347,9 @@ impl SplitWildcard {
 
     /// Pass a set of constructors relative to which to split this one. Don't call twice, it won't
     /// do what you want.
-    pub(super) fn split<'a>(
+    pub fn split<'a>(
         &mut self,
-        pcx: PatCtxt<'_, '_>,
+        pcx: PatCtxt<'_, '_, 'tcx>,
         ctors: impl Iterator<Item = &'a Constructor> + Clone,
     ) {
         // Since `all_ctors` never contains wildcards, this won't recurse further.
@@ -363,14 +362,14 @@ impl SplitWildcard {
     }
 
     /// Whether there are any value constructors for this type that are not present in the matrix.
-    fn any_missing(&self, pcx: PatCtxt<'_, '_>) -> bool {
+    fn any_missing(&self, pcx: PatCtxt<'_, '_, 'tcx>) -> bool {
         self.iter_missing(pcx).next().is_some()
     }
 
     /// Iterate over the constructors for this type that are not present in the matrix.
     pub fn iter_missing<'a, 'p>(
         &'a self,
-        _pcx: PatCtxt<'a, 'p>,
+        _pcx: PatCtxt<'a, 'p, 'tcx>,
     ) -> impl Iterator<Item = &'a Constructor> {
         self.all_ctors
             .iter()
@@ -379,7 +378,7 @@ impl SplitWildcard {
 
     /// Return the set of constructors resulting from splitting the wildcard. As explained at the
     /// top of the file, if any constructors are missing we can ignore the present ones.
-    fn into_ctors(self, pcx: PatCtxt<'_, '_>) -> Vec<Constructor> {
+    fn into_ctors(self, pcx: PatCtxt<'_, '_, 'tcx>) -> Vec<Constructor> {
         if self.any_missing(pcx) {
             // Some constructors are missing, thus we can specialize with the special `Missing`
             // constructor, which stands for those constructors that are not seen in the matrix,
@@ -435,16 +434,16 @@ impl SplitWildcard {
 /// A row of a matrix. Rows of len 1 are very common, which is why `SmallVec[_; 2]`
 /// works well.
 #[derive(Clone)]
-struct PatStack<'p> {
-    pats: Vec<&'p DeconstructedPat<'p>>,
+struct PatStack<'p, 'tcx> {
+    pats: Vec<&'p DeconstructedPat<'p, 'tcx>>,
 }
 
-impl<'p> PatStack<'p> {
-    fn from_pattern(pat: &'p DeconstructedPat) -> Self {
+impl<'p, 'tcx> PatStack<'p, 'tcx> {
+    fn from_pattern(pat: &'p DeconstructedPat<'p, 'tcx>) -> Self {
         Self::from_vec(vec![pat])
     }
 
-    fn from_vec(vec: Vec<&'p DeconstructedPat>) -> Self {
+    fn from_vec(vec: Vec<&'p DeconstructedPat<'p, 'tcx>>) -> Self {
         PatStack { pats: vec }
     }
 
@@ -456,7 +455,7 @@ impl<'p> PatStack<'p> {
         self.pats.len()
     }
 
-    fn head(&self) -> &'p DeconstructedPat<'p> {
+    fn head(&self) -> &'p DeconstructedPat<'p, 'tcx> {
         self.pats[0]
     }
 
@@ -466,7 +465,7 @@ impl<'p> PatStack<'p> {
 
     // Recursively expand the first pattern into its subpatterns. Only useful if the pattern is an
     // or-pattern. Panics if `self` is empty.
-    fn expand_or_pat<'a>(&'a self) -> impl Iterator<Item = PatStack<'p>> + 'a {
+    fn expand_or_pat<'a>(&'a self) -> impl Iterator<Item = PatStack<'p, 'tcx>> + 'a {
         self.head().iter_fields().map(move |pat| {
             let mut new_patstack = PatStack::from_pattern(pat);
 
@@ -481,7 +480,11 @@ impl<'p> PatStack<'p> {
     /// fields filled with wild patterns.
     ///
     /// This is roughly the inverse of `Constructor::apply`.
-    fn pop_head_constructor(&self, cx: &MatchCheckCtxt<'p>, ctor: &Constructor) -> PatStack<'p> {
+    fn pop_head_constructor(
+        &self,
+        cx: &MatchCheckCtxt<'p, 'tcx>,
+        ctor: &Constructor,
+    ) -> PatStack<'p, 'tcx> {
         // We pop the head pattern and push the new fields extracted from the arguments of
         // `self.head()`.
         let mut new_fields = self.head().specialize(cx, ctor);
@@ -492,18 +495,18 @@ impl<'p> PatStack<'p> {
 
 /// A 2D matrix.
 #[derive(Clone)]
-pub(super) struct Matrix<'p> {
-    patterns: Vec<PatStack<'p>>,
+pub(super) struct Matrix<'p, 'tcx> {
+    patterns: Vec<PatStack<'p, 'tcx>>,
 }
 
-impl<'p> Matrix<'p> {
+impl<'p, 'tcx> Matrix<'p, 'tcx> {
     fn empty() -> Self {
         Matrix { patterns: vec![] }
     }
 
     /// Pushes a new row to the matrix. If the row starts with an or-pattern, this recursively
     /// expands it.
-    fn push(&mut self, row: PatStack<'p>) {
+    fn push(&mut self, row: PatStack<'p, 'tcx>) {
         if !row.is_empty() && row.head().is_or_pat() {
             self.patterns.extend(row.expand_or_pat());
         } else {
@@ -512,12 +515,16 @@ impl<'p> Matrix<'p> {
     }
 
     /// Iterate over the first component of each row
-    fn heads<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p>> + Clone + 'a {
+    fn heads<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p, 'tcx>> + Clone + 'a {
         self.patterns.iter().map(|r| r.head())
     }
 
     /// This computes `S(constructor, self)`. See top of the file for explanations.
-    fn specialize_constructor(&self, pcx: PatCtxt<'_, 'p>, ctor: &Constructor) -> Matrix<'p> {
+    fn specialize_constructor(
+        &self,
+        pcx: PatCtxt<'_, 'p, 'tcx>,
+        ctor: &Constructor,
+    ) -> Matrix<'p, 'tcx> {
         let mut matrix = Matrix::empty();
         for row in &self.patterns {
             if ctor.is_covered_by(pcx, row.head().ctor()) {
@@ -538,7 +545,7 @@ impl<'p> Matrix<'p> {
 /// + false + [_]               +
 /// + _     + [_, _, tail @ ..] +
 /// ```
-impl<'p> fmt::Debug for Matrix<'p> {
+impl<'p, 'tcx> fmt::Debug for Matrix<'p, 'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f)?;
 
@@ -574,7 +581,7 @@ impl<'p> fmt::Debug for Matrix<'p> {
 }
 
 /// Pretty-printing for matrix row.
-impl<'p> fmt::Debug for PatStack<'p> {
+impl<'p, 'tcx> fmt::Debug for PatStack<'p, 'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "+")?;
         for pat in self.iter() {
@@ -611,7 +618,7 @@ pub enum Constructor {
     },
 }
 
-impl Constructor {
+impl<'tcx> Constructor {
     pub(super) fn is_wildcard(&self) -> bool {
         matches!(self, Self::Wildcard)
     }
@@ -631,7 +638,7 @@ impl Constructor {
     /// `EvalResult::Deny { .. }`.
     ///
     /// This means that the variant has a stdlib unstable feature marking it.
-    pub fn is_unstable_variant(&self, _pcx: PatCtxt<'_, '_>) -> bool {
+    pub fn is_unstable_variant(&self, _pcx: PatCtxt<'_, '_, 'tcx>) -> bool {
         false
     }
 
@@ -645,7 +652,7 @@ impl Constructor {
     /// For the simple cases, this is simply checking for equality. For the "grouped" constructors,
     /// this checks for inclusion.
     // We inline because this has a single call site in `Matrix::specialize_constructor`.
-    pub fn is_covered_by<'p>(&self, _pcx: PatCtxt<'_, 'p>, other: &Self) -> bool {
+    pub fn is_covered_by<'p>(&self, _pcx: PatCtxt<'_, 'p, 'tcx>, other: &Self) -> bool {
         // This must be kept in sync with `is_covered_by_any`.
         match (self, other) {
             // Wildcards cover anything
@@ -702,7 +709,7 @@ impl Constructor {
     /// matrix, unless all of them are.
     pub(super) fn split<'a>(
         &self,
-        pcx: PatCtxt<'_, '_>,
+        pcx: PatCtxt<'_, '_, 'tcx>,
         ctors: impl Iterator<Item = &'a Constructor> + Clone,
     ) -> Vec<Self> {
         match self {
@@ -747,18 +754,18 @@ impl Constructor {
 /// included in `fields`. For that reason, when you have a `mir::Field` you must use
 /// `index_with_declared_idx`.
 #[derive(Debug, Clone, Copy)]
-pub struct Fields<'p> {
-    fields: &'p [DeconstructedPat<'p>],
+pub struct Fields<'p, 'tcx> {
+    fields: &'p [DeconstructedPat<'p, 'tcx>],
 }
 
-impl<'p> Fields<'p> {
+impl<'p, 'tcx> Fields<'p, 'tcx> {
     fn empty() -> Self {
         Fields { fields: &[] }
     }
 
     pub fn from_iter(
-        cx: &MatchCheckCtxt<'p>,
-        fields: impl IntoIterator<Item = DeconstructedPat<'p>>,
+        cx: &MatchCheckCtxt<'p, 'tcx>,
+        fields: impl IntoIterator<Item = DeconstructedPat<'p, 'tcx>>,
     ) -> Self {
         let fields: &[_] = cx.pattern_arena.alloc_extend(fields);
         Fields { fields }
@@ -766,7 +773,11 @@ impl<'p> Fields<'p> {
 
     /// Creates a new list of wildcard fields for a given constructor. The result must have a
     /// length of `constructor.arity()`.
-    pub fn wildcards(_cx: &MatchCheckCtxt<'p>, _ty: Type, constructor: &Constructor) -> Self {
+    pub fn wildcards(
+        _cx: &MatchCheckCtxt<'p, 'tcx>,
+        _ty: &'tcx Type,
+        constructor: &Constructor,
+    ) -> Self {
         match constructor {
             Constructor::IntRange(..)
             | Constructor::Str(..)
@@ -777,7 +788,9 @@ impl<'p> Fields<'p> {
     }
 
     /// Returns the list of patterns.
-    pub fn iter_patterns<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p>> + 'a {
+    pub fn iter_patterns<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = &'p DeconstructedPat<'p, 'tcx>> + 'a {
         self.fields.iter()
     }
 }
@@ -789,19 +802,19 @@ impl<'p> Fields<'p> {
 /// `clone_and_forget_reachability` if you're sure.
 #[derive(Debug, Clone)]
 
-pub struct DeconstructedPat<'p> {
+pub struct DeconstructedPat<'p, 'tcx> {
     ctor: Constructor,
-    fields: Fields<'p>,
-    ty: Type,
+    fields: Fields<'p, 'tcx>,
+    ty: &'tcx Type,
     reachable: Cell<bool>,
 }
 
-impl<'p> DeconstructedPat<'p> {
-    pub(super) fn wildcard(ty: Type) -> Self {
+impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
+    pub(super) fn wildcard(ty: &'tcx Type) -> Self {
         Self::new(Constructor::Wildcard, Fields::empty(), ty)
     }
 
-    pub(super) fn new(ctor: Constructor, fields: Fields<'p>, ty: Type) -> Self {
+    pub(super) fn new(ctor: Constructor, fields: Fields<'p, 'tcx>, ty: &'tcx Type) -> Self {
         DeconstructedPat {
             ctor,
             fields,
@@ -813,7 +826,7 @@ impl<'p> DeconstructedPat<'p> {
     /// Construct a pattern that matches everything that starts with this constructor.
     /// For example, if `ctor` is a `Constructor::Variant` for `Option::Some`, we get the pattern
     /// `Some(_)`.
-    pub fn wild_from_ctor(pcx: PatCtxt<'_, 'p>, ctor: Constructor) -> Self {
+    pub fn wild_from_ctor(pcx: PatCtxt<'_, 'p, 'tcx>, ctor: Constructor) -> Self {
         let fields = Fields::wildcards(pcx.cx, pcx.ty, &ctor);
         DeconstructedPat::new(ctor, fields, pcx.ty)
     }
@@ -824,7 +837,7 @@ impl<'p> DeconstructedPat<'p> {
         DeconstructedPat::new(self.ctor.clone(), self.fields, self.ty)
     }
 
-    pub fn from_pat(_cx: &MatchCheckCtxt<'p>, pat: &Pattern) -> Self {
+    pub fn from_pat(_cx: &MatchCheckCtxt<'p, 'tcx>, pat: &Pattern<'tcx>) -> Self {
         let ctor;
         let fields;
         match pat.kind() {
@@ -845,7 +858,7 @@ impl<'p> DeconstructedPat<'p> {
                 fields = Fields::empty();
             }
             PatternKind::Range { lo, hi, end } => {
-                let int_range = IntRange::from_range(*lo, *hi, Type::Int64, *end);
+                let int_range = IntRange::from_range(*lo, *hi, &Type::Int64, *end);
 
                 ctor = Constructor::IntRange(int_range);
                 fields = Fields::empty();
@@ -877,7 +890,7 @@ impl<'p> DeconstructedPat<'p> {
         &self.ctor
     }
 
-    pub(super) fn ty(&self) -> Type {
+    pub(super) fn ty(&self) -> &'tcx Type {
         self.ty
     }
 
@@ -891,7 +904,7 @@ impl<'p> DeconstructedPat<'p> {
         self.reachable.get()
     }
 
-    pub fn iter_fields(&self) -> impl Iterator<Item = &DeconstructedPat> {
+    pub fn iter_fields<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p, 'tcx>> + 'a {
         self.fields.iter_patterns()
     }
 
@@ -903,9 +916,9 @@ impl<'p> DeconstructedPat<'p> {
     /// `other_ctor` can be different from `self.ctor`, but must be covered by it.
     pub fn specialize<'a>(
         &'a self,
-        cx: &MatchCheckCtxt<'p>,
+        cx: &MatchCheckCtxt<'p, 'tcx>,
         other_ctor: &Constructor,
-    ) -> Vec<&'p DeconstructedPat<'p>> {
+    ) -> Vec<&'p DeconstructedPat<'p, 'tcx>> {
         match (&self.ctor, other_ctor) {
             (Constructor::Wildcard, _) => {
                 // We return a wildcard for each field of `other_ctor`.
@@ -920,9 +933,9 @@ impl<'p> DeconstructedPat<'p> {
 
 /// The arm of a match expression.
 #[derive(Debug, Clone, Copy)]
-pub struct MatchArm<'p> {
+pub struct MatchArm<'p, 'tcx> {
     /// The pattern must have been lowered through `check_match::MatchVisitor::lower_pattern`.
-    pub pat: &'p DeconstructedPat<'p>,
+    pub pat: &'p DeconstructedPat<'p, 'tcx>,
     pub has_guard: bool,
 }
 
@@ -938,12 +951,12 @@ pub enum Reachability {
 
 /// The output of checking a match for exhaustiveness and arm reachability.
 
-pub struct UsefulnessReport<'p> {
+pub struct UsefulnessReport<'p, 'tcx> {
     /// For each arm of the input, whether that arm is reachable after the arms above it.
-    pub arm_usefulness: Vec<(MatchArm<'p>, Reachability)>,
+    pub arm_usefulness: Vec<(MatchArm<'p, 'tcx>, Reachability)>,
     /// If the match is exhaustive, this is empty. If not, this contains witnesses for the lack of
     /// exhaustiveness.
-    pub non_exhaustiveness_witnesses: Vec<DeconstructedPat<'p>>,
+    pub non_exhaustiveness_witnesses: Vec<DeconstructedPat<'p, 'tcx>>,
 }
 
 /// This carries the results of computing usefulness, as described at the top of the file. When
@@ -953,15 +966,15 @@ pub struct UsefulnessReport<'p> {
 /// witnesses of non-exhaustiveness when there are any.
 /// Which variant to use is dictated by `ArmType`.
 #[derive(Debug)]
-enum Usefulness<'p> {
+enum Usefulness<'p, 'tcx> {
     /// If we don't care about witnesses, simply remember if the pattern was useful.
     NoWitnesses { useful: bool },
     /// Carries a list of witnesses of non-exhaustiveness. If empty, indicates that the whole
     /// pattern is unreachable.
-    WithWitnesses(Vec<Witness<'p>>),
+    WithWitnesses(Vec<Witness<'p, 'tcx>>),
 }
 
-impl<'p> Usefulness<'p> {
+impl<'p, 'tcx> Usefulness<'p, 'tcx> {
     fn new_useful(preference: ArmType) -> Self {
         match preference {
             // A single (empty) witness of reachability.
@@ -1004,8 +1017,8 @@ impl<'p> Usefulness<'p> {
     /// with the results of specializing with the other constructors.
     fn apply_constructor(
         self,
-        pcx: PatCtxt<'_, 'p>,
-        matrix: &Matrix<'p>, // used to compute missing ctors
+        pcx: PatCtxt<'_, 'p, 'tcx>,
+        matrix: &Matrix<'p, 'tcx>, // used to compute missing ctors
         ctor: &Constructor,
     ) -> Self {
         match self {
@@ -1102,11 +1115,11 @@ enum ArmType {
 ///
 /// The final `Pair(Some(_), true)` is then the resulting witness.
 #[derive(Debug)]
-pub struct Witness<'p>(Vec<DeconstructedPat<'p>>);
+pub struct Witness<'p, 'tcx>(Vec<DeconstructedPat<'p, 'tcx>>);
 
-impl<'p> Witness<'p> {
+impl<'p, 'tcx> Witness<'p, 'tcx> {
     /// Asserts that the witness contains a single pattern, and returns it.
-    fn single_pattern(self) -> DeconstructedPat<'p> {
+    fn single_pattern(self) -> DeconstructedPat<'p, 'tcx> {
         assert_eq!(self.0.len(), 1);
         self.0.into_iter().next().unwrap()
     }
@@ -1124,13 +1137,13 @@ impl<'p> Witness<'p> {
     ///
     /// left_ty: struct X { a: (bool, &'static str), b: usize}
     /// pats: [(false, "foo"), 42]  => X { a: (false, "foo"), b: 42 }
-    fn apply_constructor(mut self, pcx: PatCtxt<'_, 'p>, ctor: &Constructor) -> Self {
+    fn apply_constructor(mut self, pcx: PatCtxt<'_, 'p, 'tcx>, ctor: &Constructor) -> Self {
         let pat = {
             let len = self.0.len();
             let arity = ctor.arity();
             let pats = self.0.drain((len - arity)..).rev();
             let fields = Fields::from_iter(pcx.cx, pats);
-            DeconstructedPat::new(ctor.clone(), fields, Type::Int64)
+            DeconstructedPat::new(ctor.clone(), fields, pcx.ty)
         };
 
         self.0.push(pat);
@@ -1161,14 +1174,14 @@ impl<'p> Witness<'p> {
 /// `is_under_guard` is used to inform if the pattern has a guard. If it
 /// has one it must not be inserted into the matrix. This shouldn't be
 /// relied on for soundness.
-fn is_useful<'p>(
-    cx: &MatchCheckCtxt<'p>,
-    matrix: &Matrix<'p>,
-    v: &PatStack<'p>,
+fn is_useful<'p, 'tcx>(
+    cx: &MatchCheckCtxt<'p, 'tcx>,
+    matrix: &Matrix<'p, 'tcx>,
+    v: &PatStack<'p, 'tcx>,
     witness_preference: ArmType,
     is_under_guard: bool,
     is_top_level: bool,
-) -> Usefulness<'p> {
+) -> Usefulness<'p, 'tcx> {
     let Matrix { patterns: rows, .. } = matrix;
 
     // The base case. We are pattern-matching on () and the return value is
@@ -1233,11 +1246,11 @@ fn is_useful<'p>(
 ///
 /// Note: the input patterns must have been lowered through
 /// `check_match::MatchVisitor::lower_pattern`.
-fn compute_match_usefulness<'p>(
-    cx: &MatchCheckCtxt<'p>,
-    arms: &[MatchArm<'p>],
-    src_ty: Type,
-) -> UsefulnessReport<'p> {
+fn compute_match_usefulness<'p, 'tcx>(
+    cx: &MatchCheckCtxt<'p, 'tcx>,
+    arms: &[MatchArm<'p, 'tcx>],
+    src_ty: &'tcx Type,
+) -> UsefulnessReport<'p, 'tcx> {
     let mut matrix = Matrix::empty();
     let arm_usefulness: Vec<_> = arms
         .iter()
@@ -1270,8 +1283,8 @@ fn compute_match_usefulness<'p>(
     }
 }
 
-pub fn check_match(
-    head_ty: Type,
+pub fn check_match<'tcx>(
+    head_ty: &'tcx Type,
     arms: &[CaseArm],
     has_else: bool,
 ) -> Result<(), Vec<SemanticError>> {
@@ -1344,12 +1357,12 @@ mod tests_int_range {
 
     #[test]
     fn is_integral() {
-        assert!(IntRange::is_integral(Type::Int64));
+        assert!(IntRange::is_integral(&Type::Int64));
     }
 
     #[test]
     fn signed_bias() {
-        let bias = IntRange::signed_bias(Type::Int64);
+        let bias = IntRange::signed_bias(&Type::Int64);
         assert_eq!(bias, 9223372036854775808i128);
     }
 
@@ -1362,7 +1375,7 @@ mod tests_int_range {
         assert_eq!(low, 0);
         assert_eq!(high, 0);
 
-        let pat = r.to_pat(Type::Int64);
+        let pat = r.to_pat(&Type::Int64);
         let kind = pat.kind();
 
         if let PatternKind::Integer(n) = kind {
@@ -1381,7 +1394,7 @@ mod tests_int_range {
         assert_eq!(low, 18446744073709551615u128);
         assert_eq!(high, 18446744073709551615u128);
 
-        let pat = r.to_pat(Type::Int64);
+        let pat = r.to_pat(&Type::Int64);
         let kind = pat.kind();
 
         if let PatternKind::Integer(n) = kind {
@@ -1393,7 +1406,7 @@ mod tests_int_range {
 
     #[test]
     fn from_range() {
-        let r = IntRange::from_range(i64::MIN, i64::MAX, Type::Int64, RangeEnd::Included);
+        let r = IntRange::from_range(i64::MIN, i64::MAX, &Type::Int64, RangeEnd::Included);
         let (low, high) = r.boundaries();
 
         assert!(!r.is_singleton());
@@ -1417,9 +1430,9 @@ mod tests_deconstructed_pat {
             hi: 2,
             end: RangeEnd::Included,
         };
-        let pat = Pattern::new(kind, Type::Int64);
+        let pat = Pattern::new(kind, &Type::Int64);
         let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
 
-        assert_eq!(dc_pat.ty(), Type::Int64);
+        assert_eq!(dc_pat.ty(), &Type::Int64);
     }
 }

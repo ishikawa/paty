@@ -223,16 +223,16 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
 }
 
 #[derive(Debug)]
-pub struct Expr {
-    kind: ExprKind,
+pub struct Expr<'tcx> {
+    kind: ExprKind<'tcx>,
     // The type of expression is determined in later phase.
-    ty: Cell<Option<Type>>,
+    ty: Cell<Option<&'tcx Type>>,
     // comments followed by this token.
     comments: Vec<String>,
 }
 
-impl Expr {
-    pub fn new(kind: ExprKind) -> Self {
+impl<'tcx> Expr<'tcx> {
+    pub fn new(kind: ExprKind<'tcx>) -> Self {
         Self {
             kind,
             ty: Cell::new(None),
@@ -240,15 +240,15 @@ impl Expr {
         }
     }
 
-    pub fn kind(&self) -> &ExprKind {
+    pub fn kind(&self) -> &ExprKind<'tcx> {
         &self.kind
     }
 
-    pub fn ty(&self) -> Option<Type> {
+    pub fn ty(&self) -> Option<&'tcx Type> {
         self.ty.get()
     }
 
-    pub fn assign_ty(&self, ty: Type) {
+    pub fn assign_ty(&self, ty: &'tcx Type) {
         self.ty.set(Some(ty))
     }
 
@@ -264,55 +264,55 @@ impl Expr {
 }
 
 #[derive(Debug)]
-pub enum ExprKind {
+pub enum ExprKind<'tcx> {
     Integer(i64),
     Boolean(bool),
     String(String),
     Var(String),
 
     // unary operators
-    Minus(Box<Expr>),
+    Minus(Box<Expr<'tcx>>),
 
     // binary operators
-    Add(Box<Expr>, Box<Expr>),
-    Sub(Box<Expr>, Box<Expr>),
-    Mul(Box<Expr>, Box<Expr>),
-    Div(Box<Expr>, Box<Expr>),
-    Eq(Box<Expr>, Box<Expr>),
-    Ne(Box<Expr>, Box<Expr>),
-    Le(Box<Expr>, Box<Expr>),
-    Ge(Box<Expr>, Box<Expr>),
-    Lt(Box<Expr>, Box<Expr>),
-    Gt(Box<Expr>, Box<Expr>),
-    And(Box<Expr>, Box<Expr>),
-    Or(Box<Expr>, Box<Expr>),
+    Add(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Sub(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Mul(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Div(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Eq(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Ne(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Le(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Ge(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Lt(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Gt(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    And(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Or(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
 
-    Call(String, Vec<Expr>),
+    Call(String, Vec<Expr<'tcx>>),
     Let {
         name: String,
-        rhs: Box<Expr>,
-        then: Box<Expr>,
+        rhs: Box<Expr<'tcx>>,
+        then: Box<Expr<'tcx>>,
     },
-    Fn(Function),
+    Fn(Function<'tcx>),
     Case {
-        head: Box<Expr>,
-        arms: Vec<CaseArm>,
-        else_body: Option<Box<Expr>>,
+        head: Box<Expr<'tcx>>,
+        arms: Vec<CaseArm<'tcx>>,
+        else_body: Option<Box<Expr<'tcx>>>,
     },
 
     // Built-in functions
-    Puts(Vec<Expr>),
+    Puts(Vec<Expr<'tcx>>),
 }
 
 #[derive(Debug)]
-pub struct Function {
+pub struct Function<'tcx> {
     name: String,
-    params: Vec<Parameter>,
-    body: Box<Expr>,
-    then: Box<Expr>,
+    params: Vec<Parameter<'tcx>>,
+    body: Box<Expr<'tcx>>,
+    then: Box<Expr<'tcx>>,
 }
 
-impl Function {
+impl<'tcx> Function<'tcx> {
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -321,24 +321,24 @@ impl Function {
         &self.params
     }
 
-    pub fn body(&self) -> &Expr {
+    pub fn body(&self) -> &Expr<'tcx> {
         &self.body
     }
 
-    pub fn then(&self) -> &Expr {
+    pub fn then(&self) -> &Expr<'tcx> {
         &self.then
     }
 }
 
 /// Formal parameter for a function
 #[derive(Debug)]
-pub struct Parameter {
+pub struct Parameter<'tcx> {
     name: String,
-    ty: Type,
+    ty: &'tcx Type,
 }
 
-impl Parameter {
-    pub fn new(name: &str, ty: Type) -> Self {
+impl<'tcx> Parameter<'tcx> {
+    pub fn new(name: &str, ty: &'tcx Type) -> Self {
         Self {
             name: name.to_string(),
             ty,
@@ -349,20 +349,20 @@ impl Parameter {
         &self.name
     }
 
-    pub fn ty(&self) -> Type {
+    pub fn ty(&self) -> &'tcx Type {
         self.ty
     }
 }
 
 #[derive(Debug)]
-pub struct CaseArm {
-    pattern: Pattern,
-    body: Box<Expr>,
+pub struct CaseArm<'tcx> {
+    pattern: Pattern<'tcx>,
+    body: Box<Expr<'tcx>>,
     comments: Vec<String>,
 }
 
-impl CaseArm {
-    pub fn new(pattern: Pattern, body: Box<Expr>) -> Self {
+impl<'tcx> CaseArm<'tcx> {
+    pub fn new(pattern: Pattern<'tcx>, body: Box<Expr<'tcx>>) -> Self {
         Self {
             pattern,
             body,
@@ -370,11 +370,11 @@ impl CaseArm {
         }
     }
 
-    pub fn pattern(&self) -> &Pattern {
+    pub fn pattern(&self) -> &Pattern<'tcx> {
         &self.pattern
     }
 
-    pub fn body(&self) -> &Expr {
+    pub fn body(&self) -> &Expr<'tcx> {
         &self.body
     }
 
@@ -390,14 +390,14 @@ impl CaseArm {
 }
 
 #[derive(Debug)]
-pub struct Pattern {
+pub struct Pattern<'tcx> {
     kind: PatternKind,
-    ty: Type,
+    ty: &'tcx Type,
     comments: Vec<String>,
 }
 
-impl Pattern {
-    pub fn new(kind: PatternKind, ty: Type) -> Self {
+impl<'tcx> Pattern<'tcx> {
+    pub fn new(kind: PatternKind, ty: &'tcx Type) -> Self {
         Self {
             kind,
             ty,
@@ -409,7 +409,7 @@ impl Pattern {
         &self.kind
     }
 
-    pub fn ty(&self) -> Type {
+    pub fn ty(&self) -> &'tcx Type {
         self.ty
     }
 
@@ -463,7 +463,7 @@ fn token(kind: TokenKind) -> Token {
     Token::new(kind, &[])
 }
 
-pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
+pub fn parser<'tcx>() -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> + Clone {
     // can not use "just" which outputs an argument instead of a token from the input.
     let just_token =
         |kind: TokenKind| filter::<Token, _, Simple<Token>>(move |t: &Token| t.kind == kind);

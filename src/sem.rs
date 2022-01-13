@@ -7,16 +7,16 @@ mod error;
 mod usefulness;
 
 #[derive(Debug)]
-pub struct SemAST<'a> {
-    expr: &'a syntax::Expr,
+pub struct SemAST<'a, 'tcx> {
+    expr: &'a syntax::Expr<'tcx>,
 }
 
-impl<'a> SemAST<'a> {
-    pub fn new(expr: &'a syntax::Expr) -> Self {
+impl<'a, 'tcx> SemAST<'a, 'tcx> {
+    pub fn new(expr: &'a syntax::Expr<'tcx>) -> Self {
         Self { expr }
     }
 
-    pub fn expr(&self) -> &syntax::Expr {
+    pub fn expr(&self) -> &syntax::Expr<'tcx> {
         self.expr
     }
 }
@@ -78,7 +78,9 @@ impl<'a> Scope<'a> {
 }
 
 // Analyze an AST and returns error if any.
-pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, Vec<SemanticError>> {
+pub fn analyze<'a, 'tcx>(
+    expr: &'a syntax::Expr<'tcx>,
+) -> Result<SemAST<'a, 'tcx>, Vec<SemanticError>> {
     let mut errors = vec![];
     let mut scope = Scope::new();
 
@@ -90,7 +92,11 @@ pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, Vec<SemanticError>> {
     }
 }
 
-fn unify_expr_type(expected: Type, expr: &syntax::Expr, errors: &mut Vec<SemanticError>) -> bool {
+fn unify_expr_type<'tcx>(
+    expected: &'tcx Type,
+    expr: &syntax::Expr,
+    errors: &mut Vec<SemanticError>,
+) -> bool {
     if let Some(actual) = expr.ty() {
         check_type(expected, actual, errors)
     } else {
@@ -99,7 +105,11 @@ fn unify_expr_type(expected: Type, expr: &syntax::Expr, errors: &mut Vec<Semanti
     }
 }
 
-fn check_type(expected: Type, actual: Type, errors: &mut Vec<SemanticError>) -> bool {
+fn check_type<'tcx>(
+    expected: &'tcx Type,
+    actual: &'tcx Type,
+    errors: &mut Vec<SemanticError>,
+) -> bool {
     if actual != expected {
         errors.push(SemanticError::MismatchedType { expected, actual });
         false
@@ -108,10 +118,10 @@ fn check_type(expected: Type, actual: Type, errors: &mut Vec<SemanticError>) -> 
     }
 }
 
-fn analyze_loop<'a>(
-    expr: &'a syntax::Expr,
+fn analyze_loop<'a, 'tcx>(
+    expr: &'a syntax::Expr<'tcx>,
     vars: &mut Scope,
-    functions: &mut Vec<&'a syntax::Function>,
+    functions: &mut Vec<&'a syntax::Function<'tcx>>,
     errors: &mut Vec<SemanticError>,
 ) {
     match expr.kind() {
