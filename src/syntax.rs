@@ -463,9 +463,7 @@ fn token(kind: TokenKind) -> Token {
     Token::new(kind, &[])
 }
 
-pub fn parser<'tcx>(
-    tcx: TypeContext<'tcx>,
-) -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> + Clone {
+pub fn parser(tcx: TypeContext<'_>) -> impl Parser<Token, Expr<'_>, Error = Simple<Token>> + Clone {
     // can not use "just" which outputs an argument instead of a token from the input.
     let just_token =
         |kind: TokenKind| filter::<Token, _, Simple<Token>>(move |t: &Token| t.kind == kind);

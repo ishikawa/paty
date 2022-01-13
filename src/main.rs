@@ -2,6 +2,7 @@ use chumsky::Parser;
 use paty::gen;
 use paty::sem;
 use paty::syntax;
+use paty::ty::TypeContext;
 use std::env;
 use std::fs;
 use std::io;
@@ -45,7 +46,7 @@ fn main() {
     };
     //println!("ast = {:?}", expr);
 
-    let ast = match sem::analyze(&type_arena, &expr) {
+    let ast = match sem::analyze(tcx, &expr) {
         Err(errors) => {
             assert!(!errors.is_empty());
 
@@ -63,7 +64,7 @@ fn main() {
         let expr_arena = Arena::new();
         let tmp_var_arena = Arena::new();
 
-        let mut builder = gen::ir::Builder::new(&expr_arena, &tmp_var_arena);
+        let mut builder = gen::ir::Builder::new(tcx, &expr_arena, &tmp_var_arena);
         let program = builder.build(&ast);
         //eprintln!("---\n{}", program);
 

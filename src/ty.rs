@@ -22,6 +22,10 @@ impl<'tcx> TypeContext<'tcx> {
     pub fn string(&self) -> &'tcx Type {
         self.type_arena.alloc(Type::String)
     }
+
+    pub fn native_int(&self) -> &'tcx Type {
+        self.type_arena.alloc(Type::NativeInt)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

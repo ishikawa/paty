@@ -1,5 +1,5 @@
 use crate::syntax::PatternKind;
-use crate::ty::Type;
+use crate::ty::{Type, TypeContext};
 use crate::{sem, syntax};
 use std::cell::Cell;
 use std::fmt;
@@ -171,34 +171,6 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         Self { kind, ty }
     }
 
-    pub fn int64(value: i64) -> Self {
-        Self {
-            kind: ExprKind::Value(Value::Int64(value)),
-            ty: Type::Int64,
-        }
-    }
-
-    pub fn native_int(value: i32) -> Self {
-        Self {
-            kind: ExprKind::Value(Value::Int(value)),
-            ty: Type::NativeInt,
-        }
-    }
-
-    pub fn bool(value: bool) -> Self {
-        Self {
-            kind: ExprKind::Value(Value::Bool(value)),
-            ty: Type::Boolean,
-        }
-    }
-
-    pub fn const_string(value: &str) -> Self {
-        Self {
-            kind: ExprKind::Value(Value::String(value.to_string())),
-            ty: Type::String,
-        }
-    }
-
     pub fn kind(&self) -> &ExprKind<'a, 'tcx> {
         &self.kind
     }
@@ -246,6 +218,7 @@ pub enum Value<'a, 'tcx> {
 }
 
 pub struct Builder<'a, 'tcx> {
+    tcx: TypeContext<'tcx>,
     /// An arena allocators for nodes.
     expr_arena: &'a Arena<Expr<'a, 'tcx>>,
     tmp_var_arena: &'a Arena<TmpVar<'a, 'tcx>>,
@@ -257,26 +230,30 @@ pub struct Builder<'a, 'tcx> {
 
 impl<'a, 'tcx> Builder<'a, 'tcx> {
     pub fn new(
+        tcx: TypeContext<'tcx>,
         expr_arena: &'a Arena<Expr<'a, 'tcx>>,
         tmp_var_arena: &'a Arena<TmpVar<'a, 'tcx>>,
     ) -> Self {
         Self {
+            tcx,
             expr_arena,
             tmp_var_arena,
             tmp_var_index: 0,
         }
     }
 
-    pub fn build(&mut self, ast: &sem::SemAST<'_, 'tcx>) -> Program<'a, 'tcx> {
+    pub fn build<'ast: 'tcx>(&mut self, ast: &sem::SemAST<'ast, 'tcx>) -> Program<'a, 'tcx> {
         let mut program = Program { functions: vec![] };
         let mut stmts = vec![];
 
         // Build top level statements and function definitions.
         self._build(ast.expr(), &mut program, &mut stmts);
+
         // Add `return 0` statement for the entry point function if needed.
+        let c_int_ty = self.tcx.native_int();
         if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
             let kind = ExprKind::Value(Value::Int(0));
-            let expr = Expr::new(kind, Type::NativeInt);
+            let expr = Expr::new(kind, c_int_ty);
             let expr = self.expr_arena.alloc(expr);
 
             stmts.push(Stmt::Ret(expr))
@@ -286,7 +263,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             name: "main".to_string(),
             params: vec![],
             body: stmts,
-            retty: Type::Int64,
+            retty: c_int_ty,
             is_entry_point: true,
         };
         program.functions.push(main);
@@ -338,9 +315,37 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         expr
     }
 
-    fn _build(
+    fn int64(&self, value: i64) -> Expr<'a, 'tcx> {
+        let kind = ExprKind::Value(Value::Int64(value));
+        let ty = self.tcx.int64();
+
+        Expr::new(kind, ty)
+    }
+
+    fn native_int(&self, value: i32) -> Expr<'a, 'tcx> {
+        let kind = ExprKind::Value(Value::Int(value));
+        let ty = self.tcx.native_int();
+
+        Expr::new(kind, ty)
+    }
+
+    fn bool(&self, value: bool) -> Expr<'a, 'tcx> {
+        let kind = ExprKind::Value(Value::Bool(value));
+        let ty = self.tcx.boolean();
+
+        Expr::new(kind, ty)
+    }
+
+    fn const_string(&self, value: &str) -> Expr<'a, 'tcx> {
+        let kind = ExprKind::Value(Value::String(value.to_string()));
+        let ty = self.tcx.string();
+
+        Expr::new(kind, ty)
+    }
+
+    fn _build<'ast: 'tcx>(
         &mut self,
-        expr: &syntax::Expr<'tcx>,
+        expr: &'ast syntax::Expr<'tcx>,
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
@@ -543,37 +548,38 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                         // Build an immediate value from the pattern
                         let condition = match arm.pattern().kind() {
                             PatternKind::Integer(n) => {
-                                let value = self.expr_arena.alloc(Expr::int64(*n));
+                                let value = self.expr_arena.alloc(self.int64(*n));
                                 let eq = ExprKind::Eq(self.inc_used(t_head), value);
 
-                                self.expr_arena.alloc(Expr::new(eq, Type::Boolean))
+                                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
                             }
                             PatternKind::Boolean(b) => {
                                 if *b {
                                     self.inc_used(t_head)
                                 } else {
                                     let expr = ExprKind::Not(self.inc_used(t_head));
-                                    self.expr_arena.alloc(Expr::new(expr, Type::Boolean))
+                                    self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
                                 }
                             }
                             PatternKind::String(s) => {
                                 // Compare the value of head expression and pattern string with
                                 // POSIX `strcmp` function.
-                                let value = self.expr_arena.alloc(Expr::const_string(s));
+                                let value = self.expr_arena.alloc(self.const_string(s));
                                 let kind = ExprKind::Call {
                                     name: "strcmp".to_string(),
                                     args: vec![self.inc_used(t_head), value],
                                 };
-                                let strcmp = self.expr_arena.alloc(Expr::new(kind, Type::Int64));
+                                let strcmp =
+                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
 
-                                let zero = self.expr_arena.alloc(Expr::native_int(0));
+                                let zero = self.expr_arena.alloc(self.native_int(0));
                                 let eq = ExprKind::Eq(self.inc_used(strcmp), zero);
 
-                                self.expr_arena.alloc(Expr::new(eq, Type::Boolean))
+                                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
                             }
                             PatternKind::Range { lo, hi, end } => {
-                                let lo = self.expr_arena.alloc(Expr::int64(*lo));
-                                let hi = self.expr_arena.alloc(Expr::int64(*hi));
+                                let lo = self.expr_arena.alloc(self.int64(*lo));
+                                let hi = self.expr_arena.alloc(self.int64(*hi));
 
                                 let lhs = ExprKind::Ge(self.inc_used(t_head), lo);
 
@@ -587,13 +593,13 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                                 };
 
                                 let kind = ExprKind::And(
-                                    self.expr_arena.alloc(Expr::new(lhs, Type::Boolean)),
-                                    self.expr_arena.alloc(Expr::new(rhs, Type::Boolean)),
+                                    self.expr_arena.alloc(Expr::new(lhs, self.tcx.boolean())),
+                                    self.expr_arena.alloc(Expr::new(rhs, self.tcx.boolean())),
                                 );
 
-                                self.expr_arena.alloc(Expr::new(kind, Type::Boolean))
+                                self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
                             }
-                            PatternKind::Wildcard => self.expr_arena.alloc(Expr::bool(true)),
+                            PatternKind::Wildcard => self.expr_arena.alloc(self.bool(true)),
                         };
 
                         let mut branch_stmts = vec![];

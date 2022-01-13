@@ -19,7 +19,7 @@ impl<'a, 'tcx> SemAST<'a, 'tcx> {
         Self { expr }
     }
 
-    pub fn expr(&self) -> &syntax::Expr<'tcx> {
+    pub fn expr(&self) -> &'a syntax::Expr<'tcx> {
         self.expr
     }
 }
