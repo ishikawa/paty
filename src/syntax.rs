@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use crate::ty::Type;
+use crate::ty::{Type, TypeContext};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RangeEnd {
@@ -463,7 +463,9 @@ fn token(kind: TokenKind) -> Token {
     Token::new(kind, &[])
 }
 
-pub fn parser<'tcx>() -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> + Clone {
+pub fn parser<'tcx>(
+    tcx: TypeContext<'tcx>,
+) -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> + Clone {
     // can not use "just" which outputs an argument instead of a token from the input.
     let just_token =
         |kind: TokenKind| filter::<Token, _, Simple<Token>>(move |t: &Token| t.kind == kind);
@@ -501,15 +503,18 @@ pub fn parser<'tcx>() -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> +
     let pattern = {
         let integer_pattern = integer_value.map(|n| {
             let kind = PatternKind::Integer(n);
-            Pattern::new(kind, Type::Int64)
+            let ty = tcx.type_arena.alloc(Type::Int64);
+            Pattern::new(kind, ty)
         });
         let boolean_pattern = boolean_value.clone().map(|b| {
             let kind = PatternKind::Boolean(b);
-            Pattern::new(kind, Type::Boolean)
+            let ty = tcx.type_arena.alloc(Type::Boolean);
+            Pattern::new(kind, ty)
         });
         let string_pattern = string_value.map(|s| {
             let kind = PatternKind::String(s);
-            Pattern::new(kind, Type::String)
+            let ty = tcx.type_arena.alloc(Type::String);
+            Pattern::new(kind, ty)
         });
         let range_pattern = integer_value
             .then(choice((
@@ -530,7 +535,8 @@ pub fn parser<'tcx>() -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> +
                     end,
                 };
 
-                Pattern::new(kind, Type::Int64)
+                let ty = tcx.type_arena.alloc(Type::Int64);
+                Pattern::new(kind, ty)
             });
 
         range_pattern
@@ -715,10 +721,11 @@ pub fn parser<'tcx>() -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> +
             .map(|(name, ty)| {
                 let ty = if ty.is_empty() {
                     // Int64 for omitted type
-                    Type::Int64
+                    tcx.type_arena.alloc(Type::Int64)
                 } else {
-                    ty[0]
+                    tcx.type_arena.alloc(ty[0].clone())
                 };
+
                 Parameter::new(&name, ty)
             });
         let r#fn = just_token(TokenKind::Def)

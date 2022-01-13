@@ -1,4 +1,10 @@
 use std::fmt;
+use typed_arena::Arena;
+
+#[derive(Clone, Copy)]
+pub struct TypeContext<'tcx> {
+    pub type_arena: &'tcx Arena<Type>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
