@@ -248,6 +248,7 @@ impl<'a, 'tcx> Emitter {
                         Type::String => {
                             code.push_str("%s");
                         }
+                        Type::Tuple(_) => todo!(),
                         Type::NativeInt => {
                             code.push_str("%d");
                         }
@@ -272,6 +273,7 @@ impl<'a, 'tcx> Emitter {
                             code.push_str(" ? \"true\" : \"false\"");
                             code.push(')');
                         }
+                        Type::Tuple(_) => todo!(),
                     }
 
                     if i != (args.len() - 1) {
@@ -334,5 +336,6 @@ fn c_type(ty: &Type) -> &'static str {
         Type::Boolean => "bool",
         Type::String => "const char *",
         Type::NativeInt => "int",
+        Type::Tuple(_) => todo!(),
     }
 }

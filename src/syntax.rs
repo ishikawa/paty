@@ -226,7 +226,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
 pub struct Expr<'tcx> {
     kind: ExprKind<'tcx>,
     // The type of expression is determined in later phase.
-    ty: Cell<Option<&'tcx Type>>,
+    ty: Cell<Option<&'tcx Type<'tcx>>>,
     // comments followed by this token.
     comments: Vec<String>,
 }
@@ -244,11 +244,11 @@ impl<'tcx> Expr<'tcx> {
         &self.kind
     }
 
-    pub fn ty(&self) -> Option<&'tcx Type> {
+    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
         self.ty.get()
     }
 
-    pub fn assign_ty(&self, ty: &'tcx Type) {
+    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
     }
 
@@ -334,11 +334,11 @@ impl<'tcx> Function<'tcx> {
 #[derive(Debug)]
 pub struct Parameter<'tcx> {
     name: String,
-    ty: &'tcx Type,
+    ty: &'tcx Type<'tcx>,
 }
 
 impl<'tcx> Parameter<'tcx> {
-    pub fn new(name: &str, ty: &'tcx Type) -> Self {
+    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             name: name.to_string(),
             ty,
@@ -349,7 +349,7 @@ impl<'tcx> Parameter<'tcx> {
         &self.name
     }
 
-    pub fn ty(&self) -> &'tcx Type {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 }
@@ -392,12 +392,12 @@ impl<'tcx> CaseArm<'tcx> {
 #[derive(Debug)]
 pub struct Pattern<'tcx> {
     kind: PatternKind,
-    ty: &'tcx Type,
+    ty: &'tcx Type<'tcx>,
     comments: Vec<String>,
 }
 
 impl<'tcx> Pattern<'tcx> {
-    pub fn new(kind: PatternKind, ty: &'tcx Type) -> Self {
+    pub fn new(kind: PatternKind, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             kind,
             ty,
@@ -409,7 +409,7 @@ impl<'tcx> Pattern<'tcx> {
         &self.kind
     }
 
-    pub fn ty(&self) -> &'tcx Type {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 

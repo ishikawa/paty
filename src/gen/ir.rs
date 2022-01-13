@@ -24,7 +24,7 @@ pub struct Function<'a, 'tcx> {
     pub name: String,
     pub params: Vec<Parameter<'tcx>>,
     pub body: Vec<Stmt<'a, 'tcx>>,
-    pub retty: &'tcx Type,
+    pub retty: &'tcx Type<'tcx>,
     /// Whether this function is `main` or not.
     pub is_entry_point: bool,
 }
@@ -54,7 +54,7 @@ impl fmt::Display for Function<'_, '_> {
 #[derive(Debug)]
 pub struct Parameter<'tcx> {
     pub name: String,
-    pub ty: &'tcx Type,
+    pub ty: &'tcx Type<'tcx>,
 }
 
 impl fmt::Display for Parameter<'_> {
@@ -69,13 +69,13 @@ impl fmt::Display for Parameter<'_> {
 #[derive(Debug)]
 pub struct TmpVar<'a, 'tcx> {
     pub index: usize,
-    pub ty: &'tcx Type,
+    pub ty: &'tcx Type<'tcx>,
     pub used: Cell<usize>,
     pub immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
 }
 
 impl<'a, 'tcx> TmpVar<'a, 'tcx> {
-    pub fn new(index: usize, ty: &'tcx Type) -> Self {
+    pub fn new(index: usize, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             index,
             ty,
@@ -163,11 +163,11 @@ pub struct Branch<'a, 'tcx> {
 #[derive(Debug)]
 pub struct Expr<'a, 'tcx> {
     kind: ExprKind<'a, 'tcx>,
-    ty: &'tcx Type,
+    ty: &'tcx Type<'tcx>,
 }
 
 impl<'a, 'tcx> Expr<'a, 'tcx> {
-    pub fn new(kind: ExprKind<'a, 'tcx>, ty: &'tcx Type) -> Self {
+    pub fn new(kind: ExprKind<'a, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         Self { kind, ty }
     }
 
@@ -175,7 +175,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         &self.kind
     }
 
-    pub fn ty(&self) -> &'tcx Type {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 }
@@ -214,7 +214,7 @@ pub enum Value<'a, 'tcx> {
     Bool(bool),
     String(String),
     TmpVar(&'a TmpVar<'a, 'tcx>),
-    Var(String, &'tcx Type),
+    Var(String, &'tcx Type<'tcx>),
 }
 
 pub struct Builder<'a, 'tcx> {
@@ -275,7 +275,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         program
     }
 
-    fn next_temp_var(&mut self, ty: &'tcx Type) -> &'a TmpVar<'a, 'tcx> {
+    fn next_temp_var(&mut self, ty: &'tcx Type<'tcx>) -> &'a TmpVar<'a, 'tcx> {
         let t = self.tmp_var_index;
         self.tmp_var_index += 1;
         self.tmp_var_arena.alloc(TmpVar::new(t, ty))

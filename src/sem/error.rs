@@ -18,8 +18,8 @@ pub enum SemanticError<'tcx> {
     // Type errors
     #[error("expected type `{expected}`, found `{actual}`")]
     MismatchedType {
-        expected: &'tcx Type,
-        actual: &'tcx Type,
+        expected: &'tcx Type<'tcx>,
+        actual: &'tcx Type<'tcx>,
     },
     // pattern match errors
     #[error("unreachable pattern: `{pattern}`")]

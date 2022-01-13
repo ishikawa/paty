@@ -24,7 +24,7 @@ pub struct MatchCheckContext<'p, 'tcx> {
 pub struct PatContext<'a, 'p, 'tcx> {
     pub cx: &'a MatchCheckContext<'p, 'tcx>,
     /// Type of the current column under investigation.
-    pub ty: &'tcx Type,
+    pub ty: &'tcx Type<'tcx>,
     /// Whether the current pattern is the whole pattern as found in a match arm, or if it's a
     /// subpattern.
     pub(super) is_top_level: bool,
@@ -137,7 +137,7 @@ impl IntRange {
     }
 
     /// Only used for displaying the range properly.
-    fn to_pat<'tcx>(&self, ty: &'tcx Type) -> Pattern<'tcx> {
+    fn to_pat<'tcx>(&self, ty: &'tcx Type<'tcx>) -> Pattern<'tcx> {
         let (lo, hi) = self.boundaries();
 
         let lo = Self::decode_value(lo, self.bias);
@@ -337,6 +337,7 @@ impl<'tcx> SplitWildcard {
             }
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String => vec![Constructor::NonExhaustive],
+            Type::Tuple(_) => todo!(),
             Type::NativeInt => unreachable!("Native C types are not supported."),
         };
 
@@ -776,7 +777,7 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
     /// length of `constructor.arity()`.
     pub fn wildcards(
         _cx: &MatchCheckContext<'p, 'tcx>,
-        _ty: &'tcx Type,
+        _ty: &'tcx Type<'tcx>,
         constructor: &Constructor,
     ) -> Self {
         match constructor {
@@ -806,16 +807,16 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
 pub struct DeconstructedPat<'p, 'tcx> {
     ctor: Constructor,
     fields: Fields<'p, 'tcx>,
-    ty: &'tcx Type,
+    ty: &'tcx Type<'tcx>,
     reachable: Cell<bool>,
 }
 
 impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
-    pub(super) fn wildcard(ty: &'tcx Type) -> Self {
+    pub(super) fn wildcard(ty: &'tcx Type<'tcx>) -> Self {
         Self::new(Constructor::Wildcard, Fields::empty(), ty)
     }
 
-    pub(super) fn new(ctor: Constructor, fields: Fields<'p, 'tcx>, ty: &'tcx Type) -> Self {
+    pub(super) fn new(ctor: Constructor, fields: Fields<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         DeconstructedPat {
             ctor,
             fields,
@@ -891,7 +892,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         &self.ctor
     }
 
-    pub(super) fn ty(&self) -> &'tcx Type {
+    pub(super) fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 
@@ -1250,7 +1251,7 @@ fn is_useful<'p, 'tcx>(
 fn compute_match_usefulness<'p, 'tcx>(
     cx: &MatchCheckContext<'p, 'tcx>,
     arms: &[MatchArm<'p, 'tcx>],
-    src_ty: &'tcx Type,
+    src_ty: &'tcx Type<'tcx>,
 ) -> UsefulnessReport<'p, 'tcx> {
     let mut matrix = Matrix::empty();
     let arm_usefulness: Vec<_> = arms
@@ -1285,7 +1286,7 @@ fn compute_match_usefulness<'p, 'tcx>(
 }
 
 pub fn check_match<'tcx>(
-    head_ty: &'tcx Type,
+    head_ty: &'tcx Type<'tcx>,
     arms: &[CaseArm],
     has_else: bool,
 ) -> Result<(), Vec<SemanticError<'tcx>>> {

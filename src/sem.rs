@@ -27,11 +27,11 @@ impl<'a, 'tcx> SemAST<'a, 'tcx> {
 #[derive(Debug)]
 struct Binding<'tcx> {
     name: String,
-    ty: &'tcx Type,
+    ty: &'tcx Type<'tcx>,
 }
 
 impl<'tcx> Binding<'tcx> {
-    pub fn new(name: &str, ty: &'tcx Type) -> Self {
+    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             name: name.to_string(),
             ty,
@@ -42,7 +42,7 @@ impl<'tcx> Binding<'tcx> {
         &self.name
     }
 
-    pub fn ty(&self) -> &'tcx Type {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 }
@@ -97,7 +97,7 @@ pub fn analyze<'a: 'tcx, 'tcx>(
 }
 
 fn unify_expr_type<'tcx>(
-    expected: &'tcx Type,
+    expected: &'tcx Type<'tcx>,
     expr: &syntax::Expr<'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
@@ -110,8 +110,8 @@ fn unify_expr_type<'tcx>(
 }
 
 fn check_type<'tcx>(
-    expected: &'tcx Type,
-    actual: &'tcx Type,
+    expected: &'tcx Type<'tcx>,
+    actual: &'tcx Type<'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
     if actual != expected {
