@@ -33,8 +33,9 @@ fn main() {
         Ok(tokens) => tokens,
     };
     //println!("tokens = {:?}", tokens);
-
-    let expr = match syntax::parser().parse(tokens) {
+    let type_arena = Arena::new();
+    let tcx = TypeContext::new(&type_arena);
+    let expr = match syntax::parser(tcx).parse(tokens) {
         Err(err) => {
             err.into_iter()
                 .for_each(|e| eprintln!("Parse error: {}", e));
@@ -44,7 +45,7 @@ fn main() {
     };
     //println!("ast = {:?}", expr);
 
-    let ast = match sem::analyze(&expr) {
+    let ast = match sem::analyze(&type_arena, &expr) {
         Err(errors) => {
             assert!(!errors.is_empty());
 

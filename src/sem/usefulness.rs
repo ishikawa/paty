@@ -1288,7 +1288,7 @@ pub fn check_match<'tcx>(
     head_ty: &'tcx Type,
     arms: &[CaseArm],
     has_else: bool,
-) -> Result<(), Vec<SemanticError>> {
+) -> Result<(), Vec<SemanticError<'tcx>>> {
     let pattern_arena = Arena::default();
     let cx = MatchCheckContext {
         pattern_arena: &pattern_arena,

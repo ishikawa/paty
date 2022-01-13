@@ -6,6 +6,24 @@ pub struct TypeContext<'tcx> {
     pub type_arena: &'tcx Arena<Type>,
 }
 
+impl<'tcx> TypeContext<'tcx> {
+    pub fn new(type_arena: &'tcx Arena<Type>) -> Self {
+        Self { type_arena }
+    }
+
+    pub fn int64(&self) -> &'tcx Type {
+        self.type_arena.alloc(Type::Int64)
+    }
+
+    pub fn boolean(&self) -> &'tcx Type {
+        self.type_arena.alloc(Type::Boolean)
+    }
+
+    pub fn string(&self) -> &'tcx Type {
+        self.type_arena.alloc(Type::String)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     /// 64bit integer

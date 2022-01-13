@@ -2,7 +2,7 @@ use crate::ty::Type;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum SemanticError {
+pub enum SemanticError<'tcx> {
     #[error("cannot find variable `{name}` in scope")]
     UndefinedVariable { name: String },
     #[error("cannot find function `{name}` in scope")]
@@ -17,7 +17,10 @@ pub enum SemanticError {
     },
     // Type errors
     #[error("expected type `{expected}`, found `{actual}`")]
-    MismatchedType { expected: Type, actual: Type },
+    MismatchedType {
+        expected: &'tcx Type,
+        actual: &'tcx Type,
+    },
     // pattern match errors
     #[error("unreachable pattern: `{pattern}`")]
     UnreachablePattern { pattern: String },
