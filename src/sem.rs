@@ -81,7 +81,7 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
 }
 
 // Analyze an AST and returns error if any.
-pub fn analyze<'a, 'tcx>(
+pub fn analyze<'a: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     expr: &'a syntax::Expr<'tcx>,
 ) -> Result<SemAST<'a, 'tcx>, Vec<SemanticError<'tcx>>> {
@@ -122,10 +122,10 @@ fn check_type<'tcx>(
     }
 }
 
-fn analyze_loop<'a, 'tcx>(
+fn analyze_loop<'a: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     expr: &'a syntax::Expr<'tcx>,
-    vars: &mut Scope,
+    vars: &mut Scope<'_, 'tcx>,
     functions: &mut Vec<&'a syntax::Function<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
