@@ -2,6 +2,7 @@ use chumsky::Parser;
 use paty::gen;
 use paty::sem;
 use paty::syntax;
+use paty::syntax::ParserContext;
 use paty::ty::TypeContext;
 use std::env;
 use std::fs;
@@ -36,7 +37,11 @@ fn main() {
     //println!("tokens = {:?}", tokens);
     let type_arena = Arena::new();
     let tcx = TypeContext::new(&type_arena);
-    let expr = match syntax::parser(tcx).parse(tokens) {
+
+    let ast_expr_arena = Arena::new();
+    let pcx = ParserContext::new(tcx, &ast_expr_arena);
+
+    let expr = match syntax::parser(&pcx).parse(tokens) {
         Err(err) => {
             err.into_iter()
                 .for_each(|e| eprintln!("Parse error: {}", e));
@@ -61,10 +66,10 @@ fn main() {
     //eprintln!("ast = {:?}", ast);
 
     {
-        let expr_arena = Arena::new();
+        let ir_expr_arena = Arena::new();
         let tmp_var_arena = Arena::new();
 
-        let mut builder = gen::ir::Builder::new(tcx, &expr_arena, &tmp_var_arena);
+        let mut builder = gen::ir::Builder::new(tcx, &ir_expr_arena, &tmp_var_arena);
         let program = builder.build(&ast);
         //eprintln!("---\n{}", program);
 

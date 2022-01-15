@@ -1,9 +1,21 @@
+use crate::ty::{Type, TypeContext};
 use chumsky::prelude::*;
 use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use typed_arena::Arena;
 
-use crate::ty::{Type, TypeContext};
+#[derive(Clone, Copy)]
+pub struct ParserContext<'expr, 'tcx> {
+    pub tcx: TypeContext<'tcx>,
+    pub expr_arena: &'expr Arena<Expr<'tcx>>,
+}
+
+impl<'expr, 'tcx> ParserContext<'expr, 'tcx> {
+    pub fn new(tcx: TypeContext<'tcx>, expr_arena: &'expr Arena<Expr<'tcx>>) -> Self {
+        Self { tcx, expr_arena }
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RangeEnd {
@@ -463,7 +475,9 @@ fn token(kind: TokenKind) -> Token {
     Token::new(kind, &[])
 }
 
-pub fn parser(tcx: TypeContext<'_>) -> impl Parser<Token, Expr<'_>, Error = Simple<Token>> + Clone {
+pub fn parser<'pcx: 'tcx, 'tcx>(
+    pcx: &'pcx ParserContext<'pcx, 'tcx>,
+) -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> + Clone {
     // can not use "just" which outputs an argument instead of a token from the input.
     let just_token =
         |kind: TokenKind| filter::<Token, _, Simple<Token>>(move |t: &Token| t.kind == kind);
@@ -501,17 +515,17 @@ pub fn parser(tcx: TypeContext<'_>) -> impl Parser<Token, Expr<'_>, Error = Simp
     let pattern = {
         let integer_pattern = integer_value.map(|n| {
             let kind = PatternKind::Integer(n);
-            let ty = tcx.type_arena.alloc(Type::Int64);
+            let ty = pcx.tcx.int64();
             Pattern::new(kind, ty)
         });
         let boolean_pattern = boolean_value.clone().map(|b| {
             let kind = PatternKind::Boolean(b);
-            let ty = tcx.type_arena.alloc(Type::Boolean);
+            let ty = pcx.tcx.boolean();
             Pattern::new(kind, ty)
         });
         let string_pattern = string_value.map(|s| {
             let kind = PatternKind::String(s);
-            let ty = tcx.type_arena.alloc(Type::String);
+            let ty = pcx.tcx.string();
             Pattern::new(kind, ty)
         });
         let range_pattern = integer_value
@@ -533,8 +547,7 @@ pub fn parser(tcx: TypeContext<'_>) -> impl Parser<Token, Expr<'_>, Error = Simp
                     end,
                 };
 
-                let ty = tcx.type_arena.alloc(Type::Int64);
-                Pattern::new(kind, ty)
+                Pattern::new(kind, pcx.tcx.int64())
             });
 
         range_pattern
@@ -719,9 +732,9 @@ pub fn parser(tcx: TypeContext<'_>) -> impl Parser<Token, Expr<'_>, Error = Simp
             .map(|(name, ty)| {
                 let ty = if ty.is_empty() {
                     // Int64 for omitted type
-                    tcx.type_arena.alloc(Type::Int64)
+                    pcx.tcx.int64()
                 } else {
-                    tcx.type_arena.alloc(ty[0].clone())
+                    pcx.tcx.type_arena.alloc(ty[0].clone())
                 };
 
                 Parameter::new(&name, ty)
