@@ -10,16 +10,16 @@ mod error;
 mod usefulness;
 
 #[derive(Debug)]
-pub struct SemAST<'a, 'tcx> {
-    expr: &'a syntax::Expr<'tcx>,
+pub struct SemAST<'pcx, 'tcx> {
+    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
 }
 
-impl<'a, 'tcx> SemAST<'a, 'tcx> {
-    pub fn new(expr: &'a syntax::Expr<'tcx>) -> Self {
+impl<'pcx, 'tcx> SemAST<'pcx, 'tcx> {
+    pub fn new(expr: &'pcx syntax::Expr<'pcx, 'tcx>) -> Self {
         Self { expr }
     }
 
-    pub fn expr(&self) -> &'a syntax::Expr<'tcx> {
+    pub fn expr(&self) -> &'pcx syntax::Expr<'pcx, 'tcx> {
         self.expr
     }
 }
@@ -81,10 +81,10 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
 }
 
 // Analyze an AST and returns error if any.
-pub fn analyze<'a: 'tcx, 'tcx>(
+pub fn analyze<'pcx: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
-    expr: &'a syntax::Expr<'tcx>,
-) -> Result<SemAST<'a, 'tcx>, Vec<SemanticError<'tcx>>> {
+    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+) -> Result<SemAST<'pcx, 'tcx>, Vec<SemanticError<'tcx>>> {
     let mut errors = vec![];
     let mut scope = Scope::new();
 
@@ -96,9 +96,9 @@ pub fn analyze<'a: 'tcx, 'tcx>(
     }
 }
 
-fn unify_expr_type<'tcx>(
+fn unify_expr_type<'pcx: 'tcx, 'tcx>(
     expected: &'tcx Type<'tcx>,
-    expr: &syntax::Expr<'tcx>,
+    expr: &syntax::Expr<'pcx, 'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
     if let Some(actual) = expr.ty() {
@@ -122,11 +122,11 @@ fn check_type<'tcx>(
     }
 }
 
-fn analyze_loop<'a: 'tcx, 'tcx>(
+fn analyze_loop<'pcx: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
-    expr: &'a syntax::Expr<'tcx>,
+    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'a syntax::Function<'tcx>>,
+    functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match expr.kind() {

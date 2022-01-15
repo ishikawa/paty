@@ -137,7 +137,7 @@ impl IntRange {
     }
 
     /// Only used for displaying the range properly.
-    fn to_pat<'tcx>(&self, ty: &'tcx Type<'tcx>) -> Pattern<'tcx> {
+    fn to_pat<'tcx>(&self, ty: &'tcx Type<'tcx>) -> Pattern<'tcx, 'tcx> {
         let (lo, hi) = self.boundaries();
 
         let lo = Self::decode_value(lo, self.bias);
@@ -839,11 +839,11 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         DeconstructedPat::new(self.ctor.clone(), self.fields, self.ty)
     }
 
-    pub fn from_pat(_cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'tcx>) -> Self {
+    pub fn from_pat(_cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
         let ctor;
         let fields;
         match pat.kind() {
-            PatternKind::Wildcard => {
+            PatternKind::Wildcard(_) => {
                 ctor = Constructor::Wildcard;
                 fields = Fields::empty();
             }
@@ -869,16 +869,17 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 ctor = Constructor::Str(s.clone());
                 fields = Fields::empty();
             }
+            PatternKind::Or(_, _) => todo!(),
         }
 
         DeconstructedPat::new(ctor, fields, pat.ty())
     }
 
-    pub fn to_pat(&self) -> Pattern {
+    pub fn to_pat(&self) -> Pattern<'_, 'tcx> {
         let pat = match &self.ctor {
             Constructor::IntRange(range) => return range.to_pat(self.ty()),
             Constructor::Str(s) => PatternKind::String(s.clone()),
-            Constructor::Wildcard | Constructor::NonExhaustive => PatternKind::Wildcard,
+            Constructor::Wildcard | Constructor::NonExhaustive => PatternKind::Wildcard(self.ty()),
             Constructor::Missing { .. } => unreachable!(
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
                 `Missing` should have been processed in `apply_constructors`"

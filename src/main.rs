@@ -39,7 +39,8 @@ fn main() {
     let tcx = TypeContext::new(&type_arena);
 
     let ast_expr_arena = Arena::new();
-    let pcx = ParserContext::new(tcx, &ast_expr_arena);
+    let ast_pat_arena = Arena::new();
+    let pcx = ParserContext::new(tcx, &ast_expr_arena, &ast_pat_arena);
 
     let expr = match syntax::parser(&pcx).parse(tokens) {
         Err(err) => {

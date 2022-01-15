@@ -6,14 +6,33 @@ use std::hash::{Hash, Hasher};
 use typed_arena::Arena;
 
 #[derive(Clone, Copy)]
-pub struct ParserContext<'expr, 'tcx> {
+pub struct ParserContext<'pcx, 'tcx> {
     pub tcx: TypeContext<'tcx>,
-    pub expr_arena: &'expr Arena<Expr<'tcx>>,
+    pub expr_arena: &'pcx Arena<Expr<'pcx, 'tcx>>,
+    pub pat_arena: &'pcx Arena<Pattern<'pcx, 'tcx>>,
 }
 
-impl<'expr, 'tcx> ParserContext<'expr, 'tcx> {
-    pub fn new(tcx: TypeContext<'tcx>, expr_arena: &'expr Arena<Expr<'tcx>>) -> Self {
-        Self { tcx, expr_arena }
+impl<'pcx, 'tcx> ParserContext<'pcx, 'tcx> {
+    pub fn new(
+        tcx: TypeContext<'tcx>,
+        expr_arena: &'pcx Arena<Expr<'pcx, 'tcx>>,
+        pat_arena: &'pcx Arena<Pattern<'pcx, 'tcx>>,
+    ) -> Self {
+        Self {
+            tcx,
+            expr_arena,
+            pat_arena,
+        }
+    }
+
+    pub fn alloc_expr(&self, expr: Expr<'pcx, 'tcx>) -> &'pcx Expr<'pcx, 'tcx> {
+        // Make mutable reference to immutable to suppress compiler error for mutability mismatch.
+        self.expr_arena.alloc(expr)
+    }
+
+    pub fn alloc_pat(&self, pat: Pattern<'pcx, 'tcx>) -> &'pcx Pattern<'pcx, 'tcx> {
+        // Make mutable reference to immutable to suppress compiler error for mutability mismatch.
+        self.pat_arena.alloc(pat)
     }
 }
 
@@ -235,16 +254,16 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
 }
 
 #[derive(Debug)]
-pub struct Expr<'tcx> {
-    kind: ExprKind<'tcx>,
+pub struct Expr<'pcx, 'tcx> {
+    kind: ExprKind<'pcx, 'tcx>,
     // The type of expression is determined in later phase.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
     // comments followed by this token.
     comments: Vec<String>,
 }
 
-impl<'tcx> Expr<'tcx> {
-    pub fn new(kind: ExprKind<'tcx>) -> Self {
+impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
+    pub fn new(kind: ExprKind<'pcx, 'tcx>) -> Self {
         Self {
             kind,
             ty: Cell::new(None),
@@ -252,7 +271,7 @@ impl<'tcx> Expr<'tcx> {
         }
     }
 
-    pub fn kind(&self) -> &ExprKind<'tcx> {
+    pub fn kind(&self) -> &ExprKind<'pcx, 'tcx> {
         &self.kind
     }
 
@@ -276,55 +295,55 @@ impl<'tcx> Expr<'tcx> {
 }
 
 #[derive(Debug)]
-pub enum ExprKind<'tcx> {
+pub enum ExprKind<'pcx, 'tcx> {
     Integer(i64),
     Boolean(bool),
     String(String),
     Var(String),
 
     // unary operators
-    Minus(Box<Expr<'tcx>>),
+    Minus(&'pcx Expr<'pcx, 'tcx>),
 
     // binary operators
-    Add(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Sub(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Mul(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Div(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Eq(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Ne(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Le(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Ge(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Lt(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Gt(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    And(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Or(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Add(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Sub(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Mul(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Div(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Eq(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Ne(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Le(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Ge(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Lt(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Gt(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    And(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Or(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
 
-    Call(String, Vec<Expr<'tcx>>),
+    Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
     Let {
         name: String,
-        rhs: Box<Expr<'tcx>>,
-        then: Box<Expr<'tcx>>,
+        rhs: &'pcx Expr<'pcx, 'tcx>,
+        then: &'pcx Expr<'pcx, 'tcx>,
     },
-    Fn(Function<'tcx>),
+    Fn(Function<'pcx, 'tcx>),
     Case {
-        head: Box<Expr<'tcx>>,
-        arms: Vec<CaseArm<'tcx>>,
-        else_body: Option<Box<Expr<'tcx>>>,
+        head: &'pcx Expr<'pcx, 'tcx>,
+        arms: Vec<CaseArm<'pcx, 'tcx>>,
+        else_body: Option<&'pcx Expr<'pcx, 'tcx>>,
     },
 
     // Built-in functions
-    Puts(Vec<Expr<'tcx>>),
+    Puts(Vec<&'pcx Expr<'pcx, 'tcx>>),
 }
 
 #[derive(Debug)]
-pub struct Function<'tcx> {
+pub struct Function<'pcx, 'tcx> {
     name: String,
     params: Vec<Parameter<'tcx>>,
-    body: Box<Expr<'tcx>>,
-    then: Box<Expr<'tcx>>,
+    body: &'pcx Expr<'pcx, 'tcx>,
+    then: &'pcx Expr<'pcx, 'tcx>,
 }
 
-impl<'tcx> Function<'tcx> {
+impl<'pcx, 'tcx> Function<'pcx, 'tcx> {
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -333,11 +352,11 @@ impl<'tcx> Function<'tcx> {
         &self.params
     }
 
-    pub fn body(&self) -> &Expr<'tcx> {
+    pub fn body(&self) -> &Expr<'pcx, 'tcx> {
         &self.body
     }
 
-    pub fn then(&self) -> &Expr<'tcx> {
+    pub fn then(&self) -> &Expr<'pcx, 'tcx> {
         &self.then
     }
 }
@@ -367,14 +386,14 @@ impl<'tcx> Parameter<'tcx> {
 }
 
 #[derive(Debug)]
-pub struct CaseArm<'tcx> {
-    pattern: Pattern<'tcx>,
-    body: Box<Expr<'tcx>>,
+pub struct CaseArm<'pcx, 'tcx> {
+    pattern: &'pcx Pattern<'pcx, 'tcx>,
+    body: &'pcx Expr<'pcx, 'tcx>,
     comments: Vec<String>,
 }
 
-impl<'tcx> CaseArm<'tcx> {
-    pub fn new(pattern: Pattern<'tcx>, body: Box<Expr<'tcx>>) -> Self {
+impl<'pcx, 'tcx> CaseArm<'pcx, 'tcx> {
+    pub fn new(pattern: &'pcx Pattern<'pcx, 'tcx>, body: &'pcx Expr<'pcx, 'tcx>) -> Self {
         Self {
             pattern,
             body,
@@ -382,11 +401,11 @@ impl<'tcx> CaseArm<'tcx> {
         }
     }
 
-    pub fn pattern(&self) -> &Pattern<'tcx> {
+    pub fn pattern(&self) -> &'pcx Pattern<'pcx, 'tcx> {
         &self.pattern
     }
 
-    pub fn body(&self) -> &Expr<'tcx> {
+    pub fn body(&self) -> &'pcx Expr<'pcx, 'tcx> {
         &self.body
     }
 
@@ -402,14 +421,14 @@ impl<'tcx> CaseArm<'tcx> {
 }
 
 #[derive(Debug)]
-pub struct Pattern<'tcx> {
-    kind: PatternKind,
+pub struct Pattern<'pcx, 'tcx> {
+    kind: PatternKind<'pcx, 'pcx>,
     ty: &'tcx Type<'tcx>,
     comments: Vec<String>,
 }
 
-impl<'tcx> Pattern<'tcx> {
-    pub fn new(kind: PatternKind, ty: &'tcx Type<'tcx>) -> Self {
+impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
+    pub fn new(kind: PatternKind<'pcx, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             kind,
             ty,
@@ -417,7 +436,7 @@ impl<'tcx> Pattern<'tcx> {
         }
     }
 
-    pub fn kind(&self) -> &PatternKind {
+    pub fn kind(&self) -> &PatternKind<'pcx, 'pcx> {
         &self.kind
     }
 
@@ -437,15 +456,16 @@ impl<'tcx> Pattern<'tcx> {
 }
 
 #[derive(Debug)]
-pub enum PatternKind {
+pub enum PatternKind<'pcx, 'tcx> {
     Integer(i64),
     Boolean(bool),
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
-    Wildcard,
+    Or(&'pcx Pattern<'pcx, 'tcx>, &'pcx Pattern<'pcx, 'tcx>),
+    Wildcard(&'tcx Type<'tcx>),
 }
 
-impl fmt::Display for PatternKind {
+impl fmt::Display for PatternKind<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PatternKind::Integer(n) => write!(f, "{}", n),
@@ -466,7 +486,8 @@ impl fmt::Display for PatternKind {
                     write!(f, "{}", hi)
                 }
             }
-            PatternKind::Wildcard => write!(f, "_"),
+            PatternKind::Or(_, _) => todo!(),
+            PatternKind::Wildcard(_) => write!(f, "_"),
         }
     }
 }
@@ -477,7 +498,7 @@ fn token(kind: TokenKind) -> Token {
 
 pub fn parser<'pcx: 'tcx, 'tcx>(
     pcx: &'pcx ParserContext<'pcx, 'tcx>,
-) -> impl Parser<Token, Expr<'tcx>, Error = Simple<Token>> + Clone {
+) -> impl Parser<Token, &'pcx Expr<'pcx, 'tcx>, Error = Simple<Token>> + Clone {
     // can not use "just" which outputs an argument instead of a token from the input.
     let just_token =
         |kind: TokenKind| filter::<Token, _, Simple<Token>>(move |t: &Token| t.kind == kind);
@@ -516,18 +537,24 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
         let integer_pattern = integer_value.map(|n| {
             let kind = PatternKind::Integer(n);
             let ty = pcx.tcx.int64();
-            Pattern::new(kind, ty)
+
+            pcx.alloc_pat(Pattern::new(kind, ty))
         });
+
         let boolean_pattern = boolean_value.clone().map(|b| {
             let kind = PatternKind::Boolean(b);
             let ty = pcx.tcx.boolean();
-            Pattern::new(kind, ty)
+
+            pcx.alloc_pat(Pattern::new(kind, ty))
         });
+
         let string_pattern = string_value.map(|s| {
             let kind = PatternKind::String(s);
             let ty = pcx.tcx.string();
-            Pattern::new(kind, ty)
+
+            pcx.alloc_pat(Pattern::new(kind, ty))
         });
+
         let range_pattern = integer_value
             .then(choice((
                 just_token(TokenKind::RangeExcluded),
@@ -546,8 +573,9 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
                     hi: rhs,
                     end,
                 };
+                let ty = pcx.tcx.int64();
 
-                Pattern::new(kind, pcx.tcx.int64())
+                pcx.alloc_pat(Pattern::new(kind, ty))
             });
 
         range_pattern
@@ -556,26 +584,26 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
             .or(string_pattern)
     };
 
+    let integer = integer_value
+        .map(|n| {
+            let kind = ExprKind::Integer(n);
+            pcx.alloc_expr(Expr::new(kind))
+        })
+        .labelled("integer");
+
+    let boolean = boolean_value
+        .map(|b| pcx.alloc_expr(Expr::new(ExprKind::Boolean(b))))
+        .labelled("boolean");
+
+    let string = string_value
+        .map(|s| pcx.alloc_expr(Expr::new(ExprKind::String(s))))
+        .labelled("string");
+
+    let ident = ident_value
+        .map(|s| pcx.alloc_expr(Expr::new(ExprKind::Var(s))))
+        .labelled("ident");
+
     let expr = recursive(|expr| {
-        let integer = integer_value
-            .map(|n| {
-                let kind = ExprKind::Integer(n);
-                Expr::new(kind)
-            })
-            .labelled("integer");
-
-        let ident = ident_value
-            .map(|s| Expr::new(ExprKind::Var(s)))
-            .labelled("ident");
-
-        let string = string_value
-            .map(|s| Expr::new(ExprKind::String(s)))
-            .labelled("string");
-
-        let boolean = boolean_value
-            .map(|b| Expr::new(ExprKind::Boolean(b)))
-            .labelled("boolean");
-
         let puts = just_token(TokenKind::Puts)
             .ignore_then(
                 expr.clone()
@@ -586,7 +614,7 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
                         token(TokenKind::Operator(')')),
                     ),
             )
-            .map(|args| Expr::new(ExprKind::Puts(args)))
+            .map(|args| pcx.alloc_expr(Expr::new(ExprKind::Puts(args))))
             .labelled("puts");
 
         let call = ident_value
@@ -599,7 +627,7 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
                         token(TokenKind::Operator(')')),
                     ),
             )
-            .map(|(f, args)| Expr::new(ExprKind::Call(f, args)))
+            .map(|(f, args)| pcx.alloc_expr(Expr::new(ExprKind::Call(f, args))))
             .labelled("call");
 
         let atom = expr
@@ -619,7 +647,7 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
         let unary = op('-')
             .repeated()
             .then(atom)
-            .foldr(|_op, rhs| Expr::new(ExprKind::Minus(Box::new(rhs))));
+            .foldr(|_op, rhs| pcx.alloc_expr(Expr::new(ExprKind::Minus(rhs))));
 
         // binary: "*", "/"
         let bin_op1 = unary
@@ -631,7 +659,7 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
                     .then(unary)
                     .repeated(),
             )
-            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+            .foldl(|lhs, (op, rhs)| pcx.alloc_expr(Expr::new(op(lhs, rhs))));
 
         // binary: "+", "-"
         let bin_op2 = bin_op1
@@ -643,54 +671,57 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
                     .then(bin_op1)
                     .repeated(),
             )
-            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+            .foldl(|lhs, (op, rhs)| pcx.alloc_expr(Expr::new(op(lhs, rhs))));
 
         // comparison operators
         #[rustfmt::skip]
         let comp_op = bin_op2
             .clone()
             .then(
-                op('<').to(ExprKind::Lt as fn(_, _) -> _).or(
-                op('>').to(ExprKind::Gt as fn(_, _) -> _).or(
-                just_token(TokenKind::Le).to(ExprKind::Le as fn(_, _) -> _).or(
-                just_token(TokenKind::Ge).to(ExprKind::Ge as fn(_, _) -> _)
-            )))
-                .then(bin_op2).repeated().at_most(1)
+                choice((
+                    op('<').to(ExprKind::Lt as fn(_, _) -> _),    
+                    op('>').to(ExprKind::Gt as fn(_, _) -> _),
+                    just_token(TokenKind::Le).to(ExprKind::Le as fn(_, _) -> _),
+                    just_token(TokenKind::Ge).to(ExprKind::Ge as fn(_, _) -> _),
+                ))
             )
-            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+            .then(bin_op2)
+            .map(|((lhs, op), rhs)| pcx.alloc_expr(Expr::new(op(lhs, rhs))));
 
         // equality operators
         #[rustfmt::skip]
         let eq_op = comp_op
             .clone()
             .then(
-                just_token(TokenKind::Eq).to(ExprKind::Eq as fn(_, _) -> _).or(
-                just_token(TokenKind::Ne).to(ExprKind::Ne as fn(_, _) -> _)
+                choice((
+                    just_token(TokenKind::Eq).to(ExprKind::Eq as fn(_, _) -> _),    
+                    just_token(TokenKind::Ne).to(ExprKind::Ne as fn(_, _) -> _),
+                ))
             )
-                .then(comp_op).repeated().at_most(1)
-            )
-            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
-
+            .then(comp_op)
+            .map(|((lhs, op), rhs)| pcx.alloc_expr(Expr::new(op(lhs, rhs))));
+        
         // logical operators
         #[rustfmt::skip]
         let logical_op = eq_op
             .clone()
             .then(
-                just_token(TokenKind::And).to(ExprKind::And as fn(_, _) -> _).or(
-                just_token(TokenKind::Or).to(ExprKind::Or as fn(_, _) -> _)
+                choice((
+                    just_token(TokenKind::And).to(ExprKind::And as fn(_, _) -> _),
+                    just_token(TokenKind::Or).to(ExprKind::Or as fn(_, _) -> _),
+                ))
             )
-                .then(eq_op).repeated().at_most(1)
-            )
-            .foldl(|lhs, (op, rhs)| Expr::new(op(Box::new(lhs), Box::new(rhs))));
+            .then(eq_op)
+            .map(|((lhs, op), rhs)| pcx.alloc_expr(Expr::new(op(lhs, rhs))));
 
         // case
         let case_arm = just_token(TokenKind::When)
             .then(pattern)
             .then(expr.clone())
             .map(|((when, pattern), body)| {
-                let mut expr = CaseArm::new(pattern, Box::new(body));
-                expr.append_comments_from(&when);
-                expr
+                let mut arm = CaseArm::new(pattern, body);
+                arm.append_comments_from(&when);
+                arm
             });
         let case = just_token(TokenKind::Case)
             .then(expr.clone())
@@ -698,18 +729,18 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
             .then(just_token(TokenKind::Else).then(expr.clone()).or_not())
             .then_ignore(just_token(TokenKind::End))
             .map(|(((case, head), arms), else_body)| {
-                let else_body = else_body.map(|(_else_tok, expr)| Box::new(expr));
+                let else_body = else_body.map(|(_else_tok, expr)| expr);
 
                 let mut expr = Expr::new(ExprKind::Case {
-                    head: Box::new(head),
+                    head,
                     arms,
                     else_body,
                 });
                 expr.append_comments_from(&case);
-                expr
+                pcx.alloc_expr(expr)
             });
 
-        case.or(logical_op)
+        case.or(logical_op)        
     });
 
     let decl = recursive(|decl| {
@@ -719,11 +750,7 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
             .then(expr.clone())
             .then(decl.clone())
             .map(|((name, rhs), then)| {
-                Expr::new(ExprKind::Let {
-                    name,
-                    rhs: Box::new(rhs),
-                    then: Box::new(then),
-                })
+                pcx.alloc_expr(Expr::new(ExprKind::Let { name, rhs, then }))
             });
 
         // Function declaration
@@ -752,12 +779,12 @@ pub fn parser<'pcx: 'tcx, 'tcx>(
                 let mut expr = Expr::new(ExprKind::Fn(Function {
                     name,
                     params: args,
-                    body: Box::new(body),
-                    then: Box::new(then),
+                    body,
+                    then,
                 }));
                 // Copy leading comments from "def" token
                 expr.append_comments_from(&def_tok);
-                expr
+                pcx.alloc_expr(expr)
             });
 
         r#let.or(r#fn).or(expr)

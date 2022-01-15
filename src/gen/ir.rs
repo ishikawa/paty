@@ -228,7 +228,7 @@ pub struct Builder<'a, 'tcx> {
     tmp_var_index: usize,
 }
 
-impl<'a, 'tcx> Builder<'a, 'tcx> {
+impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
     pub fn new(
         tcx: TypeContext<'tcx>,
         expr_arena: &'a Arena<Expr<'a, 'tcx>>,
@@ -242,7 +242,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    pub fn build<'ast: 'tcx>(&mut self, ast: &sem::SemAST<'ast, 'tcx>) -> Program<'a, 'tcx> {
+    pub fn build(&mut self, ast: &sem::SemAST<'pcx, 'tcx>) -> Program<'a, 'tcx> {
         let mut program = Program { functions: vec![] };
         let mut stmts = vec![];
 
@@ -284,7 +284,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     fn push_expr(
         &mut self,
         kind: ExprKind<'a, 'tcx>,
-        syntax_expr: &syntax::Expr<'tcx>,
+        syntax_expr: &syntax::Expr<'pcx, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         let expr_ty = syntax_expr.ty().unwrap_or_else(|| {
@@ -343,9 +343,9 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         Expr::new(kind, ty)
     }
 
-    fn _build<'ast: 'tcx>(
+    fn _build(
         &mut self,
-        expr: &'ast syntax::Expr<'tcx>,
+        expr: &'pcx syntax::Expr<'pcx, 'tcx>,
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
@@ -599,7 +599,8 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
                                 self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
                             }
-                            PatternKind::Wildcard => self.expr_arena.alloc(self.bool(true)),
+                            PatternKind::Or(_, _) => todo!(),
+                            PatternKind::Wildcard(_) => self.expr_arena.alloc(self.bool(true)),
                         };
 
                         let mut branch_stmts = vec![];
