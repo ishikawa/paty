@@ -300,11 +300,20 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         let puts_tok = self.ensure_lookahead(it, TokenKind::Puts)?;
 
         // Arguments
+        let args = self.parse_elements(it, Self::expr)?;
+        Ok(self.alloc_expr(ExprKind::Puts(args), puts_tok))
+    }
+
+    fn parse_elements(
+        &self,
+        it: &mut TokenIterator<'t>,
+        parser: fn(&Self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx>,
+    ) -> Result<Vec<&'pcx Expr<'pcx, 'tcx>>, ParseError<'t>> {
         let mut args = vec![];
 
         self.expect_token(it, TokenKind::Operator('('))?;
         {
-            while let Some(arg) = self.lookahead(self.expr(it))? {
+            while let Some(arg) = self.lookahead(parser(self, it))? {
                 args.push(arg);
 
                 // trailing comma can be omitted
@@ -320,8 +329,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             }
         }
         self.expect_token(it, TokenKind::Operator(')'))?;
-
-        Ok(self.alloc_expr(ExprKind::Puts(args), puts_tok))
+        Ok(args)
     }
 
     fn atom(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
