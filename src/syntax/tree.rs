@@ -289,47 +289,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     // --- Parser
     fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        if let Some(expr) = self.lookahead(self.puts(it))? {
-            Ok(expr)
-        } else {
-            self.atom(it)
-        }
-    }
-
-    fn puts(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        let puts_tok = self.ensure_lookahead(it, TokenKind::Puts)?;
-
-        // Arguments
-        let args = self.parse_elements(it, Self::expr)?;
-        Ok(self.alloc_expr(ExprKind::Puts(args), puts_tok))
-    }
-
-    fn parse_elements(
-        &self,
-        it: &mut TokenIterator<'t>,
-        parser: fn(&Self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx>,
-    ) -> Result<Vec<&'pcx Expr<'pcx, 'tcx>>, ParseError<'t>> {
-        let mut args = vec![];
-
-        self.expect_token(it, TokenKind::Operator('('))?;
-        {
-            while let Some(arg) = self.lookahead(parser(self, it))? {
-                args.push(arg);
-
-                // trailing comma can be omitted
-                if self.match_token(it, TokenKind::Operator(','))? {
-                    it.next();
-                } else if !self.match_token(it, TokenKind::Operator(')'))? {
-                    let actual = self.peek_token(it)?;
-                    return Err(ParseError::UnexpectedToken {
-                        expected: "')' or ','".to_string(),
-                        actual,
-                    });
-                }
-            }
-        }
-        self.expect_token(it, TokenKind::Operator(')'))?;
-        Ok(args)
+        self.atom(it)
     }
 
     fn atom(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
@@ -351,6 +311,12 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 } else {
                     ExprKind::Var(name.clone())
                 }
+            }
+            TokenKind::Puts => {
+                it.next();
+
+                let args = self.parse_elements(it, Self::expr)?;
+                ExprKind::Puts(args)
             }
             TokenKind::LiteralString(s) => {
                 it.next();
@@ -383,6 +349,34 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     // --- Misc
+    fn parse_elements(
+        &self,
+        it: &mut TokenIterator<'t>,
+        parser: fn(&Self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx>,
+    ) -> Result<Vec<&'pcx Expr<'pcx, 'tcx>>, ParseError<'t>> {
+        let mut args = vec![];
+
+        self.expect_token(it, TokenKind::Operator('('))?;
+        {
+            while let Some(arg) = self.lookahead(parser(self, it))? {
+                args.push(arg);
+
+                // trailing comma can be omitted
+                if self.match_token(it, TokenKind::Operator(','))? {
+                    it.next();
+                } else if !self.match_token(it, TokenKind::Operator(')'))? {
+                    let actual = self.peek_token(it)?;
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "')' or ','".to_string(),
+                        actual,
+                    });
+                }
+            }
+        }
+        self.expect_token(it, TokenKind::Operator(')'))?;
+        Ok(args)
+    }
+
     fn peek_token(&self, it: &mut TokenIterator<'t>) -> Result<&'t Token, ParseError<'t>> {
         Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
     }
