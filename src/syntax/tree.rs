@@ -343,7 +343,14 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             }
             TokenKind::Identifier(name) => {
                 it.next();
-                ExprKind::Var(name.clone())
+
+                // call?
+                if self.match_token(it, TokenKind::Operator('('))? {
+                    let args = self.parse_elements(it, Self::expr)?;
+                    ExprKind::Call(name.clone(), args)
+                } else {
+                    ExprKind::Var(name.clone())
+                }
             }
             TokenKind::LiteralString(s) => {
                 it.next();
