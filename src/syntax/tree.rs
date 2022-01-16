@@ -289,7 +289,75 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     // --- Parser
     fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        self.bin_op1(it)
+        self.logical_op(it)
+    }
+
+    // logical operators
+    fn logical_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let lhs = self.eq_op(it)?;
+
+        if let Some(token) = it.peek() {
+            let op = match token.kind() {
+                TokenKind::And => ExprKind::And,
+                TokenKind::Or => ExprKind::Or,
+                _ => {
+                    return Ok(lhs);
+                }
+            };
+
+            let token = it.next().unwrap();
+            let rhs = self.eq_op(it)?;
+
+            return Ok(self.alloc_expr(op(lhs, rhs), token));
+        }
+
+        Ok(lhs)
+    }
+
+    // equality operators
+    fn eq_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let lhs = self.comp_op(it)?;
+
+        if let Some(token) = it.peek() {
+            let op = match token.kind() {
+                TokenKind::Eq => ExprKind::Eq,
+                TokenKind::Ne => ExprKind::Ne,
+                _ => {
+                    return Ok(lhs);
+                }
+            };
+
+            let token = it.next().unwrap();
+            let rhs = self.comp_op(it)?;
+
+            return Ok(self.alloc_expr(op(lhs, rhs), token));
+        }
+
+        Ok(lhs)
+    }
+
+    // comparison operators
+    fn comp_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let lhs = self.bin_op1(it)?;
+
+        if let Some(token) = it.peek() {
+            let op = match token.kind() {
+                TokenKind::Operator('<') => ExprKind::Lt,
+                TokenKind::Operator('>') => ExprKind::Gt,
+                TokenKind::Le => ExprKind::Le,
+                TokenKind::Ge => ExprKind::Ge,
+                _ => {
+                    return Ok(lhs);
+                }
+            };
+
+            let token = it.next().unwrap();
+            let rhs = self.bin_op2(it)?;
+
+            return Ok(self.alloc_expr(op(lhs, rhs), token));
+        }
+
+        Ok(lhs)
     }
 
     fn bin_op1(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {

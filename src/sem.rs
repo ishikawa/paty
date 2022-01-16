@@ -148,9 +148,7 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
         syntax::ExprKind::Add(a, b)
         | syntax::ExprKind::Sub(a, b)
         | syntax::ExprKind::Mul(a, b)
-        | syntax::ExprKind::Div(a, b)
-        | syntax::ExprKind::Eq(a, b)
-        | syntax::ExprKind::Ne(a, b) => {
+        | syntax::ExprKind::Div(a, b) => {
             analyze_loop(tcx, a, vars, functions, errors);
             analyze_loop(tcx, b, vars, functions, errors);
 
@@ -161,7 +159,9 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
         syntax::ExprKind::Lt(a, b)
         | syntax::ExprKind::Gt(a, b)
         | syntax::ExprKind::Le(a, b)
-        | syntax::ExprKind::Ge(a, b) => {
+        | syntax::ExprKind::Ge(a, b)
+        | syntax::ExprKind::Eq(a, b)
+        | syntax::ExprKind::Ne(a, b) => {
             analyze_loop(tcx, a, vars, functions, errors);
             analyze_loop(tcx, b, vars, functions, errors);
 

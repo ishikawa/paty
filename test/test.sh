@@ -37,6 +37,16 @@ assert() {
 # number
 assert 20211231 "puts(20211231)"
 assert -20229116 "puts(-20229116)"
+# boolean operators
+assert true "puts(10 > 5)"
+assert false "puts(10 < 5)"
+assert true "puts(10 >= 10)"
+assert false "puts(10 <= 5)"
+assert true "puts(10 == 10)"
+assert false "puts(10 != 10)"
+assert true "puts(10 > 5 && 10 > 0)"
+assert true "puts(true || false)"
+assert true "puts(10 >= (5 * 2) && 100 == (300 / 3))"
 # basic arithmetic operations
 assert 30 "puts(20 * 3 / 2)"
 assert 40 "puts(10 + 20 * 3 / 2)"
