@@ -292,6 +292,49 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         self.logical_op(it)
     }
 
+    // pattern
+    fn pattern(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<&'pcx Pattern<'pcx, 'tcx>, ParseError<'t>> {
+        let token = self.peek_token(it)?;
+        let pat = match token.kind() {
+            TokenKind::Integer(n) => {
+                it.next();
+
+                let i = n.parse().unwrap();
+                let kind = PatternKind::Integer(i);
+                self.alloc_pat(kind, self.tcx.int64(), token)
+            }
+            TokenKind::LiteralString(s) => {
+                it.next();
+
+                let kind = PatternKind::String(s.clone());
+                self.alloc_pat(kind, self.tcx.string(), token)
+            }
+            TokenKind::True => {
+                it.next();
+
+                let kind = PatternKind::Boolean(true);
+                self.alloc_pat(kind, self.tcx.boolean(), token)
+            }
+            TokenKind::False => {
+                it.next();
+
+                let kind = PatternKind::Boolean(false);
+                self.alloc_pat(kind, self.tcx.boolean(), token)
+            }
+            _ => {
+                return Err(ParseError::UnexpectedLookaheadToken {
+                    expected: "pattern".to_string(),
+                    actual: token,
+                });
+            }
+        };
+
+        Ok(pat)
+    }
+
     // logical operators
     fn logical_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
         let lhs = self.eq_op(it)?;
@@ -558,12 +601,18 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         let mut expr = Expr::new(kind);
         expr.append_comments_from(token);
 
-        // Make mutable reference to immutable to suppress compiler error for mutability mismatch.
         self.expr_arena.alloc(expr)
     }
 
-    fn alloc_pat(&self, pat: Pattern<'pcx, 'tcx>) -> &'pcx Pattern<'pcx, 'tcx> {
-        // Make mutable reference to immutable to suppress compiler error for mutability mismatch.
+    fn alloc_pat(
+        &self,
+        kind: PatternKind<'pcx, 'tcx>,
+        ty: &'tcx Type<'tcx>,
+        token: &Token,
+    ) -> &'pcx Pattern<'pcx, 'tcx> {
+        let mut pat = Pattern::new(kind, ty);
+        pat.append_comments_from(token);
+
         self.pat_arena.alloc(pat)
     }
 }
