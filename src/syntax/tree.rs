@@ -289,7 +289,18 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     // --- Parser
     fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        self.atom(it)
+        self.unary(it)
+    }
+
+    fn unary(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        if self.match_token(it, TokenKind::Operator('-'))? {
+            let token = it.next().unwrap();
+            let expr = self.unary(it)?;
+
+            Ok(self.alloc_expr(ExprKind::Minus(expr), token))
+        } else {
+            self.atom(it)
+        }
     }
 
     fn atom(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
