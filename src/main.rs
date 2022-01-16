@@ -1,8 +1,6 @@
-use chumsky::Parser;
 use paty::gen;
 use paty::sem;
 use paty::syntax;
-use paty::syntax::ParserContext;
 use paty::ty::TypeContext;
 use std::env;
 use std::fs;
@@ -24,9 +22,9 @@ fn main() {
             .expect("Read source code");
         src
     };
-    //eprintln!("---\n{}", src);
+    eprintln!("---\n{}", src);
 
-    let tokens = match syntax::lexer().parse(src) {
+    let tokens = match syntax::tokenize(&src) {
         Err(err) => {
             err.into_iter()
                 .for_each(|e| eprintln!("Syntax error: {}", e));
@@ -34,15 +32,16 @@ fn main() {
         }
         Ok(tokens) => tokens,
     };
-    //println!("tokens = {:?}", tokens);
+
+    eprintln!("tokens = {:?}", tokens);
     let type_arena = Arena::new();
     let tcx = TypeContext::new(&type_arena);
 
     let ast_expr_arena = Arena::new();
     let ast_pat_arena = Arena::new();
-    let pcx = ParserContext::new(tcx, &ast_expr_arena, &ast_pat_arena);
+    let parser = syntax::Parser::new(tcx, &ast_expr_arena, &ast_pat_arena);
 
-    let expr = match syntax::parser(&pcx).parse(tokens) {
+    let expr = match parser.parse(&tokens) {
         Err(err) => {
             err.into_iter()
                 .for_each(|e| eprintln!("Parse error: {}", e));
@@ -52,7 +51,7 @@ fn main() {
     };
     //println!("ast = {:?}", expr);
 
-    let ast = match sem::analyze(tcx, &expr) {
+    let ast = match sem::analyze(tcx, expr) {
         Err(errors) => {
             assert!(!errors.is_empty());
 
