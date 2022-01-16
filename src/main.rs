@@ -43,8 +43,7 @@ fn main() {
 
     let expr = match parser.parse(&tokens) {
         Err(err) => {
-            err.into_iter()
-                .for_each(|e| eprintln!("Parse error: {}", e));
+            eprintln!("Parse error: {}", err);
             std::process::exit(exitcode::DATAERR);
         }
         Ok(expr) => expr,

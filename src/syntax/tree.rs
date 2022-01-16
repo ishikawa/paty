@@ -1,8 +1,22 @@
-use crate::syntax::{RangeEnd, Token};
+use crate::syntax::{RangeEnd, Token, TokenKind};
 use crate::ty::{Type, TypeContext};
 use std::cell::Cell;
 use std::fmt;
+use std::iter::Peekable;
+use std::slice;
+use thiserror::Error;
 use typed_arena::Arena;
+
+#[derive(Error, Debug)]
+pub enum ParseError<'t> {
+    // Token iterator was not consumed, so you can safely retry to parse another node.
+    #[error("expected {expected}, but was {actual}")]
+    UnexpectedLookaheadToken { expected: String, actual: &'t Token },
+    #[error("expected {expected}, but was {actual}")]
+    UnexpectedToken { expected: String, actual: &'t Token },
+    #[error("Premature end of file")]
+    PrematureEnd,
+}
 
 #[derive(Debug)]
 pub struct Expr<'pcx, 'tcx> {
@@ -249,8 +263,12 @@ pub struct Parser<'pcx, 'tcx> {
     pub pat_arena: &'pcx Arena<Pattern<'pcx, 'tcx>>,
 }
 
+pub type ParseResult<'t, 'pcx, 'tcx> = Result<&'pcx Expr<'pcx, 'tcx>, ParseError<'t>>;
+
+type TokenIterator<'t> = Peekable<slice::Iter<'t, Token>>;
+
 #[allow(dead_code)]
-impl<'pcx, 'tcx> Parser<'pcx, 'tcx> {
+impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     pub fn new(
         tcx: TypeContext<'tcx>,
         expr_arena: &'pcx Arena<Expr<'pcx, 'tcx>>,
@@ -263,13 +281,155 @@ impl<'pcx, 'tcx> Parser<'pcx, 'tcx> {
         }
     }
 
-    pub fn parse(&self, _tokens: &[Token]) -> Result<&'pcx Expr<'pcx, 'tcx>, Vec<String>> {
-        Err(vec![])
+    pub fn parse(&self, tokens: &'t [Token]) -> ParseResult<'t, 'pcx, 'tcx> {
+        let mut it = tokens.iter().peekable();
+
+        self.expr(&mut it)
+    }
+
+    // --- Parser
+    fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        if let Some(expr) = self.lookahead(self.puts(it))? {
+            Ok(expr)
+        } else {
+            self.atom(it)
+        }
+    }
+
+    fn puts(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let puts_tok = self.ensure_lookahead(it, TokenKind::Puts)?;
+
+        // Arguments
+        let mut args = vec![];
+
+        self.expect_token(it, TokenKind::Operator('('))?;
+        {
+            while let Some(arg) = self.lookahead(self.expr(it))? {
+                args.push(arg);
+
+                // trailing comma can be omitted
+                if self.match_token(it, TokenKind::Operator(','))? {
+                    it.next();
+                } else if !self.match_token(it, TokenKind::Operator(')'))? {
+                    let actual = self.peek_token(it)?;
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "')' or ','".to_string(),
+                        actual,
+                    });
+                }
+            }
+        }
+        self.expect_token(it, TokenKind::Operator(')'))?;
+
+        Ok(self.alloc_expr(ExprKind::Puts(args), puts_tok))
+    }
+
+    fn atom(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let token = self.peek_token(it)?;
+        let kind = match token.kind() {
+            TokenKind::Integer(n) => {
+                it.next();
+
+                let i = n.parse().unwrap();
+                ExprKind::Integer(i)
+            }
+            TokenKind::Identifier(name) => {
+                it.next();
+                ExprKind::Var(name.clone())
+            }
+            TokenKind::LiteralString(s) => {
+                it.next();
+                ExprKind::String(s.clone())
+            }
+            TokenKind::True => {
+                it.next();
+                ExprKind::Boolean(true)
+            }
+            TokenKind::False => {
+                it.next();
+                ExprKind::Boolean(false)
+            }
+            TokenKind::Operator('(') => {
+                it.next();
+                let expr = self.expr(it)?;
+                self.expect_token(it, TokenKind::Operator(')'))?;
+
+                return Ok(expr);
+            }
+            _ => {
+                return Err(ParseError::UnexpectedLookaheadToken {
+                    expected: "atom".to_string(),
+                    actual: token,
+                });
+            }
+        };
+
+        Ok(self.alloc_expr(kind, token))
     }
 
     // --- Misc
+    fn peek_token(&self, it: &mut TokenIterator<'t>) -> Result<&'t Token, ParseError<'t>> {
+        Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
+    }
 
-    fn alloc_expr(&self, expr: Expr<'pcx, 'tcx>) -> &'pcx Expr<'pcx, 'tcx> {
+    fn ensure_lookahead(
+        &self,
+        it: &mut TokenIterator<'t>,
+        kind: TokenKind,
+    ) -> Result<&'t Token, ParseError<'t>> {
+        let token = self.peek_token(it)?;
+
+        if *token.kind() == kind {
+            Ok(it.next().unwrap())
+        } else {
+            Err(ParseError::UnexpectedLookaheadToken {
+                expected: kind.to_string(),
+                actual: token,
+            })
+        }
+    }
+
+    fn expect_token(
+        &self,
+        it: &mut TokenIterator<'t>,
+        kind: TokenKind,
+    ) -> Result<&'t Token, ParseError<'t>> {
+        let token = self.peek_token(it)?;
+
+        if *token.kind() == kind {
+            Ok(it.next().unwrap())
+        } else {
+            Err(ParseError::UnexpectedToken {
+                expected: kind.to_string(),
+                actual: token,
+            })
+        }
+    }
+
+    fn match_token(
+        &self,
+        it: &mut TokenIterator<'t>,
+        kind: TokenKind,
+    ) -> Result<bool, ParseError<'t>> {
+        let token = self.peek_token(it)?;
+        Ok(*token.kind() == kind)
+    }
+
+    fn lookahead(
+        &self,
+        r: ParseResult<'t, 'pcx, 'tcx>,
+    ) -> Result<Option<&'pcx Expr<'pcx, 'tcx>>, ParseError<'t>> {
+        match r {
+            Ok(expr) => Ok(Some(expr)),
+            Err(ParseError::UnexpectedLookaheadToken { .. }) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn alloc_expr(&self, kind: ExprKind<'pcx, 'tcx>, token: &Token) -> &'pcx Expr<'pcx, 'tcx> {
+        let mut expr = Expr::new(kind);
+        expr.append_comments_from(token);
+
         // Make mutable reference to immutable to suppress compiler error for mutability mismatch.
         self.expr_arena.alloc(expr)
     }
