@@ -38,6 +38,7 @@ assert() {
 assert 20211231 "puts(20211231)"
 assert -20229116 "puts(-20229116)"
 # basic arithmetic operations
+assert 30 "puts(20 * 3 / 2)"
 assert 40 "puts(10 + 20 * 3 / 2)"
 assert 45 "puts((10 + 20) * 3 / 2)"
 assert -75 "puts(-(10 + 20 * 3) + 5 - 10)"

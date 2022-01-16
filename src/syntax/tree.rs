@@ -289,7 +289,47 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     // --- Parser
     fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        self.unary(it)
+        self.bin_op1(it)
+    }
+
+    fn bin_op1(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let mut lhs = self.bin_op2(it)?;
+
+        while let Some(token) = it.peek() {
+            let op = match token.kind() {
+                TokenKind::Operator('+') => ExprKind::Add,
+                TokenKind::Operator('-') => ExprKind::Sub,
+                _ => {
+                    break;
+                }
+            };
+
+            let token = it.next().unwrap();
+            let rhs = self.bin_op2(it)?;
+            lhs = self.alloc_expr(op(lhs, rhs), token);
+        }
+
+        Ok(lhs)
+    }
+
+    fn bin_op2(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let mut lhs = self.unary(it)?;
+
+        while let Some(token) = it.peek() {
+            let op = match token.kind() {
+                TokenKind::Operator('*') => ExprKind::Mul,
+                TokenKind::Operator('/') => ExprKind::Div,
+                _ => {
+                    break;
+                }
+            };
+
+            let token = it.next().unwrap();
+            let rhs = self.unary(it)?;
+            lhs = self.alloc_expr(op(lhs, rhs), token);
+        }
+
+        Ok(lhs)
     }
 
     fn unary(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
