@@ -283,11 +283,45 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     pub fn parse(&self, tokens: &'t [Token]) -> ParseResult<'t, 'pcx, 'tcx> {
         let mut it = tokens.iter().peekable();
-
-        self.expr(&mut it)
+        self.decl(&mut it)
     }
 
     // --- Parser
+
+    // declarations
+    fn decl(&self, it: &mut TokenIterator<'t>) -> Result<&'pcx Expr<'pcx, 'tcx>, ParseError<'t>> {
+        if let Some(r#let) = self.variable_definition(it)? {
+            Ok(r#let)
+        } else {
+            self.expr(it)
+        }
+    }
+
+    fn variable_definition(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<Option<&'pcx Expr<'pcx, 'tcx>>, ParseError<'t>> {
+        let (name_token, name) = if let Some(token) = it.peek() {
+            if let TokenKind::Identifier(id) = token.kind() {
+                (it.next().unwrap(), id.clone())
+            } else {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        };
+
+        self.expect_token(it, TokenKind::Operator('='))?;
+
+        let rhs = self.expr(it)?;
+        let then = self.decl(it)?;
+
+        let var = self.alloc_expr(ExprKind::Let { name, rhs, then }, name_token);
+        Ok(Some(var))
+    }
+
+    // expressions
+
     fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
         if let Some(expr) = self.lookahead(self.case(it))? {
             Ok(expr)
