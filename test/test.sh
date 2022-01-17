@@ -52,6 +52,16 @@ assert 30 "puts(20 * 3 / 2)"
 assert 40 "puts(10 + 20 * 3 / 2)"
 assert 45 "puts((10 + 20) * 3 / 2)"
 assert -75 "puts(-(10 + 20 * 3) + 5 - 10)"
+# pattern match (case)
+assert 3 "
+  case 3
+  when 1
+    puts(1)
+  when 0..=2
+    puts(2)
+  else
+    puts(3)
+  end"
 # variable
 assert 5 "
   five = 5
@@ -83,15 +93,6 @@ assert 3 "
     3
   end
   puts(n)"
-assert 3 "
-  case 3
-  when 1
-    puts(1)
-  when 0..=2
-    puts(2)
-  else
-    puts(3)
-  end"
 assert 152 "
   def pt(n)
     case n

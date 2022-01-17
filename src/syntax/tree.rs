@@ -289,7 +289,11 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     // --- Parser
     fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        self.logical_op(it)
+        if let Some(expr) = self.lookahead(self.case(it))? {
+            Ok(expr)
+        } else {
+            self.logical_op(it)
+        }
     }
 
     // pattern
@@ -302,8 +306,42 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             TokenKind::Integer(n) => {
                 it.next();
 
+                // range?
+                let end = if let Some(t) = it.peek() {
+                    match t.kind() {
+                        TokenKind::RangeExcluded => {
+                            it.next();
+                            Some(RangeEnd::Excluded)
+                        }
+                        TokenKind::RangeIncluded => {
+                            it.next();
+                            Some(RangeEnd::Included)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                // build
                 let i = n.parse().unwrap();
-                let kind = PatternKind::Integer(i);
+
+                let kind = if let Some(end) = end {
+                    let hi_token = self.peek_token(it)?;
+                    let hi = if let TokenKind::Integer(n) = hi_token.kind() {
+                        it.next();
+                        n.parse().unwrap()
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "int".to_string(),
+                            actual: hi_token,
+                        });
+                    };
+                    PatternKind::Range { lo: i, hi, end }
+                } else {
+                    PatternKind::Integer(i)
+                };
+
                 self.alloc_pat(kind, self.tcx.int64(), token)
             }
             TokenKind::LiteralString(s) => {
@@ -333,6 +371,52 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         };
 
         Ok(pat)
+    }
+
+    fn case_arm(&self, it: &mut TokenIterator<'t>) -> Result<CaseArm<'pcx, 'tcx>, ParseError<'t>> {
+        let when_token = self.ensure_lookahead(it, TokenKind::When)?;
+
+        let pattern = self.pattern(it)?;
+        let body = self.expr(it)?;
+
+        let mut arm = CaseArm::new(pattern, body);
+        arm.append_comments_from(when_token);
+        Ok(arm)
+    }
+
+    fn case(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let case_token = self.ensure_lookahead(it, TokenKind::Case)?;
+        let head = self.expr(it)?;
+
+        let mut arms = vec![];
+
+        loop {
+            let arm = match self.case_arm(it) {
+                Ok(arm) => arm,
+                Err(ParseError::UnexpectedLookaheadToken { .. }) => {
+                    break;
+                }
+                Err(err) => return Err(err),
+            };
+            arms.push(arm);
+        }
+
+        let else_body = if self.match_token(it, TokenKind::Else)? {
+            it.next();
+            Some(self.expr(it)?)
+        } else {
+            None
+        };
+
+        self.expect_token(it, TokenKind::End)?;
+
+        let kind = ExprKind::Case {
+            head,
+            arms,
+            else_body,
+        };
+
+        Ok(self.alloc_expr(kind, case_token))
     }
 
     // logical operators
