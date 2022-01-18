@@ -76,7 +76,7 @@ impl fmt::Display for Token {
 pub enum TokenKind {
     Integer(String),
     Identifier(String),
-    LiteralString(String),
+    String(String),
     // Operators
     RangeIncluded, // RangeEnd::Included
     RangeExcluded, // RangeEnd::Excluded
@@ -97,9 +97,9 @@ pub enum TokenKind {
     True,
     False,
     // Types
-    Int64,
-    Boolean,
-    String,
+    TypeInt64,
+    TypeBoolean,
+    TypeString,
 }
 
 impl fmt::Display for TokenKind {
@@ -107,7 +107,7 @@ impl fmt::Display for TokenKind {
         match self {
             Self::Integer(n) => write!(f, "{}", n),
             Self::Identifier(s) => write!(f, "`{}`", s),
-            Self::LiteralString(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
+            Self::String(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
             Self::RangeIncluded => write!(f, "{}", RangeEnd::Included),
             Self::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
             Self::Operator(c) => write!(f, "{}", c),
@@ -125,9 +125,9 @@ impl fmt::Display for TokenKind {
             Self::Puts => write!(f, "puts"),
             Self::True => write!(f, "true"),
             Self::False => write!(f, "false"),
-            Self::Int64 => write!(f, "int64"),
-            Self::Boolean => write!(f, "boolean"),
-            Self::String => write!(f, "string"),
+            Self::TypeInt64 => write!(f, "int64"),
+            Self::TypeBoolean => write!(f, "boolean"),
+            Self::TypeString => write!(f, "string"),
         }
     }
 }
@@ -165,9 +165,9 @@ fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         text::keyword("puts").to(TokenKind::Puts),
         text::keyword("true").to(TokenKind::True),
         text::keyword("false").to(TokenKind::False),
-        text::keyword("int64").to(TokenKind::Int64),
-        text::keyword("boolean").to(TokenKind::Boolean),
-        text::keyword("string").to(TokenKind::String),
+        text::keyword("int64").to(TokenKind::TypeInt64),
+        text::keyword("boolean").to(TokenKind::TypeBoolean),
+        text::keyword("string").to(TokenKind::TypeString),
         text::ident().map(TokenKind::Identifier),
     ));
 
@@ -187,7 +187,7 @@ fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .ignore_then(filter(|c| *c != '\\' && *c != '"').or(escape).repeated())
         .then_ignore(just('"'))
         .collect::<String>()
-        .map(TokenKind::LiteralString)
+        .map(TokenKind::String)
         .labelled("string");
 
     let token = integer

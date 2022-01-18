@@ -22,7 +22,7 @@ fn main() {
             .expect("Read source code");
         src
     };
-    eprintln!("---\n{}", src);
+    //eprintln!("---\n{}", src);
 
     let tokens = match syntax::tokenize(&src) {
         Err(err) => {
@@ -33,7 +33,7 @@ fn main() {
         Ok(tokens) => tokens,
     };
 
-    eprintln!("tokens = {:?}", tokens);
+    //eprintln!("tokens = {:?}", tokens);
     let type_arena = Arena::new();
     let tcx = TypeContext::new(&type_arena);
 

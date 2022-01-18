@@ -10,8 +10,8 @@ use typed_arena::Arena;
 #[derive(Error, Debug)]
 pub enum ParseError<'t> {
     // Token iterator was not consumed, so you can safely retry to parse another node.
-    #[error("expected {expected}, but was {actual}")]
-    UnexpectedLookaheadToken { expected: String, actual: &'t Token },
+    #[error("parser did't met an expected token")]
+    NotParsed,
     #[error("expected {expected}, but was {actual}")]
     UnexpectedToken { expected: String, actual: &'t Token },
     #[error("Premature end of file")]
@@ -54,6 +54,12 @@ impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
 
     pub fn append_comments_from(&mut self, token: &Token) {
         for comment in token.comments() {
+            self.comments.push(comment.to_string());
+        }
+    }
+
+    pub fn append_comments_from_expr(&mut self, expr: &Expr<'pcx, 'tcx>) {
+        for comment in expr.comments() {
             self.comments.push(comment.to_string());
         }
     }
@@ -131,6 +137,7 @@ impl<'pcx, 'tcx> Function<'pcx, 'tcx> {
 pub struct Parameter<'tcx> {
     name: String,
     ty: &'tcx Type<'tcx>,
+    comments: Vec<String>,
 }
 
 impl<'tcx> Parameter<'tcx> {
@@ -138,6 +145,7 @@ impl<'tcx> Parameter<'tcx> {
         Self {
             name: name.to_string(),
             ty,
+            comments: vec![],
         }
     }
 
@@ -147,6 +155,12 @@ impl<'tcx> Parameter<'tcx> {
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
+    }
+
+    pub fn append_comments_from(&mut self, token: &Token) {
+        for comment in token.comments() {
+            self.comments.push(comment.to_string());
+        }
     }
 }
 
@@ -289,35 +303,118 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     // --- Parser
 
     // declarations
-    fn decl(&self, it: &mut TokenIterator<'t>) -> Result<&'pcx Expr<'pcx, 'tcx>, ParseError<'t>> {
-        if let Some(r#let) = self.variable_definition(it)? {
-            Ok(r#let)
+    fn decl(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        if let Some(r#fn) = self.lookahead(self.function_definition(it))? {
+            Ok(r#fn)
+        } else if let Some(expr) = self.lookahead(self.expr(it))? {
+            // To make LL(1) parser be able to parse `assignment` grammar which is LL(2):
+            //
+            //     assignment -> ID ASSIGN expr | expr
+            //
+            // We try to parse the grammar which is LL(1):
+            //
+            //     assignment -> expr ASSIGN expr | expr
+            //
+            // And then, construct an assignment node if the left hand of assignment is
+            // an assignable (e.g. Identifier).
+            if let ExprKind::Var(name) = expr.kind() {
+                if let Some(t) = it.peek() {
+                    if let TokenKind::Operator('=') = t.kind() {
+                        it.next();
+
+                        let rhs = self.expr(it)?;
+                        let then = self.decl(it)?;
+
+                        let mut r#let = Expr::new(ExprKind::Let {
+                            name: name.clone(),
+                            rhs,
+                            then,
+                        });
+
+                        r#let.append_comments_from_expr(expr);
+                        return Ok(self.expr_arena.alloc(r#let));
+                    }
+                }
+            }
+            Ok(expr)
         } else {
-            self.expr(it)
+            Err(ParseError::NotParsed)
         }
     }
 
-    fn variable_definition(
-        &self,
-        it: &mut TokenIterator<'t>,
-    ) -> Result<Option<&'pcx Expr<'pcx, 'tcx>>, ParseError<'t>> {
-        let (name_token, name) = if let Some(token) = it.peek() {
-            if let TokenKind::Identifier(id) = token.kind() {
-                (it.next().unwrap(), id.clone())
-            } else {
-                return Ok(None);
-            }
+    fn function_definition(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let def_token = self.ensure_lookahead(it, TokenKind::Def)?;
+
+        let name_token = self.peek_token(it)?;
+        let name = if let TokenKind::Identifier(name) = name_token.kind() {
+            it.next();
+            name.clone()
         } else {
-            return Ok(None);
+            return Err(ParseError::UnexpectedToken {
+                expected: "function name".to_string(),
+                actual: name_token,
+            });
         };
 
-        self.expect_token(it, TokenKind::Operator('='))?;
+        let params = self.parse_elements(it, Self::function_parameter)?;
 
-        let rhs = self.expr(it)?;
+        let body = self.expr(it)?;
+
+        self.expect_token(it, TokenKind::End)?;
+
         let then = self.decl(it)?;
 
-        let var = self.alloc_expr(ExprKind::Let { name, rhs, then }, name_token);
-        Ok(Some(var))
+        let var = self.alloc_expr(
+            ExprKind::Fn(Function {
+                name,
+                params,
+                body,
+                then,
+            }),
+            def_token,
+        );
+        Ok(var)
+    }
+
+    fn function_parameter(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<Parameter<'tcx>, ParseError<'t>> {
+        let (name_token, name) = self.ensure_identifier(it)?;
+
+        let ty = if self.match_token(it, TokenKind::Operator(':'))? {
+            it.next();
+
+            self.type_specifier(it)?
+        } else {
+            // Int64 for omitted type
+            self.tcx.int64()
+        };
+
+        let mut param = Parameter::new(&name, ty);
+
+        param.append_comments_from(name_token);
+        Ok(param)
+    }
+
+    fn type_specifier(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<&'tcx Type<'tcx>, ParseError<'t>> {
+        let token = self.peek_token(it)?;
+        let ty = match token.kind() {
+            TokenKind::TypeInt64 => self.tcx.int64(),
+            TokenKind::TypeBoolean => self.tcx.boolean(),
+            TokenKind::TypeString => self.tcx.string(),
+            _ => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "type".to_string(),
+                    actual: token,
+                });
+            }
+        };
+        it.next();
+        Ok(ty)
     }
 
     // expressions
@@ -378,7 +475,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
                 self.alloc_pat(kind, self.tcx.int64(), token)
             }
-            TokenKind::LiteralString(s) => {
+            TokenKind::String(s) => {
                 it.next();
 
                 let kind = PatternKind::String(s.clone());
@@ -397,10 +494,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 self.alloc_pat(kind, self.tcx.boolean(), token)
             }
             _ => {
-                return Err(ParseError::UnexpectedLookaheadToken {
-                    expected: "pattern".to_string(),
-                    actual: token,
-                });
+                return Err(ParseError::NotParsed);
             }
         };
 
@@ -427,7 +521,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         loop {
             let arm = match self.case_arm(it) {
                 Ok(arm) => arm,
-                Err(ParseError::UnexpectedLookaheadToken { .. }) => {
+                Err(ParseError::NotParsed) => {
                     break;
                 }
                 Err(err) => return Err(err),
@@ -585,9 +679,13 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 it.next();
 
                 // call?
-                if self.match_token(it, TokenKind::Operator('('))? {
-                    let args = self.parse_elements(it, Self::expr)?;
-                    ExprKind::Call(name.clone(), args)
+                if let Some(t) = it.peek() {
+                    if let TokenKind::Operator('(') = t.kind() {
+                        let args = self.parse_elements(it, Self::expr)?;
+                        ExprKind::Call(name.clone(), args)
+                    } else {
+                        ExprKind::Var(name.clone())
+                    }
                 } else {
                     ExprKind::Var(name.clone())
                 }
@@ -598,7 +696,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 let args = self.parse_elements(it, Self::expr)?;
                 ExprKind::Puts(args)
             }
-            TokenKind::LiteralString(s) => {
+            TokenKind::String(s) => {
                 it.next();
                 ExprKind::String(s.clone())
             }
@@ -618,10 +716,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 return Ok(expr);
             }
             _ => {
-                return Err(ParseError::UnexpectedLookaheadToken {
-                    expected: "atom".to_string(),
-                    actual: token,
-                });
+                return Err(ParseError::NotParsed);
             }
         };
 
@@ -629,11 +724,11 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     // --- Misc
-    fn parse_elements(
+    fn parse_elements<T>(
         &self,
         it: &mut TokenIterator<'t>,
-        parser: fn(&Self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx>,
-    ) -> Result<Vec<&'pcx Expr<'pcx, 'tcx>>, ParseError<'t>> {
+        parser: fn(&Self, it: &mut TokenIterator<'t>) -> Result<T, ParseError<'t>>,
+    ) -> Result<Vec<T>, ParseError<'t>> {
         let mut args = vec![];
 
         self.expect_token(it, TokenKind::Operator('('))?;
@@ -658,7 +753,8 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     fn peek_token(&self, it: &mut TokenIterator<'t>) -> Result<&'t Token, ParseError<'t>> {
-        Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
+        //Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
+        Ok(it.peek().unwrap())
     }
 
     fn ensure_lookahead(
@@ -671,11 +767,21 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         if *token.kind() == kind {
             Ok(it.next().unwrap())
         } else {
-            Err(ParseError::UnexpectedLookaheadToken {
-                expected: kind.to_string(),
-                actual: token,
-            })
+            Err(ParseError::NotParsed)
         }
+    }
+
+    fn ensure_identifier(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<(&'t Token, String), ParseError<'t>> {
+        if let Some(token) = it.peek() {
+            if let TokenKind::Identifier(id) = token.kind() {
+                return Ok((it.next().unwrap(), id.clone()));
+            }
+        }
+
+        Err(ParseError::NotParsed)
     }
 
     fn expect_token(
@@ -704,13 +810,10 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(*token.kind() == kind)
     }
 
-    fn lookahead(
-        &self,
-        r: ParseResult<'t, 'pcx, 'tcx>,
-    ) -> Result<Option<&'pcx Expr<'pcx, 'tcx>>, ParseError<'t>> {
+    fn lookahead<T>(&self, r: Result<T, ParseError<'t>>) -> Result<Option<T>, ParseError<'t>> {
         match r {
             Ok(expr) => Ok(Some(expr)),
-            Err(ParseError::UnexpectedLookaheadToken { .. }) => Ok(None),
+            Err(ParseError::NotParsed) => Ok(None),
             Err(err) => Err(err),
         }
     }
