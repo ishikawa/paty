@@ -318,22 +318,20 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             // And then, construct an assignment node if the left hand of an assignment is
             // assignable (e.g. Identifier).
             if let ExprKind::Var(name) = expr.kind() {
-                if let Some(t) = it.peek() {
-                    if let TokenKind::Operator('=') = t.kind() {
-                        it.next();
+                if self.match_token(it, TokenKind::Operator('=')) {
+                    it.next();
 
-                        let rhs = self.expr(it)?;
-                        let then = self.decl(it)?;
+                    let rhs = self.expr(it)?;
+                    let then = self.decl(it)?;
 
-                        let mut r#let = Expr::new(ExprKind::Let {
-                            name: name.clone(),
-                            rhs,
-                            then,
-                        });
+                    let mut r#let = Expr::new(ExprKind::Let {
+                        name: name.clone(),
+                        rhs,
+                        then,
+                    });
 
-                        r#let.append_comments_from_expr(expr);
-                        return Ok(self.expr_arena.alloc(r#let));
-                    }
+                    r#let.append_comments_from_expr(expr);
+                    return Ok(self.expr_arena.alloc(r#let));
                 }
             }
             Ok(expr)
@@ -343,7 +341,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     fn function_definition(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        let def_token = self.ensure_lookahead(it, TokenKind::Def)?;
+        let def_token = self.try_token(it, TokenKind::Def)?;
 
         let name_token = self.peek_token(it)?;
         let name = if let TokenKind::Identifier(name) = name_token.kind() {
@@ -380,9 +378,9 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<Parameter<'tcx>, ParseError<'t>> {
-        let (name_token, name) = self.ensure_identifier(it)?;
+        let (name_token, name) = self.try_identifier(it)?;
 
-        let ty = if self.match_token(it, TokenKind::Operator(':'))? {
+        let ty = if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
 
             self.type_specifier(it)?
@@ -502,7 +500,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     fn case_arm(&self, it: &mut TokenIterator<'t>) -> Result<CaseArm<'pcx, 'tcx>, ParseError<'t>> {
-        let when_token = self.ensure_lookahead(it, TokenKind::When)?;
+        let when_token = self.try_token(it, TokenKind::When)?;
 
         let pattern = self.pattern(it)?;
         let body = self.expr(it)?;
@@ -513,23 +511,16 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     fn case(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        let case_token = self.ensure_lookahead(it, TokenKind::Case)?;
+        let case_token = self.try_token(it, TokenKind::Case)?;
         let head = self.expr(it)?;
 
         let mut arms = vec![];
 
-        loop {
-            let arm = match self.case_arm(it) {
-                Ok(arm) => arm,
-                Err(ParseError::NotParsed) => {
-                    break;
-                }
-                Err(err) => return Err(err),
-            };
+        while let Some(arm) = self.lookahead(self.case_arm(it))? {
             arms.push(arm);
         }
 
-        let else_body = if self.match_token(it, TokenKind::Else)? {
+        let else_body = if self.match_token(it, TokenKind::Else) {
             it.next();
             Some(self.expr(it)?)
         } else {
@@ -656,7 +647,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     fn unary(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        if self.match_token(it, TokenKind::Operator('-'))? {
+        if self.match_token(it, TokenKind::Operator('-')) {
             let token = it.next().unwrap();
             let expr = self.unary(it)?;
 
@@ -679,13 +670,9 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 it.next();
 
                 // call?
-                if let Some(t) = it.peek() {
-                    if let TokenKind::Operator('(') = t.kind() {
-                        let args = self.parse_elements(it, Self::expr)?;
-                        ExprKind::Call(name.clone(), args)
-                    } else {
-                        ExprKind::Var(name.clone())
-                    }
+                if self.match_token(it, TokenKind::Operator('(')) {
+                    let args = self.parse_elements(it, Self::expr)?;
+                    ExprKind::Call(name.clone(), args)
                 } else {
                     ExprKind::Var(name.clone())
                 }
@@ -737,9 +724,9 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 args.push(arg);
 
                 // trailing comma can be omitted
-                if self.match_token(it, TokenKind::Operator(','))? {
+                if self.match_token(it, TokenKind::Operator(',')) {
                     it.next();
-                } else if !self.match_token(it, TokenKind::Operator(')'))? {
+                } else if !self.match_token(it, TokenKind::Operator(')')) {
                     let actual = self.peek_token(it)?;
                     return Err(ParseError::UnexpectedToken {
                         expected: "')' or ','".to_string(),
@@ -752,26 +739,27 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(args)
     }
 
-    fn peek_token(&self, it: &mut TokenIterator<'t>) -> Result<&'t Token, ParseError<'t>> {
-        //Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
-        Ok(it.peek().unwrap())
+    // look_
+
+    fn match_token(&self, it: &mut TokenIterator<'t>, kind: TokenKind) -> bool {
+        it.peek().filter(|token| *token.kind() == kind).is_some()
     }
 
-    fn ensure_lookahead(
+    fn try_token(
         &self,
         it: &mut TokenIterator<'t>,
         kind: TokenKind,
     ) -> Result<&'t Token, ParseError<'t>> {
-        let token = self.peek_token(it)?;
-
-        if *token.kind() == kind {
-            Ok(it.next().unwrap())
-        } else {
-            Err(ParseError::NotParsed)
+        if let Some(token) = it.peek() {
+            if *token.kind() == kind {
+                return Ok(it.next().unwrap());
+            }
         }
+
+        Err(ParseError::NotParsed)
     }
 
-    fn ensure_identifier(
+    fn try_identifier(
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<(&'t Token, String), ParseError<'t>> {
@@ -782,6 +770,11 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         }
 
         Err(ParseError::NotParsed)
+    }
+
+    fn peek_token(&self, it: &mut TokenIterator<'t>) -> Result<&'t Token, ParseError<'t>> {
+        //Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
+        Ok(it.peek().unwrap())
     }
 
     fn expect_token(
@@ -800,16 +793,6 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             })
         }
     }
-
-    fn match_token(
-        &self,
-        it: &mut TokenIterator<'t>,
-        kind: TokenKind,
-    ) -> Result<bool, ParseError<'t>> {
-        let token = self.peek_token(it)?;
-        Ok(*token.kind() == kind)
-    }
-
     fn lookahead<T>(&self, r: Result<T, ParseError<'t>>) -> Result<Option<T>, ParseError<'t>> {
         match r {
             Ok(expr) => Ok(Some(expr)),
