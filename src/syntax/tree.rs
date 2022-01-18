@@ -307,16 +307,16 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         if let Some(r#fn) = self.lookahead(self.function_definition(it))? {
             Ok(r#fn)
         } else if let Some(expr) = self.lookahead(self.expr(it))? {
-            // To make LL(1) parser be able to parse `assignment` grammar which is LL(2):
+            // To make this LL(1) parser able to parse `assignment` grammar which is LL(2):
             //
             //     assignment -> ID ASSIGN expr | expr
             //
-            // We try to parse the grammar which is LL(1):
+            // First, we try to parse the grammar that is LL(1):
             //
             //     assignment -> expr ASSIGN expr | expr
             //
-            // And then, construct an assignment node if the left hand of assignment is
-            // an assignable (e.g. Identifier).
+            // And then, construct an assignment node if the left hand of an assignment is
+            // assignable (e.g. Identifier).
             if let ExprKind::Var(name) = expr.kind() {
                 if let Some(t) = it.peek() {
                     if let TokenKind::Operator('=') = t.kind() {
