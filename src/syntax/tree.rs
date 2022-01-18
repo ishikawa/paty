@@ -389,7 +389,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             self.tcx.int64()
         };
 
-        let mut param = Parameter::new(&name, ty);
+        let mut param = Parameter::new(name, ty);
 
         param.append_comments_from(name_token);
         Ok(param)
@@ -436,18 +436,12 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 it.next();
 
                 // range?
-                let end = if let Some(t) = it.peek() {
-                    match t.kind() {
-                        TokenKind::RangeExcluded => {
-                            it.next();
-                            Some(RangeEnd::Excluded)
-                        }
-                        TokenKind::RangeIncluded => {
-                            it.next();
-                            Some(RangeEnd::Included)
-                        }
-                        _ => None,
-                    }
+                let end = if self.match_token(it, TokenKind::RangeExcluded) {
+                    it.next();
+                    Some(RangeEnd::Excluded)
+                } else if self.match_token(it, TokenKind::RangeIncluded) {
+                    it.next();
+                    Some(RangeEnd::Included)
                 } else {
                     None
                 };
@@ -762,10 +756,10 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn try_identifier(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<(&'t Token, String), ParseError<'t>> {
+    ) -> Result<(&'t Token, &'t str), ParseError<'t>> {
         if let Some(token) = it.peek() {
             if let TokenKind::Identifier(id) = token.kind() {
-                return Ok((it.next().unwrap(), id.clone()));
+                return Ok((it.next().unwrap(), id));
             }
         }
 
@@ -793,6 +787,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             })
         }
     }
+
     fn lookahead<T>(&self, r: Result<T, ParseError<'t>>) -> Result<Option<T>, ParseError<'t>> {
         match r {
             Ok(expr) => Ok(Some(expr)),
