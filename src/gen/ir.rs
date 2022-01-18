@@ -1,16 +1,16 @@
 use crate::syntax::PatternKind;
-use crate::typing::Type;
+use crate::ty::{Type, TypeContext};
 use crate::{sem, syntax};
 use std::cell::Cell;
 use std::fmt;
 use typed_arena::Arena;
 
 #[derive(Debug)]
-pub struct Program<'a> {
-    pub functions: Vec<Function<'a>>,
+pub struct Program<'a, 'tcx> {
+    pub functions: Vec<Function<'a, 'tcx>>,
 }
 
-impl fmt::Display for Program<'_> {
+impl fmt::Display for Program<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for fun in &self.functions {
             write!(f, "{}", fun)?;
@@ -20,16 +20,16 @@ impl fmt::Display for Program<'_> {
 }
 
 #[derive(Debug)]
-pub struct Function<'a> {
+pub struct Function<'a, 'tcx> {
     pub name: String,
-    pub params: Vec<Parameter>,
-    pub body: Vec<Stmt<'a>>,
-    pub retty: Type,
+    pub params: Vec<Parameter<'tcx>>,
+    pub body: Vec<Stmt<'a, 'tcx>>,
+    pub retty: &'tcx Type<'tcx>,
     /// Whether this function is `main` or not.
     pub is_entry_point: bool,
 }
 
-impl fmt::Display for Function<'_> {
+impl fmt::Display for Function<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)?;
         write!(f, "(")?;
@@ -52,12 +52,12 @@ impl fmt::Display for Function<'_> {
 }
 
 #[derive(Debug)]
-pub struct Parameter {
+pub struct Parameter<'tcx> {
     pub name: String,
-    pub ty: Type,
+    pub ty: &'tcx Type<'tcx>,
 }
 
-impl fmt::Display for Parameter {
+impl fmt::Display for Parameter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)?;
         write!(f, ": ")?;
@@ -67,15 +67,15 @@ impl fmt::Display for Parameter {
 }
 
 #[derive(Debug)]
-pub struct TmpVar<'a> {
+pub struct TmpVar<'a, 'tcx> {
     pub index: usize,
-    pub ty: Type,
+    pub ty: &'tcx Type<'tcx>,
     pub used: Cell<usize>,
-    pub immediate: Cell<Option<&'a Expr<'a>>>,
+    pub immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
 }
 
-impl<'a> TmpVar<'a> {
-    pub fn new(index: usize, ty: Type) -> Self {
+impl<'a, 'tcx> TmpVar<'a, 'tcx> {
+    pub fn new(index: usize, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             index,
             ty,
@@ -86,33 +86,33 @@ impl<'a> TmpVar<'a> {
 }
 
 #[derive(Debug)]
-pub enum Stmt<'a> {
+pub enum Stmt<'a, 'tcx> {
     TmpVarDef {
-        var: &'a TmpVar<'a>,
-        init: &'a Expr<'a>,
+        var: &'a TmpVar<'a, 'tcx>,
+        init: &'a Expr<'a, 'tcx>,
         pruned: Cell<bool>,
     },
     VarDef {
         name: String,
-        init: &'a Expr<'a>,
+        init: &'a Expr<'a, 'tcx>,
     },
     Cond {
         /// The index of temporary variable which holds the result.
-        var: &'a TmpVar<'a>,
-        branches: Vec<Branch<'a>>,
+        var: &'a TmpVar<'a, 'tcx>,
+        branches: Vec<Branch<'a, 'tcx>>,
     },
     // "Phi" function for a basic block. This statement must appear at the end of
     // each branch.
     Phi {
-        var: &'a TmpVar<'a>,
-        value: &'a Expr<'a>,
+        var: &'a TmpVar<'a, 'tcx>,
+        value: &'a Expr<'a, 'tcx>,
         pruned: Cell<bool>,
     },
     // "return" statement
-    Ret(&'a Expr<'a>),
+    Ret(&'a Expr<'a, 'tcx>),
 }
 
-impl fmt::Display for Stmt<'_> {
+impl fmt::Display for Stmt<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Stmt::TmpVarDef { var, init, pruned } => {
@@ -155,125 +155,105 @@ impl fmt::Display for Stmt<'_> {
 }
 
 #[derive(Debug)]
-pub struct Branch<'a> {
-    pub condition: Option<&'a Expr<'a>>,
-    pub body: Vec<Stmt<'a>>,
+pub struct Branch<'a, 'tcx> {
+    pub condition: Option<&'a Expr<'a, 'tcx>>,
+    pub body: Vec<Stmt<'a, 'tcx>>,
 }
 
 #[derive(Debug)]
-pub struct Expr<'a> {
-    kind: ExprKind<'a>,
-    ty: Type,
+pub struct Expr<'a, 'tcx> {
+    kind: ExprKind<'a, 'tcx>,
+    ty: &'tcx Type<'tcx>,
 }
 
-impl<'a> Expr<'a> {
-    pub fn new(kind: ExprKind<'a>, ty: Type) -> Self {
+impl<'a, 'tcx> Expr<'a, 'tcx> {
+    pub fn new(kind: ExprKind<'a, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         Self { kind, ty }
     }
 
-    pub fn int64(value: i64) -> Self {
-        Self {
-            kind: ExprKind::Value(Value::Int64(value)),
-            ty: Type::Int64,
-        }
-    }
-
-    pub fn native_int(value: i32) -> Self {
-        Self {
-            kind: ExprKind::Value(Value::Int(value)),
-            ty: Type::NativeInt,
-        }
-    }
-
-    pub fn bool(value: bool) -> Self {
-        Self {
-            kind: ExprKind::Value(Value::Bool(value)),
-            ty: Type::Boolean,
-        }
-    }
-
-    pub fn const_string(value: &str) -> Self {
-        Self {
-            kind: ExprKind::Value(Value::String(value.to_string())),
-            ty: Type::String,
-        }
-    }
-
-    pub fn kind(&self) -> &ExprKind<'a> {
+    pub fn kind(&self) -> &ExprKind<'a, 'tcx> {
         &self.kind
     }
 
-    pub fn ty(&self) -> Type {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 }
 
 #[derive(Debug)]
-pub enum ExprKind<'a> {
-    Minus(&'a Expr<'a>),
-    Not(&'a Expr<'a>),
-    Add(&'a Expr<'a>, &'a Expr<'a>),
-    Sub(&'a Expr<'a>, &'a Expr<'a>),
-    Mul(&'a Expr<'a>, &'a Expr<'a>),
-    Div(&'a Expr<'a>, &'a Expr<'a>),
-    Eq(&'a Expr<'a>, &'a Expr<'a>),
-    Ne(&'a Expr<'a>, &'a Expr<'a>),
-    Lt(&'a Expr<'a>, &'a Expr<'a>),
-    Le(&'a Expr<'a>, &'a Expr<'a>),
-    Gt(&'a Expr<'a>, &'a Expr<'a>),
-    Ge(&'a Expr<'a>, &'a Expr<'a>),
-    And(&'a Expr<'a>, &'a Expr<'a>),
-    Or(&'a Expr<'a>, &'a Expr<'a>),
+pub enum ExprKind<'a, 'tcx> {
+    Minus(&'a Expr<'a, 'tcx>),
+    Not(&'a Expr<'a, 'tcx>),
+    Add(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Sub(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Mul(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Div(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Eq(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Ne(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Lt(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Le(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Gt(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Ge(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    And(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Or(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     Call {
         name: String,
-        args: Vec<&'a Expr<'a>>,
+        args: Vec<&'a Expr<'a, 'tcx>>,
     },
     Printf {
-        args: Vec<&'a Expr<'a>>,
+        args: Vec<&'a Expr<'a, 'tcx>>,
     },
-    Value(Value<'a>),
+    Value(Value<'a, 'tcx>),
 }
 
 #[derive(Debug)]
-pub enum Value<'a> {
+pub enum Value<'a, 'tcx> {
     /// Native "int" type.
     Int(i32),
     Int64(i64),
     Bool(bool),
     String(String),
-    TmpVar(&'a TmpVar<'a>),
-    Var(String, Type),
+    TmpVar(&'a TmpVar<'a, 'tcx>),
+    Var(String, &'tcx Type<'tcx>),
 }
 
-pub struct Builder<'a> {
+pub struct Builder<'a, 'tcx> {
+    tcx: TypeContext<'tcx>,
     /// An arena allocators for nodes.
-    expr_arena: &'a Arena<Expr<'a>>,
-    tmp_var_arena: &'a Arena<TmpVar<'a>>,
+    expr_arena: &'a Arena<Expr<'a, 'tcx>>,
+    tmp_var_arena: &'a Arena<TmpVar<'a, 'tcx>>,
     /// The current index of temporary variables. It starts from 0 and
     /// incremented by creating a new temporary variable. This index will
     /// be saved and reset to 0 when function enter, and restored when function exit.
     tmp_var_index: usize,
 }
 
-impl<'a> Builder<'a> {
-    pub fn new(expr_arena: &'a Arena<Expr<'a>>, tmp_var_arena: &'a Arena<TmpVar<'a>>) -> Self {
+impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
+    pub fn new(
+        tcx: TypeContext<'tcx>,
+        expr_arena: &'a Arena<Expr<'a, 'tcx>>,
+        tmp_var_arena: &'a Arena<TmpVar<'a, 'tcx>>,
+    ) -> Self {
         Self {
+            tcx,
             expr_arena,
             tmp_var_arena,
             tmp_var_index: 0,
         }
     }
 
-    pub fn build(&mut self, ast: &sem::SemAST) -> Program<'a> {
+    pub fn build(&mut self, ast: &sem::SemAST<'pcx, 'tcx>) -> Program<'a, 'tcx> {
         let mut program = Program { functions: vec![] };
         let mut stmts = vec![];
 
         // Build top level statements and function definitions.
         self._build(ast.expr(), &mut program, &mut stmts);
+
         // Add `return 0` statement for the entry point function if needed.
+        let c_int_ty = self.tcx.native_int();
         if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
             let kind = ExprKind::Value(Value::Int(0));
-            let expr = Expr::new(kind, Type::Int64);
+            let expr = Expr::new(kind, c_int_ty);
             let expr = self.expr_arena.alloc(expr);
 
             stmts.push(Stmt::Ret(expr))
@@ -283,7 +263,7 @@ impl<'a> Builder<'a> {
             name: "main".to_string(),
             params: vec![],
             body: stmts,
-            retty: Type::Int64,
+            retty: c_int_ty,
             is_entry_point: true,
         };
         program.functions.push(main);
@@ -295,7 +275,7 @@ impl<'a> Builder<'a> {
         program
     }
 
-    fn next_temp_var(&mut self, ty: Type) -> &'a TmpVar<'a> {
+    fn next_temp_var(&mut self, ty: &'tcx Type<'tcx>) -> &'a TmpVar<'a, 'tcx> {
         let t = self.tmp_var_index;
         self.tmp_var_index += 1;
         self.tmp_var_arena.alloc(TmpVar::new(t, ty))
@@ -303,10 +283,10 @@ impl<'a> Builder<'a> {
 
     fn push_expr(
         &mut self,
-        kind: ExprKind<'a>,
-        syntax_expr: &syntax::Expr,
-        stmts: &mut Vec<Stmt<'a>>,
-    ) -> &'a Expr<'a> {
+        kind: ExprKind<'a, 'tcx>,
+        syntax_expr: &syntax::Expr<'pcx, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
         let expr_ty = syntax_expr.ty().unwrap_or_else(|| {
             panic!(
                 "Semantic analyzer can't assign type for expression {:?}",
@@ -327,7 +307,7 @@ impl<'a> Builder<'a> {
         self.expr_arena.alloc(Expr::new(kind, expr.ty()))
     }
 
-    fn inc_used(&self, expr: &'a Expr<'a>) -> &'a Expr<'a> {
+    fn inc_used(&self, expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
         if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
             t.used.set(t.used.get() + 1);
         }
@@ -335,12 +315,40 @@ impl<'a> Builder<'a> {
         expr
     }
 
+    fn int64(&self, value: i64) -> Expr<'a, 'tcx> {
+        let kind = ExprKind::Value(Value::Int64(value));
+        let ty = self.tcx.int64();
+
+        Expr::new(kind, ty)
+    }
+
+    fn native_int(&self, value: i32) -> Expr<'a, 'tcx> {
+        let kind = ExprKind::Value(Value::Int(value));
+        let ty = self.tcx.native_int();
+
+        Expr::new(kind, ty)
+    }
+
+    fn bool(&self, value: bool) -> Expr<'a, 'tcx> {
+        let kind = ExprKind::Value(Value::Bool(value));
+        let ty = self.tcx.boolean();
+
+        Expr::new(kind, ty)
+    }
+
+    fn const_string(&self, value: &str) -> Expr<'a, 'tcx> {
+        let kind = ExprKind::Value(Value::String(value.to_string()));
+        let ty = self.tcx.string();
+
+        Expr::new(kind, ty)
+    }
+
     fn _build(
         &mut self,
-        expr: &syntax::Expr,
-        program: &mut Program<'a>,
-        stmts: &mut Vec<Stmt<'a>>,
-    ) -> &'a Expr<'a> {
+        expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
         match expr.kind() {
             syntax::ExprKind::Integer(n) => {
                 let value = Value::Int64(*n);
@@ -540,37 +548,38 @@ impl<'a> Builder<'a> {
                         // Build an immediate value from the pattern
                         let condition = match arm.pattern().kind() {
                             PatternKind::Integer(n) => {
-                                let value = self.expr_arena.alloc(Expr::int64(*n));
+                                let value = self.expr_arena.alloc(self.int64(*n));
                                 let eq = ExprKind::Eq(self.inc_used(t_head), value);
 
-                                self.expr_arena.alloc(Expr::new(eq, Type::Boolean))
+                                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
                             }
                             PatternKind::Boolean(b) => {
                                 if *b {
                                     self.inc_used(t_head)
                                 } else {
                                     let expr = ExprKind::Not(self.inc_used(t_head));
-                                    self.expr_arena.alloc(Expr::new(expr, Type::Boolean))
+                                    self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
                                 }
                             }
                             PatternKind::String(s) => {
                                 // Compare the value of head expression and pattern string with
                                 // POSIX `strcmp` function.
-                                let value = self.expr_arena.alloc(Expr::const_string(s));
+                                let value = self.expr_arena.alloc(self.const_string(s));
                                 let kind = ExprKind::Call {
                                     name: "strcmp".to_string(),
                                     args: vec![self.inc_used(t_head), value],
                                 };
-                                let strcmp = self.expr_arena.alloc(Expr::new(kind, Type::Int64));
+                                let strcmp =
+                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
 
-                                let zero = self.expr_arena.alloc(Expr::native_int(0));
+                                let zero = self.expr_arena.alloc(self.native_int(0));
                                 let eq = ExprKind::Eq(self.inc_used(strcmp), zero);
 
-                                self.expr_arena.alloc(Expr::new(eq, Type::Boolean))
+                                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
                             }
                             PatternKind::Range { lo, hi, end } => {
-                                let lo = self.expr_arena.alloc(Expr::int64(*lo));
-                                let hi = self.expr_arena.alloc(Expr::int64(*hi));
+                                let lo = self.expr_arena.alloc(self.int64(*lo));
+                                let hi = self.expr_arena.alloc(self.int64(*hi));
 
                                 let lhs = ExprKind::Ge(self.inc_used(t_head), lo);
 
@@ -584,13 +593,14 @@ impl<'a> Builder<'a> {
                                 };
 
                                 let kind = ExprKind::And(
-                                    self.expr_arena.alloc(Expr::new(lhs, Type::Boolean)),
-                                    self.expr_arena.alloc(Expr::new(rhs, Type::Boolean)),
+                                    self.expr_arena.alloc(Expr::new(lhs, self.tcx.boolean())),
+                                    self.expr_arena.alloc(Expr::new(rhs, self.tcx.boolean())),
                                 );
 
-                                self.expr_arena.alloc(Expr::new(kind, Type::Boolean))
+                                self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
                             }
-                            PatternKind::Wildcard => self.expr_arena.alloc(Expr::bool(true)),
+                            PatternKind::Or(_, _) => todo!(),
+                            PatternKind::Wildcard(_) => self.expr_arena.alloc(self.bool(true)),
                         };
 
                         let mut branch_stmts = vec![];
@@ -637,18 +647,18 @@ impl<'a> Builder<'a> {
 #[derive(Default, Debug)]
 pub struct Optimizer {}
 
-impl<'a> Optimizer {
+impl<'a, 'tcx> Optimizer {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn optimize(&mut self, program: &mut Program<'a>) {
+    pub fn optimize(&mut self, program: &mut Program<'a, 'tcx>) {
         for fun in &mut program.functions {
             self.optimize_function(fun);
         }
     }
 
-    fn decr_used_and_prunable(&self, expr: &'a Expr<'a>) -> bool {
+    fn decr_used_and_prunable(&self, expr: &'a Expr<'a, 'tcx>) -> bool {
         if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
             let u = t.used.get();
             if u > 0 {
@@ -661,13 +671,13 @@ impl<'a> Optimizer {
         false
     }
 
-    fn optimize_function(&mut self, fun: &Function<'a>) {
+    fn optimize_function(&mut self, fun: &Function<'a, 'tcx>) {
         for stmt in &fun.body {
             self.optimize_stmt(stmt);
         }
     }
 
-    fn optimize_stmt(&mut self, stmt: &Stmt<'a>) {
+    fn optimize_stmt(&mut self, stmt: &Stmt<'a, 'tcx>) {
         match stmt {
             Stmt::TmpVarDef { var, init, pruned } => {
                 if var.used.get() == 1 {
@@ -716,7 +726,7 @@ impl<'a> Optimizer {
         }
     }
 
-    fn optimize_expr(&mut self, expr: &Expr<'a>) {
+    fn optimize_expr(&mut self, expr: &Expr<'a, 'tcx>) {
         match expr.kind() {
             ExprKind::Minus(operand) | ExprKind::Not(operand) => {
                 self.optimize_expr(operand);

@@ -1,34 +1,37 @@
 //! Semantic analysis
 use self::error::SemanticError;
-use crate::{syntax, typing::Type};
+use crate::{
+    syntax,
+    ty::{Type, TypeContext},
+};
 use std::collections::HashMap;
 
 mod error;
 mod usefulness;
 
 #[derive(Debug)]
-pub struct SemAST<'a> {
-    expr: &'a syntax::Expr,
+pub struct SemAST<'pcx, 'tcx> {
+    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
 }
 
-impl<'a> SemAST<'a> {
-    pub fn new(expr: &'a syntax::Expr) -> Self {
+impl<'pcx, 'tcx> SemAST<'pcx, 'tcx> {
+    pub fn new(expr: &'pcx syntax::Expr<'pcx, 'tcx>) -> Self {
         Self { expr }
     }
 
-    pub fn expr(&self) -> &syntax::Expr {
+    pub fn expr(&self) -> &'pcx syntax::Expr<'pcx, 'tcx> {
         self.expr
     }
 }
 
 #[derive(Debug)]
-struct Binding {
+struct Binding<'tcx> {
     name: String,
-    ty: Type,
+    ty: &'tcx Type<'tcx>,
 }
 
-impl Binding {
-    pub fn new(name: &str, ty: Type) -> Self {
+impl<'tcx> Binding<'tcx> {
+    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             name: name.to_string(),
             ty,
@@ -39,34 +42,34 @@ impl Binding {
         &self.name
     }
 
-    pub fn ty(&self) -> Type {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 }
 
 #[derive(Debug, Default)]
-struct Scope<'a> {
-    parent: Option<&'a Scope<'a>>,
-    bindings: HashMap<String, Binding>,
+struct Scope<'a, 'tcx> {
+    parent: Option<&'a Scope<'a, 'tcx>>,
+    bindings: HashMap<String, Binding<'tcx>>,
 }
 
-impl<'a> Scope<'a> {
+impl<'a, 'tcx> Scope<'a, 'tcx> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn from_parent(parent: &'a Scope) -> Self {
+    pub fn from_parent(parent: &'a Scope<'a, 'tcx>) -> Self {
         Self {
             parent: Some(parent),
             bindings: HashMap::new(),
         }
     }
 
-    pub fn insert(&mut self, binding: Binding) {
+    pub fn insert(&mut self, binding: Binding<'tcx>) {
         self.bindings.insert(binding.name().to_string(), binding);
     }
 
-    pub fn get(&self, name: &str) -> Option<&Binding> {
+    pub fn get(&self, name: &str) -> Option<&Binding<'tcx>> {
         if let Some(binding) = self.bindings.get(name) {
             Some(binding)
         } else if let Some(parent) = self.parent {
@@ -78,11 +81,14 @@ impl<'a> Scope<'a> {
 }
 
 // Analyze an AST and returns error if any.
-pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, Vec<SemanticError>> {
+pub fn analyze<'pcx: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+) -> Result<SemAST<'pcx, 'tcx>, Vec<SemanticError<'tcx>>> {
     let mut errors = vec![];
     let mut scope = Scope::new();
 
-    analyze_loop(expr, &mut scope, &mut Vec::new(), &mut errors);
+    analyze_loop(tcx, expr, &mut scope, &mut Vec::new(), &mut errors);
     if errors.is_empty() {
         Ok(SemAST::new(expr))
     } else {
@@ -90,7 +96,11 @@ pub fn analyze(expr: &syntax::Expr) -> Result<SemAST, Vec<SemanticError>> {
     }
 }
 
-fn unify_expr_type(expected: Type, expr: &syntax::Expr, errors: &mut Vec<SemanticError>) -> bool {
+fn unify_expr_type<'pcx: 'tcx, 'tcx>(
+    expected: &'tcx Type<'tcx>,
+    expr: &syntax::Expr<'pcx, 'tcx>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) -> bool {
     if let Some(actual) = expr.ty() {
         check_type(expected, actual, errors)
     } else {
@@ -99,7 +109,11 @@ fn unify_expr_type(expected: Type, expr: &syntax::Expr, errors: &mut Vec<Semanti
     }
 }
 
-fn check_type(expected: Type, actual: Type, errors: &mut Vec<SemanticError>) -> bool {
+fn check_type<'tcx>(
+    expected: &'tcx Type<'tcx>,
+    actual: &'tcx Type<'tcx>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) -> bool {
     if actual != expected {
         errors.push(SemanticError::MismatchedType { expected, actual });
         false
@@ -108,59 +122,60 @@ fn check_type(expected: Type, actual: Type, errors: &mut Vec<SemanticError>) -> 
     }
 }
 
-fn analyze_loop<'a>(
-    expr: &'a syntax::Expr,
-    vars: &mut Scope,
-    functions: &mut Vec<&'a syntax::Function>,
-    errors: &mut Vec<SemanticError>,
+fn analyze_loop<'pcx: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match expr.kind() {
         syntax::ExprKind::Integer(_) => {
-            unify_expr_type(Type::Int64, expr, errors);
+            unify_expr_type(tcx.int64(), expr, errors);
         }
         syntax::ExprKind::Boolean(_) => {
-            unify_expr_type(Type::Boolean, expr, errors);
+            unify_expr_type(tcx.boolean(), expr, errors);
         }
         syntax::ExprKind::String(_) => {
-            unify_expr_type(Type::String, expr, errors);
+            unify_expr_type(tcx.string(), expr, errors);
         }
         syntax::ExprKind::Minus(a) => {
-            analyze_loop(a, vars, functions, errors);
+            analyze_loop(tcx, a, vars, functions, errors);
 
-            unify_expr_type(Type::Int64, a, errors);
-            unify_expr_type(Type::Int64, expr, errors);
+            unify_expr_type(tcx.int64(), a, errors);
+            unify_expr_type(tcx.int64(), expr, errors);
         }
         syntax::ExprKind::Add(a, b)
         | syntax::ExprKind::Sub(a, b)
         | syntax::ExprKind::Mul(a, b)
-        | syntax::ExprKind::Div(a, b)
-        | syntax::ExprKind::Eq(a, b)
-        | syntax::ExprKind::Ne(a, b) => {
-            analyze_loop(a, vars, functions, errors);
-            analyze_loop(b, vars, functions, errors);
+        | syntax::ExprKind::Div(a, b) => {
+            analyze_loop(tcx, a, vars, functions, errors);
+            analyze_loop(tcx, b, vars, functions, errors);
 
-            unify_expr_type(Type::Int64, a, errors);
-            unify_expr_type(Type::Int64, b, errors);
-            unify_expr_type(Type::Int64, expr, errors);
+            unify_expr_type(tcx.int64(), a, errors);
+            unify_expr_type(tcx.int64(), b, errors);
+            unify_expr_type(tcx.int64(), expr, errors);
         }
         syntax::ExprKind::Lt(a, b)
         | syntax::ExprKind::Gt(a, b)
         | syntax::ExprKind::Le(a, b)
-        | syntax::ExprKind::Ge(a, b) => {
-            analyze_loop(a, vars, functions, errors);
-            analyze_loop(b, vars, functions, errors);
+        | syntax::ExprKind::Ge(a, b)
+        | syntax::ExprKind::Eq(a, b)
+        | syntax::ExprKind::Ne(a, b) => {
+            analyze_loop(tcx, a, vars, functions, errors);
+            analyze_loop(tcx, b, vars, functions, errors);
 
-            unify_expr_type(Type::Int64, a, errors);
-            unify_expr_type(Type::Int64, b, errors);
-            unify_expr_type(Type::Boolean, expr, errors);
+            unify_expr_type(tcx.int64(), a, errors);
+            unify_expr_type(tcx.int64(), b, errors);
+            unify_expr_type(tcx.boolean(), expr, errors);
         }
         syntax::ExprKind::And(a, b) | syntax::ExprKind::Or(a, b) => {
-            analyze_loop(a, vars, functions, errors);
-            analyze_loop(b, vars, functions, errors);
+            analyze_loop(tcx, a, vars, functions, errors);
+            analyze_loop(tcx, b, vars, functions, errors);
 
-            unify_expr_type(Type::Boolean, a, errors);
-            unify_expr_type(Type::Boolean, b, errors);
-            unify_expr_type(Type::Boolean, expr, errors);
+            unify_expr_type(tcx.boolean(), a, errors);
+            unify_expr_type(tcx.boolean(), b, errors);
+            unify_expr_type(tcx.boolean(), expr, errors);
         }
         syntax::ExprKind::Var(name) => {
             if let Some(binding) = vars.get(name) {
@@ -170,7 +185,7 @@ fn analyze_loop<'a>(
             }
         }
         syntax::ExprKind::Let { name, rhs, then } => {
-            analyze_loop(rhs, vars, functions, errors);
+            analyze_loop(tcx, rhs, vars, functions, errors);
 
             let ty = rhs
                 .ty()
@@ -178,7 +193,7 @@ fn analyze_loop<'a>(
             let binding = Binding::new(name, ty);
 
             vars.insert(binding);
-            analyze_loop(then, vars, functions, errors);
+            analyze_loop(tcx, then, vars, functions, errors);
         }
         syntax::ExprKind::Call(name, args) => {
             if let Some(fun) = functions
@@ -197,7 +212,7 @@ fn analyze_loop<'a>(
                     });
                 } else {
                     for (i, arg) in args.iter().enumerate() {
-                        analyze_loop(arg, vars, functions, errors);
+                        analyze_loop(tcx, arg, vars, functions, errors);
                         unify_expr_type(params[i].ty(), arg, errors);
                     }
                 }
@@ -213,9 +228,9 @@ fn analyze_loop<'a>(
         }
         syntax::ExprKind::Puts(args) => {
             for arg in args {
-                analyze_loop(arg, vars, functions, errors);
+                analyze_loop(tcx, arg, vars, functions, errors);
             }
-            unify_expr_type(Type::Int64, expr, errors);
+            unify_expr_type(tcx.int64(), expr, errors);
         }
         syntax::ExprKind::Fn(fun) => {
             // Function definition creates a new scope without a parent scope.
@@ -230,8 +245,8 @@ fn analyze_loop<'a>(
 
                 let body = fun.body();
 
-                analyze_loop(body, &mut scope, functions, errors);
-                analyze_loop(fun.then(), vars, functions, errors);
+                analyze_loop(tcx, body, &mut scope, functions, errors);
+                analyze_loop(tcx, fun.then(), vars, functions, errors);
             }
             functions.pop();
         }
@@ -240,7 +255,7 @@ fn analyze_loop<'a>(
             arms,
             else_body,
         } => {
-            analyze_loop(head, vars, functions, errors);
+            analyze_loop(tcx, head, vars, functions, errors);
 
             let head_ty = head
                 .ty()
@@ -254,7 +269,7 @@ fn analyze_loop<'a>(
                 }
 
                 let mut scope = Scope::from_parent(vars);
-                analyze_loop(arm.body(), &mut scope, functions, errors);
+                analyze_loop(tcx, arm.body(), &mut scope, functions, errors);
 
                 if let Some(expected) = expr_ty {
                     unify_expr_type(expected, arm.body(), errors);
@@ -265,7 +280,7 @@ fn analyze_loop<'a>(
 
             if let Some(else_body) = else_body {
                 let mut scope = Scope::from_parent(vars);
-                analyze_loop(else_body, &mut scope, functions, errors);
+                analyze_loop(tcx, else_body, &mut scope, functions, errors);
 
                 if let Some(expected) = expr_ty {
                     unify_expr_type(expected, else_body, errors);

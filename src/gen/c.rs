@@ -1,23 +1,23 @@
 //! C code generator
-use crate::typing::Type;
+use crate::ty::Type;
 
 use super::ir::{Expr, ExprKind, Function, Program, Stmt, Value};
 
 #[derive(Debug)]
 pub struct Emitter {}
 
-impl<'a> Default for Emitter {
+impl Default for Emitter {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> Emitter {
+impl<'a, 'tcx> Emitter {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn emit(&mut self, program: &'a Program<'a>) -> String {
+    pub fn emit(&mut self, program: &'a Program<'a, 'tcx>) -> String {
         let mut code = [
             "#include <stdio.h>",
             "#include <stdint.h>",
@@ -36,19 +36,19 @@ impl<'a> Emitter {
         code
     }
 
-    fn emit_function(&mut self, fun: &Function<'a>, code: &mut String) {
+    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
         if fun.is_entry_point {
             // 'main' must return 'int'
-            code.push_str(native_ty(Type::NativeInt));
+            code.push_str(c_type(&Type::NativeInt));
         } else {
-            code.push_str(native_ty(fun.retty));
+            code.push_str(c_type(fun.retty));
         }
         code.push(' ');
 
         code.push_str(&fun.name);
         code.push('(');
         for (i, param) in fun.params.iter().enumerate() {
-            code.push_str(native_ty(param.ty));
+            code.push_str(c_type(param.ty));
             code.push(' ');
             code.push_str(&param.name);
 
@@ -66,12 +66,12 @@ impl<'a> Emitter {
         code.push_str("}\n");
     }
 
-    fn emit_stmt(&mut self, stmt: &Stmt<'a>, code: &mut String) {
+    fn emit_stmt(&mut self, stmt: &Stmt<'a, 'tcx>, code: &mut String) {
         match stmt {
             Stmt::TmpVarDef { var, init, pruned } => {
                 if !pruned.get() {
                     if var.used.get() > 0 {
-                        code.push_str(native_ty(init.ty()));
+                        code.push_str(c_type(init.ty()));
                         code.push(' ');
                         code.push_str(&format!("t{} = ", var.index));
                     }
@@ -80,7 +80,7 @@ impl<'a> Emitter {
                 }
             }
             Stmt::VarDef { name, init } => {
-                code.push_str(native_ty(init.ty()));
+                code.push_str(c_type(init.ty()));
                 code.push(' ');
                 code.push_str(name);
                 code.push_str(" = ");
@@ -103,7 +103,7 @@ impl<'a> Emitter {
             }
             Stmt::Cond { branches, var } => {
                 if var.used.get() > 0 {
-                    code.push_str(native_ty(var.ty));
+                    code.push_str(c_type(var.ty));
                     code.push(' ');
                     code.push_str(&format!("t{}", var.index));
                     code.push_str(";\n");
@@ -132,7 +132,7 @@ impl<'a> Emitter {
         }
     }
 
-    fn emit_expr(&mut self, expr: &Expr<'a>, code: &mut String) {
+    fn emit_expr(&mut self, expr: &Expr<'a, 'tcx>, code: &mut String) {
         match expr.kind() {
             ExprKind::Minus(operand) => {
                 code.push('-');
@@ -248,6 +248,7 @@ impl<'a> Emitter {
                         Type::String => {
                             code.push_str("%s");
                         }
+                        Type::Tuple(_) => todo!(),
                         Type::NativeInt => {
                             code.push_str("%d");
                         }
@@ -272,6 +273,7 @@ impl<'a> Emitter {
                             code.push_str(" ? \"true\" : \"false\"");
                             code.push(')');
                         }
+                        Type::Tuple(_) => todo!(),
                     }
 
                     if i != (args.len() - 1) {
@@ -319,7 +321,7 @@ impl<'a> Emitter {
     }
 }
 
-fn immediate<'a>(expr: &'a Expr<'a>) -> &'a Expr<'a> {
+fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
     if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
         if let Some(expr) = t.immediate.get() {
             return expr;
@@ -328,11 +330,12 @@ fn immediate<'a>(expr: &'a Expr<'a>) -> &'a Expr<'a> {
     expr
 }
 
-fn native_ty(ty: Type) -> &'static str {
+fn c_type(ty: &Type) -> &'static str {
     match ty {
         Type::Int64 => "int64_t",
         Type::Boolean => "bool",
         Type::String => "const char *",
         Type::NativeInt => "int",
+        Type::Tuple(_) => todo!(),
     }
 }
