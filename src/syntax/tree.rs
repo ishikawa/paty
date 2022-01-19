@@ -417,9 +417,44 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     ) -> Result<&'tcx Type<'tcx>, ParseError<'t>> {
         let token = self.peek_token(it)?;
         let ty = match token.kind() {
-            TokenKind::TypeInt64 => self.tcx.int64(),
-            TokenKind::TypeBoolean => self.tcx.boolean(),
-            TokenKind::TypeString => self.tcx.string(),
+            TokenKind::TypeInt64 => {
+                it.next();
+                self.tcx.int64()
+            }
+            TokenKind::TypeBoolean => {
+                it.next();
+                self.tcx.boolean()
+            }
+            TokenKind::TypeString => {
+                it.next();
+                self.tcx.string()
+            }
+            TokenKind::Operator('(') => {
+                it.next();
+
+                // Try to parse tuple type.
+                let mut value_types = vec![];
+
+                while !self.match_token(it, TokenKind::Operator(')')) {
+                    let ty = self.type_specifier(it)?;
+                    value_types.push(ty);
+
+                    // trailing comma allowed, if the number of values is `1`,
+                    // it's mandatory.
+                    if self.match_token(it, TokenKind::Operator(',')) {
+                        it.next();
+                    } else if value_types.len() == 1 {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "','".to_string(),
+                            actual: self.peek_token(it)?,
+                        });
+                    }
+                }
+                // ')'
+                it.next();
+
+                self.tcx.tuple(&value_types)
+            }
             _ => {
                 return Err(ParseError::UnexpectedToken {
                     expected: "type".to_string(),
@@ -427,7 +462,6 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 });
             }
         };
-        it.next();
         Ok(ty)
     }
 

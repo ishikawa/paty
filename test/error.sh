@@ -105,5 +105,9 @@ assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
   n
 end
-foo(true)
-"
+foo(true)"
+assert 'Semantic error: expected type `(int64)`, found `int64`' "
+def foo(t: (int64,))
+  t
+end
+foo(100)"
