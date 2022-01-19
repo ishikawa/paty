@@ -535,6 +535,44 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 let kind = PatternKind::Boolean(false);
                 self.alloc_pat(kind, token)
             }
+            TokenKind::Operator('(') => {
+                // tuple or grouping values.
+                // - `()` -> empty tuple
+                // - `(pat)` -> pattern
+                // - `(pat,)` -> tuple (n = 1)
+                // - `(pat1, pat2, ...)` tuple
+                it.next(); // '('
+
+                let mut comma_seen = false;
+                let mut patterns = vec![];
+
+                while !self.match_token(it, TokenKind::Operator(')')) {
+                    if let Some(pat) = self.lookahead(self.pattern(it))? {
+                        patterns.push(pat);
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "pattern".to_string(),
+                            actual: self.peek_token(it)?,
+                        });
+                    }
+
+                    // tuple (n >= 1) must contain ','
+                    if self.match_token(it, TokenKind::Operator(',')) {
+                        it.next(); // ','
+                        comma_seen = true;
+                    }
+                }
+                it.next(); // ')'
+
+                if comma_seen || patterns.is_empty() {
+                    let kind = PatternKind::Tuple(patterns);
+                    self.alloc_pat(kind, token)
+                } else if patterns.len() == 1 {
+                    patterns[0]
+                } else {
+                    unreachable!("invalid tuple or group");
+                }
+            }
             _ => {
                 return Err(ParseError::NotParsed);
             }
