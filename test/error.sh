@@ -111,7 +111,7 @@ def foo(t: (int64,))
   t
 end
 foo(100)"
-assert 'todo' "
+assert 'Semantic error: expected type `(int64, int64)`, found `(int64, int64, int64)`' "
 def foo(t: (int64, int64))
   case t
   when (1, 2, 3)

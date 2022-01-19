@@ -778,9 +778,42 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 ExprKind::Boolean(false)
             }
             TokenKind::Operator('(') => {
-                it.next();
-                let expr = self.expr(it)?;
+                // tuple or grouping values.
+                // - `()` -> empty tuple
+                // - `(expr)` -> expr
+                // - `(expr,)` -> tuple (n = 1)
+                // - `(expr1, expr2, ...)` tuple
+                self.expect_token(it, TokenKind::Operator('('))?;
+
+                let mut comma_seen = false;
+                let mut exprs = vec![];
+
+                while !self.match_token(it, TokenKind::Operator(')')) {
+                    if let Some(pat) = self.lookahead(self.expr(it))? {
+                        exprs.push(pat);
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "expr".to_string(),
+                            actual: self.peek_token(it)?,
+                        });
+                    }
+
+                    // tuple (n >= 1) must contain ','
+                    if self.match_token(it, TokenKind::Operator(',')) {
+                        it.next(); // ','
+                        comma_seen = true;
+                    }
+                }
                 self.expect_token(it, TokenKind::Operator(')'))?;
+
+                let expr = if comma_seen || exprs.is_empty() {
+                    let kind = ExprKind::Tuple(exprs);
+                    self.alloc_expr(kind, token)
+                } else if exprs.len() == 1 {
+                    exprs[0]
+                } else {
+                    unreachable!("invalid tuple or group");
+                };
 
                 return Ok(expr);
             }
