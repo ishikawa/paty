@@ -350,11 +350,15 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
         PatternKind::Range { .. } => {
             unify_pat_type(tcx.int64(), pat, errors);
         }
-        PatternKind::Or(pat1, pat2) => {
-            analyze_pattern(tcx, pat1, vars, functions, errors);
-            analyze_pattern(tcx, pat2, vars, functions, errors);
+        PatternKind::Tuple(patterns) => {
+            let mut sub_types = vec![];
 
-            todo!("or-pattern should be typed with an union type.");
+            for sub_pat in patterns {
+                analyze_pattern(tcx, sub_pat, vars, functions, errors);
+                sub_types.push(sub_pat.ty().unwrap());
+            }
+
+            unify_pat_type(tcx.tuple(&sub_types), pat, errors);
         }
         PatternKind::Wildcard => {}
     }

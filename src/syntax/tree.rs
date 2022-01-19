@@ -246,7 +246,7 @@ pub enum PatternKind<'pcx, 'tcx> {
     Boolean(bool),
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
-    Or(&'pcx Pattern<'pcx, 'tcx>, &'pcx Pattern<'pcx, 'tcx>),
+    Tuple(Vec<&'pcx Pattern<'pcx, 'tcx>>),
     Wildcard,
 }
 
@@ -271,7 +271,17 @@ impl fmt::Display for PatternKind<'_, '_> {
                     write!(f, "{}", hi)
                 }
             }
-            PatternKind::Or(_, _) => todo!(),
+            PatternKind::Tuple(patterns) => {
+                let mut it = patterns.iter().peekable();
+                write!(f, "(")?;
+                while let Some(sub_pat) = it.next() {
+                    write!(f, "{}", sub_pat.kind())?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
             PatternKind::Wildcard => write!(f, "_"),
         }
     }

@@ -600,7 +600,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                                 self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
                             }
-                            PatternKind::Or(_, _) => todo!(),
+                            PatternKind::Tuple(_) => todo!(),
                             PatternKind::Wildcard => self.expr_arena.alloc(self.bool(true)),
                         };
 

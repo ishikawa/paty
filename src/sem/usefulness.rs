@@ -870,7 +870,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 ctor = Constructor::Str(s.clone());
                 fields = Fields::empty();
             }
-            PatternKind::Or(_, _) => todo!(),
+            PatternKind::Tuple(_) => todo!(),
         }
 
         DeconstructedPat::new(ctor, fields, pat_ty)
