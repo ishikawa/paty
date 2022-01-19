@@ -368,6 +368,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 self.push_expr(kind, expr, stmts)
             }
+            syntax::ExprKind::Tuple(_) => todo!(),
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
                 let kind = ExprKind::Minus(self.inc_used(a));

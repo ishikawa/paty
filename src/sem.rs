@@ -153,6 +153,16 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
         syntax::ExprKind::String(_) => {
             unify_expr_type(tcx.string(), expr, errors);
         }
+        syntax::ExprKind::Tuple(values) => {
+            let mut value_types = vec![];
+
+            for value in values {
+                analyze_expr(tcx, value, vars, functions, errors);
+                value_types.push(value.ty().unwrap());
+            }
+
+            unify_expr_type(tcx.tuple(&value_types), expr, errors);
+        }
         syntax::ExprKind::Minus(a) => {
             analyze_expr(tcx, a, vars, functions, errors);
 

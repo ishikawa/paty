@@ -23,6 +23,11 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::String)
     }
 
+    pub fn tuple(&self, value_types: &[&'tcx Type<'tcx>]) -> &'tcx Type<'tcx> {
+        self.type_arena
+            .alloc(Type::Tuple(value_types.iter().copied().collect()))
+    }
+
     pub fn native_int(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::NativeInt)
     }

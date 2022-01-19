@@ -71,6 +71,7 @@ pub enum ExprKind<'pcx, 'tcx> {
     Boolean(bool),
     String(String),
     Var(String),
+    Tuple(Vec<&'pcx Expr<'pcx, 'tcx>>),
 
     // unary operators
     Minus(&'pcx Expr<'pcx, 'tcx>),
