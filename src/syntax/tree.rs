@@ -201,26 +201,31 @@ impl<'pcx, 'tcx> CaseArm<'pcx, 'tcx> {
 
 #[derive(Debug)]
 pub struct Pattern<'pcx, 'tcx> {
-    kind: PatternKind<'pcx, 'pcx>,
-    ty: &'tcx Type<'tcx>,
+    kind: PatternKind<'pcx, 'tcx>,
+    // The type of expression is determined in later phase.
+    ty: Cell<Option<&'tcx Type<'tcx>>>,
     comments: Vec<String>,
 }
 
 impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
-    pub fn new(kind: PatternKind<'pcx, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
+    pub fn new(kind: PatternKind<'pcx, 'tcx>) -> Self {
         Self {
             kind,
-            ty,
+            ty: Cell::new(None),
             comments: vec![],
         }
     }
 
-    pub fn kind(&self) -> &PatternKind<'pcx, 'pcx> {
+    pub fn kind(&self) -> &PatternKind<'pcx, 'tcx> {
         &self.kind
     }
 
-    pub fn ty(&self) -> &'tcx Type<'tcx> {
-        self.ty
+    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.ty.set(Some(ty))
     }
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
@@ -241,7 +246,7 @@ pub enum PatternKind<'pcx, 'tcx> {
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
     Or(&'pcx Pattern<'pcx, 'tcx>, &'pcx Pattern<'pcx, 'tcx>),
-    Wildcard(&'tcx Type<'tcx>),
+    Wildcard,
 }
 
 impl fmt::Display for PatternKind<'_, '_> {
@@ -266,7 +271,7 @@ impl fmt::Display for PatternKind<'_, '_> {
                 }
             }
             PatternKind::Or(_, _) => todo!(),
-            PatternKind::Wildcard(_) => write!(f, "_"),
+            PatternKind::Wildcard => write!(f, "_"),
         }
     }
 }
@@ -465,25 +470,25 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                     PatternKind::Integer(i)
                 };
 
-                self.alloc_pat(kind, self.tcx.int64(), token)
+                self.alloc_pat(kind, token)
             }
             TokenKind::String(s) => {
                 it.next();
 
                 let kind = PatternKind::String(s.clone());
-                self.alloc_pat(kind, self.tcx.string(), token)
+                self.alloc_pat(kind, token)
             }
             TokenKind::True => {
                 it.next();
 
                 let kind = PatternKind::Boolean(true);
-                self.alloc_pat(kind, self.tcx.boolean(), token)
+                self.alloc_pat(kind, token)
             }
             TokenKind::False => {
                 it.next();
 
                 let kind = PatternKind::Boolean(false);
-                self.alloc_pat(kind, self.tcx.boolean(), token)
+                self.alloc_pat(kind, token)
             }
             _ => {
                 return Err(ParseError::NotParsed);
@@ -803,13 +808,8 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         self.expr_arena.alloc(expr)
     }
 
-    fn alloc_pat(
-        &self,
-        kind: PatternKind<'pcx, 'tcx>,
-        ty: &'tcx Type<'tcx>,
-        token: &Token,
-    ) -> &'pcx Pattern<'pcx, 'tcx> {
-        let mut pat = Pattern::new(kind, ty);
+    fn alloc_pat(&self, kind: PatternKind<'pcx, 'tcx>, token: &Token) -> &'pcx Pattern<'pcx, 'tcx> {
+        let mut pat = Pattern::new(kind);
         pat.append_comments_from(token);
 
         self.pat_arena.alloc(pat)

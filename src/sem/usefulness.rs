@@ -156,7 +156,7 @@ impl IntRange {
             }
         };
 
-        Pattern::new(kind, ty)
+        Pattern::new(kind)
     }
 
     /// See `Constructor::is_covered_by`
@@ -839,10 +839,12 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     }
 
     pub fn from_pat(_cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
+        let pat_ty = pat.ty().unwrap();
+
         let ctor;
         let fields;
         match pat.kind() {
-            PatternKind::Wildcard(_) => {
+            PatternKind::Wildcard => {
                 ctor = Constructor::Wildcard;
                 fields = Fields::empty();
             }
@@ -859,7 +861,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 fields = Fields::empty();
             }
             PatternKind::Range { lo, hi, end } => {
-                let int_range = IntRange::from_range(*lo, *hi, &Type::Int64, *end);
+                let int_range = IntRange::from_range(*lo, *hi, pat_ty, *end);
 
                 ctor = Constructor::IntRange(int_range);
                 fields = Fields::empty();
@@ -871,21 +873,23 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             PatternKind::Or(_, _) => todo!(),
         }
 
-        DeconstructedPat::new(ctor, fields, pat.ty())
+        DeconstructedPat::new(ctor, fields, pat_ty)
     }
 
     pub fn to_pat(&self) -> Pattern<'_, 'tcx> {
-        let pat = match &self.ctor {
+        let kind = match &self.ctor {
             Constructor::IntRange(range) => return range.to_pat(self.ty()),
             Constructor::Str(s) => PatternKind::String(s.clone()),
-            Constructor::Wildcard | Constructor::NonExhaustive => PatternKind::Wildcard(self.ty()),
+            Constructor::Wildcard | Constructor::NonExhaustive => PatternKind::Wildcard,
             Constructor::Missing { .. } => unreachable!(
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
                 `Missing` should have been processed in `apply_constructors`"
             ),
         };
 
-        Pattern::new(pat, self.ty())
+        let pat = Pattern::new(kind);
+        pat.assign_ty(self.ty());
+        pat
     }
 
     pub(super) fn ctor(&self) -> &Constructor {
@@ -1287,7 +1291,7 @@ fn compute_match_usefulness<'p, 'tcx>(
 
 pub fn check_match<'tcx>(
     head_ty: &'tcx Type<'tcx>,
-    arms: &[CaseArm],
+    arms: &[CaseArm<'_, 'tcx>],
     has_else: bool,
 ) -> Result<(), Vec<SemanticError<'tcx>>> {
     let pattern_arena = Arena::default();
@@ -1432,7 +1436,8 @@ mod tests_deconstructed_pat {
             hi: 2,
             end: RangeEnd::Included,
         };
-        let pat = Pattern::new(kind, &Type::Int64);
+        let pat = Pattern::new(kind);
+        pat.assign_ty(&Type::Int64);
         let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
 
         assert_eq!(dc_pat.ty(), &Type::Int64);

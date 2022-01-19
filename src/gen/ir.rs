@@ -600,7 +600,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                                 self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
                             }
                             PatternKind::Or(_, _) => todo!(),
-                            PatternKind::Wildcard(_) => self.expr_arena.alloc(self.bool(true)),
+                            PatternKind::Wildcard => self.expr_arena.alloc(self.bool(true)),
                         };
 
                         let mut branch_stmts = vec![];

@@ -1,5 +1,6 @@
 //! Semantic analysis
 use self::error::SemanticError;
+use crate::syntax::PatternKind;
 use crate::{
     syntax,
     ty::{Type, TypeContext},
@@ -88,7 +89,7 @@ pub fn analyze<'pcx: 'tcx, 'tcx>(
     let mut errors = vec![];
     let mut scope = Scope::new();
 
-    analyze_loop(tcx, expr, &mut scope, &mut Vec::new(), &mut errors);
+    analyze_expr(tcx, expr, &mut scope, &mut Vec::new(), &mut errors);
     if errors.is_empty() {
         Ok(SemAST::new(expr))
     } else {
@@ -109,6 +110,19 @@ fn unify_expr_type<'pcx: 'tcx, 'tcx>(
     }
 }
 
+fn unify_pat_type<'pcx: 'tcx, 'tcx>(
+    expected: &'tcx Type<'tcx>,
+    pat: &syntax::Pattern<'pcx, 'tcx>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) -> bool {
+    if let Some(actual) = pat.ty() {
+        check_type(expected, actual, errors)
+    } else {
+        pat.assign_ty(expected);
+        true
+    }
+}
+
 fn check_type<'tcx>(
     expected: &'tcx Type<'tcx>,
     actual: &'tcx Type<'tcx>,
@@ -122,7 +136,7 @@ fn check_type<'tcx>(
     }
 }
 
-fn analyze_loop<'pcx: 'tcx, 'tcx>(
+fn analyze_expr<'pcx: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     expr: &'pcx syntax::Expr<'pcx, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
@@ -140,7 +154,7 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
             unify_expr_type(tcx.string(), expr, errors);
         }
         syntax::ExprKind::Minus(a) => {
-            analyze_loop(tcx, a, vars, functions, errors);
+            analyze_expr(tcx, a, vars, functions, errors);
 
             unify_expr_type(tcx.int64(), a, errors);
             unify_expr_type(tcx.int64(), expr, errors);
@@ -149,8 +163,8 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
         | syntax::ExprKind::Sub(a, b)
         | syntax::ExprKind::Mul(a, b)
         | syntax::ExprKind::Div(a, b) => {
-            analyze_loop(tcx, a, vars, functions, errors);
-            analyze_loop(tcx, b, vars, functions, errors);
+            analyze_expr(tcx, a, vars, functions, errors);
+            analyze_expr(tcx, b, vars, functions, errors);
 
             unify_expr_type(tcx.int64(), a, errors);
             unify_expr_type(tcx.int64(), b, errors);
@@ -162,16 +176,16 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
         | syntax::ExprKind::Ge(a, b)
         | syntax::ExprKind::Eq(a, b)
         | syntax::ExprKind::Ne(a, b) => {
-            analyze_loop(tcx, a, vars, functions, errors);
-            analyze_loop(tcx, b, vars, functions, errors);
+            analyze_expr(tcx, a, vars, functions, errors);
+            analyze_expr(tcx, b, vars, functions, errors);
 
             unify_expr_type(tcx.int64(), a, errors);
             unify_expr_type(tcx.int64(), b, errors);
             unify_expr_type(tcx.boolean(), expr, errors);
         }
         syntax::ExprKind::And(a, b) | syntax::ExprKind::Or(a, b) => {
-            analyze_loop(tcx, a, vars, functions, errors);
-            analyze_loop(tcx, b, vars, functions, errors);
+            analyze_expr(tcx, a, vars, functions, errors);
+            analyze_expr(tcx, b, vars, functions, errors);
 
             unify_expr_type(tcx.boolean(), a, errors);
             unify_expr_type(tcx.boolean(), b, errors);
@@ -185,7 +199,7 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
             }
         }
         syntax::ExprKind::Let { name, rhs, then } => {
-            analyze_loop(tcx, rhs, vars, functions, errors);
+            analyze_expr(tcx, rhs, vars, functions, errors);
 
             let ty = rhs
                 .ty()
@@ -193,7 +207,7 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
             let binding = Binding::new(name, ty);
 
             vars.insert(binding);
-            analyze_loop(tcx, then, vars, functions, errors);
+            analyze_expr(tcx, then, vars, functions, errors);
         }
         syntax::ExprKind::Call(name, args) => {
             if let Some(fun) = functions
@@ -212,7 +226,7 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
                     });
                 } else {
                     for (i, arg) in args.iter().enumerate() {
-                        analyze_loop(tcx, arg, vars, functions, errors);
+                        analyze_expr(tcx, arg, vars, functions, errors);
                         unify_expr_type(params[i].ty(), arg, errors);
                     }
                 }
@@ -228,7 +242,7 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
         }
         syntax::ExprKind::Puts(args) => {
             for arg in args {
-                analyze_loop(tcx, arg, vars, functions, errors);
+                analyze_expr(tcx, arg, vars, functions, errors);
             }
             unify_expr_type(tcx.int64(), expr, errors);
         }
@@ -245,8 +259,8 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
 
                 let body = fun.body();
 
-                analyze_loop(tcx, body, &mut scope, functions, errors);
-                analyze_loop(tcx, fun.then(), vars, functions, errors);
+                analyze_expr(tcx, body, &mut scope, functions, errors);
+                analyze_expr(tcx, fun.then(), vars, functions, errors);
             }
             functions.pop();
         }
@@ -255,7 +269,7 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
             arms,
             else_body,
         } => {
-            analyze_loop(tcx, head, vars, functions, errors);
+            analyze_expr(tcx, head, vars, functions, errors);
 
             let head_ty = head
                 .ty()
@@ -264,12 +278,14 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
 
             for arm in arms {
                 // pattern's type
-                if !check_type(head_ty, arm.pattern().ty(), errors) {
+                analyze_pattern(tcx, arm.pattern(), vars, functions, errors);
+
+                if !unify_pat_type(head_ty, arm.pattern(), errors) {
                     return;
                 }
 
                 let mut scope = Scope::from_parent(vars);
-                analyze_loop(tcx, arm.body(), &mut scope, functions, errors);
+                analyze_expr(tcx, arm.body(), &mut scope, functions, errors);
 
                 if let Some(expected) = expr_ty {
                     unify_expr_type(expected, arm.body(), errors);
@@ -280,7 +296,7 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
 
             if let Some(else_body) = else_body {
                 let mut scope = Scope::from_parent(vars);
-                analyze_loop(tcx, else_body, &mut scope, functions, errors);
+                analyze_expr(tcx, else_body, &mut scope, functions, errors);
 
                 if let Some(expected) = expr_ty {
                     unify_expr_type(expected, else_body, errors);
@@ -301,5 +317,35 @@ fn analyze_loop<'pcx: 'tcx, 'tcx>(
                 errors.extend(err);
             }
         }
+    }
+}
+
+fn analyze_pattern<'pcx: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match pat.kind() {
+        PatternKind::Integer(_) => {
+            unify_pat_type(tcx.int64(), pat, errors);
+        }
+        PatternKind::Boolean(_) => {
+            unify_pat_type(tcx.boolean(), pat, errors);
+        }
+        PatternKind::String(_) => {
+            unify_pat_type(tcx.string(), pat, errors);
+        }
+        PatternKind::Range { .. } => {
+            unify_pat_type(tcx.int64(), pat, errors);
+        }
+        PatternKind::Or(pat1, pat2) => {
+            analyze_pattern(tcx, pat1, vars, functions, errors);
+            analyze_pattern(tcx, pat2, vars, functions, errors);
+
+            todo!("or-pattern should be typed with an union type.");
+        }
+        PatternKind::Wildcard => {}
     }
 }
