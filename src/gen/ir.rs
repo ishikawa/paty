@@ -217,15 +217,15 @@ pub enum ExprKind<'a, 'tcx> {
     Ge(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     And(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     Or(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
-    Call {
-        name: String,
-        args: Vec<&'a Expr<'a, 'tcx>>,
-    },
     // `condition ? yes_value : no_value`
-    Select {
+    Cond {
         condition: &'a Expr<'a, 'tcx>,
         then_expr: &'a Expr<'a, 'tcx>,
         else_expr: &'a Expr<'a, 'tcx>,
+    },
+    Call {
+        name: String,
+        args: Vec<&'a Expr<'a, 'tcx>>,
     },
     Value(Value<'a, 'tcx>),
 }
@@ -752,7 +752,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             Type::Boolean => {
                 // "true" / "false"
                 let cond = self._build(expr, program, stmts);
-                let kind = ExprKind::Select {
+                let kind = ExprKind::Cond {
                     condition: self.inc_used(cond),
                     then_expr: self.const_string("true"),
                     else_expr: self.const_string("false"),
@@ -954,7 +954,7 @@ impl<'a, 'tcx> Optimizer {
                     self.optimize_expr(arg);
                 }
             }
-            ExprKind::Select {
+            ExprKind::Cond {
                 condition,
                 then_expr,
                 else_expr,

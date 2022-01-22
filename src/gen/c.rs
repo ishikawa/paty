@@ -257,7 +257,7 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push(')');
             }
-            ExprKind::Select {
+            ExprKind::Cond {
                 condition,
                 then_expr,
                 else_expr,
