@@ -219,6 +219,24 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             vars.insert(binding);
             analyze_expr(tcx, then, vars, functions, errors);
         }
+        syntax::ExprKind::Elem(operand, index) => {
+            analyze_expr(tcx, operand, vars, functions, errors);
+
+            // index boundary check
+            let ty = operand.ty().unwrap();
+            if let Type::Tuple(fs) = ty {
+                if *index < fs.len() {
+                    // apply type
+                    unify_expr_type(fs[*index], expr, errors);
+                    return;
+                }
+            }
+
+            errors.push(SemanticError::FieldNotFound {
+                name: index.to_string(),
+                ty,
+            });
+        }
         syntax::ExprKind::Call(name, args) => {
             if let Some(fun) = functions
                 .iter()

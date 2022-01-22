@@ -90,6 +90,8 @@ pub enum ExprKind<'pcx, 'tcx> {
     And(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
     Or(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
 
+    // tuple.0, tuple.1, ...
+    Elem(&'pcx Expr<'pcx, 'tcx>, usize),
     Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
     Let {
         name: String,

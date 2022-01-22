@@ -465,6 +465,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 self.push_expr(kind, expr, stmts)
             }
+            syntax::ExprKind::Elem(_, _) => todo!(),
             syntax::ExprKind::Call(name, args) => {
                 let kind = ExprKind::Call {
                     name: name.clone(),
@@ -684,11 +685,9 @@ impl<'a, 'tcx> Optimizer {
                 if var.used.get() == 1 {
                     // This temporary variable is used only once, so it could be
                     // replaced with the expression if it has no side-effect.
-                    //if let Expr::Value(_) = init {
                     var.immediate.set(Some(init));
                     pruned.set(true);
                     return;
-                    //}
                 }
                 self.optimize_expr(init);
             }

@@ -21,6 +21,8 @@ pub enum SemanticError<'tcx> {
         expected: &'tcx Type<'tcx>,
         actual: &'tcx Type<'tcx>,
     },
+    #[error("no field `{name}` on type `{ty}`")]
+    FieldNotFound { name: String, ty: &'tcx Type<'tcx> },
     // pattern match errors
     #[error("unreachable pattern: `{pattern}`")]
     UnreachablePattern { pattern: String },

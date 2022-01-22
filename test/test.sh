@@ -148,8 +148,11 @@ assert '1 2 3 4' "
     fruit_to_num(\"Orange\"),
     fruit_to_num(\"Strawberry\"),
     fruit_to_num(\"Grape\")
-  )
-"
+  )"
+# tuple
+assert "2022 1 22" "
+date = (2022, 1, 22)
+puts(date.0, date.1, date.2)"
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
