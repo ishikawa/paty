@@ -5,9 +5,30 @@ use std::cell::Cell;
 use std::fmt;
 use typed_arena::Arena;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Program<'a, 'tcx> {
-    pub functions: Vec<Function<'a, 'tcx>>,
+    decl_types: Vec<&'tcx Type<'tcx>>,
+    functions: Vec<Function<'a, 'tcx>>,
+}
+
+impl<'a, 'tcx> Program<'a, 'tcx> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_decl_type(&mut self, ty: &'tcx Type<'tcx>) {
+        if !self.decl_types.contains(&ty) {
+            self.decl_types.push(ty);
+        }
+    }
+
+    pub fn decl_types(&self) -> impl Iterator<Item = &Type<'tcx>> {
+        self.decl_types.iter().copied()
+    }
+
+    pub fn functions(&self) -> impl Iterator<Item = &Function<'a, 'tcx>> {
+        self.functions.iter()
+    }
 }
 
 impl fmt::Display for Program<'_, '_> {
@@ -213,8 +234,10 @@ pub enum Value<'a, 'tcx> {
     Int64(i64),
     Bool(bool),
     String(String),
+    Tuple(&'tcx Type<'tcx>, Vec<&'a Expr<'a, 'tcx>>),
+    Field(&'a Expr<'a, 'tcx>, String),
     TmpVar(&'a TmpVar<'a, 'tcx>),
-    Var(String, &'tcx Type<'tcx>),
+    Var(&'tcx Type<'tcx>, String),
 }
 
 pub struct Builder<'a, 'tcx> {
@@ -243,7 +266,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
     }
 
     pub fn build(&mut self, ast: &sem::SemAST<'pcx, 'tcx>) -> Program<'a, 'tcx> {
-        let mut program = Program { functions: vec![] };
+        let mut program = Program::new();
         let mut stmts = vec![];
 
         // Build top level statements and function definitions.
@@ -368,7 +391,24 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 self.push_expr(kind, expr, stmts)
             }
-            syntax::ExprKind::Tuple(_) => todo!(),
+            syntax::ExprKind::Tuple(sub_exprs) => {
+                // Add tuple type to declaration types, because we have to
+                // declare tuple type as a struct type in C.
+                let tuple_ty = expr.ty().unwrap();
+                program.add_decl_type(tuple_ty);
+
+                let mut values = vec![];
+
+                for sub in sub_exprs {
+                    let value = self._build(sub, program, stmts);
+                    values.push(self.inc_used(value));
+                }
+
+                let value = Value::Tuple(tuple_ty, values);
+                let kind = ExprKind::Value(value);
+
+                self.push_expr(kind, expr, stmts)
+            }
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
                 let kind = ExprKind::Minus(self.inc_used(a));
@@ -460,12 +500,18 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr(kind, expr, stmts)
             }
             syntax::ExprKind::Var(name) => {
-                let value = Value::Var(name.clone(), expr.ty().unwrap());
+                let value = Value::Var(expr.ty().unwrap(), name.clone());
                 let kind = ExprKind::Value(value);
 
                 self.push_expr(kind, expr, stmts)
             }
-            syntax::ExprKind::Elem(_, _) => todo!(),
+            syntax::ExprKind::Elem(operand, index) => {
+                let operand = self._build(operand, program, stmts);
+                let value = Value::Field(self.inc_used(operand), format!("_{}", index));
+                let kind = ExprKind::Value(value);
+
+                self.push_expr(kind, expr, stmts)
+            }
             syntax::ExprKind::Call(name, args) => {
                 let kind = ExprKind::Call {
                     name: name.clone(),
