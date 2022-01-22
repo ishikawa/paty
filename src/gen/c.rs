@@ -1,7 +1,7 @@
 //! C code generator
 use crate::ty::Type;
 
-use super::ir::{Expr, ExprKind, Function, LiteralStr, Program, Stmt, Value};
+use super::ir::{Expr, ExprKind, Function, LiteralStr, Program, Stmt};
 
 #[derive(Debug)]
 pub struct Emitter {}
@@ -270,19 +270,13 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(else_expr, code);
                 code.push(')');
             }
-            ExprKind::Value(value) => self.emit_value(value, code),
-        }
-    }
-
-    fn emit_value(&mut self, value: &Value, code: &mut String) {
-        match value {
-            Value::Int(n) => code.push_str(&format!("{}", *n)),
-            Value::Int64(n) => {
+            ExprKind::Int(n) => code.push_str(&format!("{}", *n)),
+            ExprKind::Int64(n) => {
                 // Use standard macros for integer constant expression to expand
                 // a value to the type int_least_N.
                 code.push_str(&format!("INT64_C({})", *n))
             }
-            Value::Bool(b) => {
+            ExprKind::Bool(b) => {
                 // Use standard macros for boolean constant expression.
                 if *b {
                     code.push_str("true");
@@ -290,14 +284,14 @@ impl<'a, 'tcx> Emitter {
                     code.push_str("false");
                 }
             }
-            Value::Str(s) => {
+            ExprKind::Str(s) => {
                 code.push_str("u8\"");
                 for c in s.escape_default() {
                     code.push(c);
                 }
                 code.push('"');
             }
-            Value::LiteralStr(lits) => {
+            ExprKind::LiteralStr(lits) => {
                 let mut it = lits.iter().peekable();
 
                 // concatenate adjusting literal string
@@ -324,7 +318,7 @@ impl<'a, 'tcx> Emitter {
                     }
                 }
             }
-            Value::Tuple(ty, values) => {
+            ExprKind::Tuple(ty, values) => {
                 // Specify struct type explicitly.
                 code.push('(');
                 code.push_str(&c_type(ty));
@@ -346,18 +340,18 @@ impl<'a, 'tcx> Emitter {
 
                 code.push('}');
             }
-            Value::Field(operand, name) => {
+            ExprKind::TupleField { operand, index } => {
                 self.emit_expr(operand, code);
-                code.push_str(&format!(".{}", name));
+                code.push_str(&format!("._{}", index));
             }
-            Value::TmpVar(t) => {
+            ExprKind::TmpVar(t) => {
                 if let Some(expr) = t.immediate.get() {
                     self.emit_expr(expr, code);
                 } else {
                     code.push_str(&format!("t{}", t.index));
                 }
             }
-            Value::Var(_, name) => code.push_str(name),
+            ExprKind::Var(_, name) => code.push_str(name),
         }
     }
 }

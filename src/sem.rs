@@ -219,7 +219,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             vars.insert(binding);
             analyze_expr(tcx, then, vars, functions, errors);
         }
-        syntax::ExprKind::Elem(operand, index) => {
+        syntax::ExprKind::TupleField(operand, index) => {
             analyze_expr(tcx, operand, vars, functions, errors);
 
             // index boundary check

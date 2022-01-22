@@ -100,7 +100,7 @@ pub enum ExprKind<'pcx, 'tcx> {
     Or(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
 
     // tuple.0, tuple.1, ...
-    Elem(&'pcx Expr<'pcx, 'tcx>, usize),
+    TupleField(&'pcx Expr<'pcx, 'tcx>, usize),
     Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
     Let {
         name: String,
@@ -769,7 +769,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             if let TokenKind::Integer(n) = t.kind() {
                 it.next();
                 let index = n.parse().unwrap();
-                lhs = self.alloc_expr(ExprKind::Elem(lhs, index), token);
+                lhs = self.alloc_expr(ExprKind::TupleField(lhs, index), token);
             } else {
                 return Err(ParseError::UnexpectedToken {
                     expected: "index".to_string(),

@@ -227,34 +227,22 @@ pub enum ExprKind<'a, 'tcx> {
         name: String,
         args: Vec<&'a Expr<'a, 'tcx>>,
     },
-    Value(Value<'a, 'tcx>),
-}
 
-impl<'a, 'tcx> ExprKind<'a, 'tcx> {
-    pub fn index_field(operand: &'a Expr<'a, 'tcx>, index: usize) -> Self {
-        Self::Value(Value::index_field(operand, index))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Value<'a, 'tcx> {
+    // Values
+    Int64(i64),
     /// Native "int" type.
     Int(i32),
-    Int64(i64),
     Bool(bool),
     Str(String),
     Tuple(&'tcx Type<'tcx>, Vec<&'a Expr<'a, 'tcx>>),
-    Field(&'a Expr<'a, 'tcx>, String),
+    TupleField {
+        operand: &'a Expr<'a, 'tcx>,
+        index: usize,
+    },
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(&'tcx Type<'tcx>, String),
     // Adjacent string literal (or macro) s can be combined into a single one.
     LiteralStr(Vec<LiteralStr>),
-}
-
-impl<'a, 'tcx> Value<'a, 'tcx> {
-    pub fn index_field(operand: &'a Expr<'a, 'tcx>, index: usize) -> Self {
-        Self::Field(operand, format!("_{}", index))
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -308,7 +296,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         // Add `return 0` statement for the entry point function if needed.
         let c_int_ty = self.tcx.native_int();
         if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
-            let kind = ExprKind::Value(Value::Int(0));
+            let kind = ExprKind::Int(0);
             let expr = Expr::new(kind, c_int_ty);
             let expr = self.expr_arena.alloc(expr);
 
@@ -350,7 +338,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         };
         stmts.push(stmt);
 
-        let kind = ExprKind::Value(Value::TmpVar(t));
+        let kind = ExprKind::TmpVar(t);
         self.expr_arena.alloc(Expr::new(kind, expr.ty()))
     }
 
@@ -369,12 +357,12 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         };
         stmts.push(stmt);
 
-        let kind = ExprKind::Value(Value::TmpVar(t));
+        let kind = ExprKind::TmpVar(t);
         self.expr_arena.alloc(Expr::new(kind, expr.ty()))
     }
 
     fn inc_used(&self, expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
-        if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
+        if let ExprKind::TmpVar(t) = expr.kind() {
             t.used.set(t.used.get() + 1);
         }
 
@@ -382,28 +370,28 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
     }
 
     fn int64(&self, value: i64) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Value(Value::Int64(value));
+        let kind = ExprKind::Int64(value);
         let ty = self.tcx.int64();
 
         self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
     fn native_int(&self, value: i32) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Value(Value::Int(value));
+        let kind = ExprKind::Int(value);
         let ty = self.tcx.native_int();
 
         self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
     fn bool(&self, value: bool) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Value(Value::Bool(value));
+        let kind = ExprKind::Bool(value);
         let ty = self.tcx.boolean();
 
         self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
     fn const_string(&self, value: &str) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Value(Value::Str(value.to_string()));
+        let kind = ExprKind::Str(value.to_string());
         let ty = self.tcx.string();
 
         self.expr_arena.alloc(Expr::new(kind, ty))
@@ -417,15 +405,11 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) -> &'a Expr<'a, 'tcx> {
         match expr.kind() {
             syntax::ExprKind::Integer(n) => {
-                let value = Value::Int64(*n);
-                let kind = ExprKind::Value(value);
-
+                let kind = ExprKind::Int64(*n);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Boolean(b) => {
-                let value = Value::Bool(*b);
-                let kind = ExprKind::Value(value);
-
+                let kind = ExprKind::Bool(*b);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::String(s) => {
@@ -445,9 +429,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     values.push(self.inc_used(value));
                 }
 
-                let value = Value::Tuple(tuple_ty, values);
-                let kind = ExprKind::Value(value);
-
+                let kind = ExprKind::Tuple(tuple_ty, values);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Minus(a) => {
@@ -541,14 +523,15 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Var(name) => {
-                let value = Value::Var(expr.ty().unwrap(), name.clone());
-                let kind = ExprKind::Value(value);
-
+                let kind = ExprKind::Var(expr.ty().unwrap(), name.clone());
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
-            syntax::ExprKind::Elem(operand, index) => {
+            syntax::ExprKind::TupleField(operand, index) => {
                 let operand = self._build(operand, program, stmts);
-                let kind = ExprKind::index_field(self.inc_used(operand), *index);
+                let kind = ExprKind::TupleField {
+                    operand: self.inc_used(operand),
+                    index: *index,
+                };
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
@@ -584,7 +567,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 format_literals.push(LiteralStr::str("\n"));
 
                 // Build arguments
-                let kind = ExprKind::Value(Value::LiteralStr(format_literals));
+                let kind = ExprKind::LiteralStr(format_literals);
                 let format_expr: &'a Expr<'a, 'tcx> =
                     self.expr_arena.alloc(Expr::new(kind, self.tcx.string()));
                 let mut printf_args = vec![format_expr];
@@ -691,7 +674,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let stmt = Stmt::Cond { branches, var: t };
                 stmts.push(stmt);
 
-                let kind = ExprKind::Value(Value::TmpVar(t));
+                let kind = ExprKind::TmpVar(t);
                 self.expr_arena.alloc(Expr::new(kind, t.ty))
             }
         }
@@ -738,12 +721,14 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) {
         match expr.ty().unwrap() {
             Type::Tuple(fs) => {
-                let a = self._build(expr, program, stmts);
+                let operand = self._build(expr, program, stmts);
 
                 // flatten values
                 for (i, sub_ty) in fs.iter().enumerate() {
-                    let value = Value::index_field(self.inc_used(a), i);
-                    let kind = ExprKind::Value(value);
+                    let kind = ExprKind::TupleField {
+                        operand: self.inc_used(operand),
+                        index: i,
+                    };
                     let ir_expr = self.push_expr_kind(kind, sub_ty, stmts);
 
                     args.push(self.inc_used(ir_expr));
@@ -826,7 +811,10 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     // Empty tuple is always matched with an empty tuple.
                     self.bool(true)
                 } else {
-                    let kind = ExprKind::index_field(self.inc_used(t_head), 0);
+                    let kind = ExprKind::TupleField {
+                        operand: self.inc_used(t_head),
+                        index: 0,
+                    };
                     let operand = self
                         .expr_arena
                         .alloc(Expr::new(kind, sub_pats[0].expect_ty()));
@@ -834,7 +822,10 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     let mut condition = self._build_pattern(operand, sub_pats[0]);
 
                     for (i, pat) in sub_pats.iter().enumerate().skip(1) {
-                        let kind = ExprKind::index_field(self.inc_used(t_head), i);
+                        let kind = ExprKind::TupleField {
+                            operand: self.inc_used(t_head),
+                            index: i,
+                        };
                         let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
 
                         let kind = ExprKind::And(condition, self._build_pattern(operand, pat));
@@ -864,7 +855,7 @@ impl<'a, 'tcx> Optimizer {
     }
 
     fn decr_used_and_prunable(&self, expr: &'a Expr<'a, 'tcx>) -> bool {
-        if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
+        if let ExprKind::TmpVar(t) = expr.kind() {
             let u = t.used.get();
             if u > 0 {
                 let u = u - 1;
@@ -963,9 +954,15 @@ impl<'a, 'tcx> Optimizer {
                 self.optimize_expr(then_expr);
                 self.optimize_expr(else_expr);
             }
-            ExprKind::Value(value) => self.optimize_value(value),
+            ExprKind::Int64(_)
+            | ExprKind::Int(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::Tuple(_, _)
+            | ExprKind::TupleField { .. }
+            | ExprKind::TmpVar(_)
+            | ExprKind::Var(_, _)
+            | ExprKind::LiteralStr(_) => {}
         }
     }
-
-    fn optimize_value(&mut self, _value: &Value) {}
 }
