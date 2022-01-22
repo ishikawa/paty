@@ -153,6 +153,13 @@ assert '1 2 3 4' "
 assert "2022 1 22" "
 date = (2022, 1, 22)
 puts(date.0, date.1, date.2)"
+assert "30 false" "
+def add_and_moreThan100(t: (int64, int64))
+  (t.0 + t.1, t.0 + t.1 > 100)
+end
+t = add_and_moreThan100((10, 20))
+puts(t.0, t.1)
+"
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

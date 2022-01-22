@@ -31,6 +31,7 @@ impl<'a, 'tcx> Emitter {
         for ty in program.decl_types() {
             self.emit_decl_type(ty, &mut code);
             code.push('\n');
+            code.push('\n');
         }
 
         for fun in program.functions() {
@@ -332,7 +333,12 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push('"');
             }
-            Value::Tuple(_, values) => {
+            Value::Tuple(ty, values) => {
+                // Specify struct type explicitly.
+                code.push('(');
+                code.push_str(&c_type(ty));
+                code.push(')');
+
                 // Initialize tuple struct with designated initializers.
                 code.push('{');
 
