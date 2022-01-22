@@ -234,7 +234,7 @@ pub enum ExprKind<'a, 'tcx> {
     Int(i32),
     Bool(bool),
     Str(String),
-    Tuple(&'tcx Type<'tcx>, Vec<&'a Expr<'a, 'tcx>>),
+    Tuple(Vec<&'a Expr<'a, 'tcx>>),
     TupleField {
         operand: &'a Expr<'a, 'tcx>,
         index: usize,
@@ -411,7 +411,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             syntax::ExprKind::Tuple(sub_exprs) => {
                 // Add tuple type to declaration types, because we have to
                 // declare tuple type as a struct type in C.
-                let tuple_ty = expr.ty().unwrap();
+                let tuple_ty = expr.expect_ty();
                 program.add_decl_type(tuple_ty);
 
                 let mut values = vec![];
@@ -421,8 +421,8 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     values.push(inc_used(value));
                 }
 
-                let kind = ExprKind::Tuple(tuple_ty, values);
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+                let kind = ExprKind::Tuple(values);
+                self.push_expr_kind(kind, tuple_ty, stmts)
             }
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
@@ -937,7 +937,7 @@ impl<'a, 'tcx> Optimizer {
             | ExprKind::Int(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
-            | ExprKind::Tuple(_, _)
+            | ExprKind::Tuple(_)
             | ExprKind::TupleField { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_, _)

@@ -318,10 +318,10 @@ impl<'a, 'tcx> Emitter {
                     }
                 }
             }
-            ExprKind::Tuple(ty, values) => {
+            ExprKind::Tuple(values) => {
                 // Specify struct type explicitly.
                 code.push('(');
-                code.push_str(&c_type(ty));
+                code.push_str(&c_type(expr.ty()));
                 code.push(')');
 
                 // Initialize tuple struct with designated initializers.
