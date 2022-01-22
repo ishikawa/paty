@@ -230,6 +230,12 @@ pub enum ExprKind<'a, 'tcx> {
     Value(Value<'a, 'tcx>),
 }
 
+impl<'a, 'tcx> ExprKind<'a, 'tcx> {
+    pub fn index_field(operand: &'a Expr<'a, 'tcx>, index: usize) -> Self {
+        Self::Value(Value::index_field(operand, index))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value<'a, 'tcx> {
     /// Native "int" type.
@@ -242,6 +248,12 @@ pub enum Value<'a, 'tcx> {
     Field(&'a Expr<'a, 'tcx>, String),
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(&'tcx Type<'tcx>, String),
+}
+
+impl<'a, 'tcx> Value<'a, 'tcx> {
+    pub fn index_field(operand: &'a Expr<'a, 'tcx>, index: usize) -> Self {
+        Self::Field(operand, format!("_{}", index))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -535,8 +547,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             syntax::ExprKind::Elem(operand, index) => {
                 let operand = self._build(operand, program, stmts);
-                let value = Value::Field(self.inc_used(operand), format!("_{}", index));
-                let kind = ExprKind::Value(value);
+                let kind = ExprKind::index_field(self.inc_used(operand), *index);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
@@ -643,62 +654,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     .iter()
                     .map(|arm| {
                         // Build an immediate value from the pattern
-                        let condition = match arm.pattern().kind() {
-                            PatternKind::Integer(n) => {
-                                let value = self.int64(*n);
-                                let eq = ExprKind::Eq(self.inc_used(t_head), value);
-
-                                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
-                            }
-                            PatternKind::Boolean(b) => {
-                                if *b {
-                                    self.inc_used(t_head)
-                                } else {
-                                    let expr = ExprKind::Not(self.inc_used(t_head));
-                                    self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
-                                }
-                            }
-                            PatternKind::String(s) => {
-                                // Compare the value of head expression and pattern string with
-                                // POSIX `strcmp` function.
-                                let value = self.const_string(s);
-                                let kind = ExprKind::Call {
-                                    name: "strcmp".to_string(),
-                                    args: vec![self.inc_used(t_head), value],
-                                };
-                                let strcmp =
-                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
-
-                                let zero = self.native_int(0);
-                                let eq = ExprKind::Eq(self.inc_used(strcmp), zero);
-
-                                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
-                            }
-                            PatternKind::Range { lo, hi, end } => {
-                                let lo = self.int64(*lo);
-                                let hi = self.int64(*hi);
-
-                                let lhs = ExprKind::Ge(self.inc_used(t_head), lo);
-
-                                let rhs = match end {
-                                    syntax::RangeEnd::Included => {
-                                        ExprKind::Le(self.inc_used(t_head), hi)
-                                    }
-                                    syntax::RangeEnd::Excluded => {
-                                        ExprKind::Lt(self.inc_used(t_head), hi)
-                                    }
-                                };
-
-                                let kind = ExprKind::And(
-                                    self.expr_arena.alloc(Expr::new(lhs, self.tcx.boolean())),
-                                    self.expr_arena.alloc(Expr::new(rhs, self.tcx.boolean())),
-                                );
-
-                                self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
-                            }
-                            PatternKind::Tuple(_) => todo!(),
-                            PatternKind::Wildcard => self.bool(true),
-                        };
+                        let condition = self._build_pattern(t_head, arm.pattern());
 
                         let mut branch_stmts = vec![];
                         let ret = self._build(arm.body(), program, &mut branch_stmts);
@@ -785,7 +741,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 // flatten values
                 for (i, sub_ty) in fs.iter().enumerate() {
-                    let value = Value::Field(self.inc_used(a), format!("_{}", i));
+                    let value = Value::index_field(self.inc_used(a), i);
                     let kind = ExprKind::Value(value);
                     let ir_expr = self.push_expr_kind(kind, sub_ty, stmts);
 
@@ -808,6 +764,86 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let a = self._build(expr, program, stmts);
                 args.push(self.inc_used(a));
             }
+        }
+    }
+
+    fn _build_pattern(
+        &mut self,
+        t_head: &'a Expr<'a, 'tcx>,
+        pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+    ) -> &'a Expr<'a, 'tcx> {
+        match pat.kind() {
+            PatternKind::Integer(n) => {
+                let value = self.int64(*n);
+                let eq = ExprKind::Eq(self.inc_used(t_head), value);
+
+                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
+            }
+            PatternKind::Boolean(b) => {
+                if *b {
+                    self.inc_used(t_head)
+                } else {
+                    let expr = ExprKind::Not(self.inc_used(t_head));
+                    self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
+                }
+            }
+            PatternKind::String(s) => {
+                // Compare the value of head expression and pattern string with
+                // POSIX `strcmp` function.
+                let value = self.const_string(s);
+                let kind = ExprKind::Call {
+                    name: "strcmp".to_string(),
+                    args: vec![self.inc_used(t_head), value],
+                };
+                let strcmp = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
+
+                let zero = self.native_int(0);
+                let eq = ExprKind::Eq(self.inc_used(strcmp), zero);
+
+                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
+            }
+            PatternKind::Range { lo, hi, end } => {
+                let lo = self.int64(*lo);
+                let hi = self.int64(*hi);
+
+                let lhs = ExprKind::Ge(self.inc_used(t_head), lo);
+
+                let rhs = match end {
+                    syntax::RangeEnd::Included => ExprKind::Le(self.inc_used(t_head), hi),
+                    syntax::RangeEnd::Excluded => ExprKind::Lt(self.inc_used(t_head), hi),
+                };
+
+                let kind = ExprKind::And(
+                    self.expr_arena.alloc(Expr::new(lhs, self.tcx.boolean())),
+                    self.expr_arena.alloc(Expr::new(rhs, self.tcx.boolean())),
+                );
+
+                self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
+            }
+            PatternKind::Tuple(sub_pats) => {
+                if sub_pats.is_empty() {
+                    // Empty tuple is always matched with an empty tuple.
+                    self.bool(true)
+                } else {
+                    let kind = ExprKind::index_field(self.inc_used(t_head), 0);
+                    let operand = self
+                        .expr_arena
+                        .alloc(Expr::new(kind, sub_pats[0].expect_ty()));
+
+                    let mut condition = self._build_pattern(operand, sub_pats[0]);
+
+                    for (i, pat) in sub_pats.iter().enumerate().skip(1) {
+                        let kind = ExprKind::index_field(self.inc_used(t_head), i);
+                        let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
+
+                        let kind = ExprKind::And(condition, self._build_pattern(operand, pat));
+                        condition = self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
+                    }
+
+                    condition
+                }
+            }
+            PatternKind::Wildcard => self.bool(true),
         }
     }
 }

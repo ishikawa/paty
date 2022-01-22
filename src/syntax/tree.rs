@@ -236,6 +236,15 @@ impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
         self.ty.get()
     }
 
+    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
+        self.ty().unwrap_or_else(|| {
+            panic!(
+                "Semantic analyzer can't assign type for pattern {}",
+                self.kind
+            );
+        })
+    }
+
     pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
     }
