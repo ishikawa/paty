@@ -242,12 +242,13 @@ pub enum Value<'a, 'tcx> {
     Int(i32),
     Int64(i64),
     Bool(bool),
-    // Adjacent string literal (or macro) s can be combined into a single one.
-    LiteralStr(Vec<LiteralStr>),
+    Str(String),
     Tuple(&'tcx Type<'tcx>, Vec<&'a Expr<'a, 'tcx>>),
     Field(&'a Expr<'a, 'tcx>, String),
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(&'tcx Type<'tcx>, String),
+    // Adjacent string literal (or macro) s can be combined into a single one.
+    LiteralStr(Vec<LiteralStr>),
 }
 
 impl<'a, 'tcx> Value<'a, 'tcx> {
@@ -402,7 +403,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
     }
 
     fn const_string(&self, value: &str) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Value(Value::LiteralStr(vec![LiteralStr::Str(value.to_string())]));
+        let kind = ExprKind::Value(Value::Str(value.to_string()));
         let ty = self.tcx.string();
 
         self.expr_arena.alloc(Expr::new(kind, ty))

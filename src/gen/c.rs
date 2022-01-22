@@ -290,6 +290,13 @@ impl<'a, 'tcx> Emitter {
                     code.push_str("false");
                 }
             }
+            Value::Str(s) => {
+                code.push_str("u8\"");
+                for c in s.escape_default() {
+                    code.push(c);
+                }
+                code.push('"');
+            }
             Value::LiteralStr(lits) => {
                 let mut it = lits.iter().peekable();
 
