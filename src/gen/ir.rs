@@ -230,8 +230,6 @@ pub enum ExprKind<'a, 'tcx> {
 
     // Values
     Int64(i64),
-    /// Native "int" type.
-    Int(i32),
     Bool(bool),
     Str(String),
     Tuple(Vec<&'a Expr<'a, 'tcx>>),
@@ -294,20 +292,15 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         self._build(ast.expr(), &mut program, &mut stmts);
 
         // Add `return 0` statement for the entry point function if needed.
-        let c_int_ty = self.tcx.native_int();
         if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
-            let kind = ExprKind::Int(0);
-            let expr = Expr::new(kind, c_int_ty);
-            let expr = self.expr_arena.alloc(expr);
-
-            stmts.push(Stmt::Ret(expr))
+            stmts.push(Stmt::Ret(self.native_int(0)))
         }
 
         let main = Function {
             name: "main".to_string(),
             params: vec![],
             body: stmts,
-            retty: c_int_ty,
+            retty: self.tcx.native_int(),
             is_entry_point: true,
         };
         program.functions.push(main);
@@ -368,8 +361,8 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
-    fn native_int(&self, value: i32) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Int(value);
+    fn native_int(&self, value: i64) -> &'a Expr<'a, 'tcx> {
+        let kind = ExprKind::Int64(value);
         let ty = self.tcx.native_int();
 
         self.expr_arena.alloc(Expr::new(kind, ty))
@@ -934,7 +927,6 @@ impl<'a, 'tcx> Optimizer {
                 self.optimize_expr(else_expr);
             }
             ExprKind::Int64(_)
-            | ExprKind::Int(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
             | ExprKind::Tuple(_)

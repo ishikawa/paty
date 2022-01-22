@@ -1,7 +1,6 @@
 //! C code generator
-use crate::ty::Type;
-
 use super::ir::{Expr, ExprKind, Function, LiteralStr, Program, Stmt};
+use crate::ty::Type;
 
 #[derive(Debug)]
 pub struct Emitter {}
@@ -270,11 +269,16 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(else_expr, code);
                 code.push(')');
             }
-            ExprKind::Int(n) => code.push_str(&format!("{}", *n)),
             ExprKind::Int64(n) => {
-                // Use standard macros for integer constant expression to expand
-                // a value to the type int_least_N.
-                code.push_str(&format!("INT64_C({})", *n))
+                match expr.ty() {
+                    Type::Int64 => {
+                        // Use standard macros for integer constant expression to expand
+                        // a value to the type int_least_N.
+                        code.push_str(&format!("INT64_C({})", *n))
+                    }
+                    Type::NativeInt => code.push_str(&format!("{}", *n)),
+                    _ => unreachable!("Unexpected integral type: {}", expr.ty()),
+                }
             }
             ExprKind::Bool(b) => {
                 // Use standard macros for boolean constant expression.
