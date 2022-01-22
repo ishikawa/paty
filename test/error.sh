@@ -126,3 +126,8 @@ Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "case (1,)
 when (1,)
   puts(1)
 end"
+# tuple
+assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
+assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "
+x = (1, 2, 3)
+x.3"

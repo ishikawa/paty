@@ -733,12 +733,34 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn unary(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
         if self.match_token(it, TokenKind::Operator('-')) {
             let token = it.next().unwrap();
-            let expr = self.unary(it)?;
+            let expr = self.access(it)?;
 
             Ok(self.alloc_expr(ExprKind::Minus(expr), token))
         } else {
-            self.atom(it)
+            self.access(it)
         }
+    }
+
+    fn access(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let mut lhs = self.atom(it)?;
+
+        while self.match_token(it, TokenKind::Operator('.')) {
+            let token = it.next().unwrap();
+
+            let t = self.peek_token(it)?;
+            if let TokenKind::Integer(n) = t.kind() {
+                it.next();
+                let index = n.parse().unwrap();
+                lhs = self.alloc_expr(ExprKind::Elem(lhs, index), token);
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "index".to_string(),
+                    actual: t,
+                });
+            }
+        }
+
+        Ok(lhs)
     }
 
     fn atom(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
