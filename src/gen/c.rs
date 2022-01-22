@@ -293,19 +293,25 @@ impl<'a, 'tcx> Emitter {
             Value::LiteralStr(lits) => {
                 let mut it = lits.iter().peekable();
 
-                while let Some(lit) = it.next() {
+                // concatenate adjusting literal string
+                while let Some(lit) = it.peek() {
                     match lit {
-                        LiteralStr::Str(s) => {
+                        LiteralStr::Str(_) => {
                             code.push_str("u8\"");
-                            for c in s.escape_default() {
-                                code.push(c);
+                            while let Some(LiteralStr::Str(s)) = it.peek() {
+                                for c in s.escape_default() {
+                                    code.push(c);
+                                }
+                                it.next();
                             }
                             code.push('"');
                         }
                         LiteralStr::Macro(m) => {
                             code.push_str(m);
+                            it.next();
                         }
                     };
+
                     if it.peek().is_some() {
                         code.push(' ');
                     }
