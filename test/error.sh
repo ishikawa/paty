@@ -121,3 +121,7 @@ def foo(t: (int64, int64))
   end
 end
 foo((1, 2))"
+assert 'todo' "case (1,)
+when (1,)
+  puts(1)
+end"

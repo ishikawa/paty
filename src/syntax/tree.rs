@@ -888,8 +888,8 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     fn peek_token(&self, it: &mut TokenIterator<'t>) -> Result<&'t Token, ParseError<'t>> {
-        //Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
-        Ok(it.peek().unwrap())
+        Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
+        //Ok(it.peek().unwrap())
     }
 
     fn expect_token(
