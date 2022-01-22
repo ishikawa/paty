@@ -159,8 +159,8 @@ def add_and_moreThan100(t: (int64, int64))
 end
 t1 = add_and_moreThan100((10, 20))
 t2 = add_and_moreThan100((90, 20))
-puts(t1.0, t1.1, t2.0, t2.1)
-"
+puts(t1.0, t1.1, t2.0, t2.1)"
+assert "(1, 2, 3)" "puts((1, 2, 3))"
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
