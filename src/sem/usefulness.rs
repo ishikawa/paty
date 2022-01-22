@@ -17,6 +17,7 @@ use typed_arena::Arena;
 #[derive(Clone, Copy)]
 pub struct MatchCheckContext<'p, 'tcx> {
     pub pattern_arena: &'p Arena<DeconstructedPat<'p, 'tcx>>,
+    pub tree_pattern_arena: &'p Arena<Pattern<'p, 'tcx>>,
 }
 
 #[derive(Clone, Copy)]
@@ -336,7 +337,7 @@ impl<'tcx> SplitWildcard {
             }
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String => vec![Constructor::NonExhaustive],
-            Type::Tuple(_) => todo!(),
+            Type::Tuple(_) => vec![Constructor::Single],
             Type::NativeInt => unreachable!("Native C types are not supported."),
         };
 
@@ -602,6 +603,9 @@ impl<'p, 'tcx> fmt::Debug for PatStack<'p, 'tcx> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Constructor {
+    /// The constructor for patterns that have a single constructor, like tuples, struct patterns
+    /// and fixed-length arrays.
+    Single,
     /// Wildcard pattern.
     Wildcard,
     /// Ranges of integer literal values (`2`, `2..=5` or `2..5`).
@@ -645,8 +649,18 @@ impl<'tcx> Constructor {
 
     /// The number of fields for this constructor. This must be kept in sync with
     /// `Fields::wildcards`.
-    pub fn arity(&self) -> usize {
-        0
+    pub fn arity(&self, pcx: PatContext<'_, '_, 'tcx>) -> usize {
+        match self {
+            Self::Single => match pcx.ty {
+                Type::Tuple(fs) => fs.len(),
+                _ => unreachable!("Unexpected type for `Single` constructor: {:?}", pcx.ty),
+            },
+            Self::Wildcard
+            | Self::IntRange(_)
+            | Self::Str(_)
+            | Self::NonExhaustive
+            | Self::Missing { .. } => 0,
+        }
     }
 
     /// Returns whether `self` is covered by `other`, i.e. whether `self` is a subset of `other`.
@@ -660,6 +674,7 @@ impl<'tcx> Constructor {
             (_, Self::Wildcard) => true,
             // The missing ctors are not covered by anything in the matrix except wildcards.
             (Self::Missing { .. } | Self::Wildcard, _) => false,
+            (Self::Single, Self::Single) => true,
             (Self::IntRange(self_range), Self::IntRange(other_range)) => {
                 self_range.is_covered_by(other_range)
             }
@@ -683,6 +698,8 @@ impl<'tcx> Constructor {
 
         // This must be kept in sync with `is_covered_by`.
         match self {
+            // If `self` is `Single`, `used_ctors` cannot contain anything else than `Single`s.
+            Self::Single => !used_ctors.is_empty(),
             Self::IntRange(range) => used_ctors
                 .iter()
                 .filter_map(|c| c.as_int_range())
@@ -772,14 +789,25 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         Fields { fields }
     }
 
+    fn wildcards_from_tys(
+        cx: &MatchCheckContext<'p, 'tcx>,
+        tys: impl IntoIterator<Item = &'tcx Type<'tcx>>,
+    ) -> Self {
+        Fields::from_iter(cx, tys.into_iter().map(DeconstructedPat::wildcard))
+    }
+
     /// Creates a new list of wildcard fields for a given constructor. The result must have a
     /// length of `constructor.arity()`.
     pub fn wildcards(
-        _cx: &MatchCheckContext<'p, 'tcx>,
-        _ty: &'tcx Type<'tcx>,
+        cx: &MatchCheckContext<'p, 'tcx>,
+        ty: &'tcx Type<'tcx>,
         constructor: &Constructor,
     ) -> Self {
         match constructor {
+            Constructor::Single => match ty {
+                Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
+                _ => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
+            },
             Constructor::IntRange(..)
             | Constructor::Str(..)
             | Constructor::NonExhaustive
@@ -838,7 +866,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         DeconstructedPat::new(self.ctor.clone(), self.fields, self.ty)
     }
 
-    pub fn from_pat(_cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
+    pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
         let pat_ty = pat.ty().unwrap();
 
         let ctor;
@@ -870,15 +898,33 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 ctor = Constructor::Str(s.clone());
                 fields = Fields::empty();
             }
-            PatternKind::Tuple(_) => todo!(),
+            PatternKind::Tuple(sub_pats) => {
+                ctor = Constructor::Single;
+                let pats: Vec<_> = sub_pats
+                    .iter()
+                    .map(|pat| DeconstructedPat::from_pat(cx, pat))
+                    .collect();
+
+                fields = Fields::from_iter(cx, pats);
+            }
         }
 
         DeconstructedPat::new(ctor, fields, pat_ty)
     }
 
-    pub fn to_pat(&self) -> Pattern<'_, 'tcx> {
+    pub fn to_pat(&self, cx: &MatchCheckContext<'p, 'tcx>) -> &'p Pattern<'p, 'tcx> {
         let kind = match &self.ctor {
-            Constructor::IntRange(range) => return range.to_pat(self.ty()),
+            Constructor::Single => match self.ty() {
+                Type::Tuple(_) => {
+                    let sub_patterns = self.iter_fields().map(|p| p.to_pat(cx));
+                    PatternKind::Tuple(sub_patterns.collect())
+                }
+                _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
+            },
+            Constructor::IntRange(range) => {
+                let pat = range.to_pat(self.ty());
+                return cx.tree_pattern_arena.alloc(pat);
+            }
             Constructor::Str(s) => PatternKind::String(s.clone()),
             Constructor::Wildcard | Constructor::NonExhaustive => PatternKind::Wildcard,
             Constructor::Missing { .. } => unreachable!(
@@ -889,7 +935,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
         let pat = Pattern::new(kind);
         pat.assign_ty(self.ty());
-        pat
+        cx.tree_pattern_arena.alloc(pat)
     }
 
     pub(super) fn ctor(&self) -> &Constructor {
@@ -1146,7 +1192,7 @@ impl<'p, 'tcx> Witness<'p, 'tcx> {
     fn apply_constructor(mut self, pcx: PatContext<'_, 'p, 'tcx>, ctor: &Constructor) -> Self {
         let pat = {
             let len = self.0.len();
-            let arity = ctor.arity();
+            let arity = ctor.arity(pcx);
             let pats = self.0.drain((len - arity)..).rev();
             let fields = Fields::from_iter(pcx.cx, pats);
             DeconstructedPat::new(ctor.clone(), fields, pcx.ty)
@@ -1295,8 +1341,10 @@ pub fn check_match<'tcx>(
     has_else: bool,
 ) -> Result<(), Vec<SemanticError<'tcx>>> {
     let pattern_arena = Arena::default();
+    let tree_pattern_arena = Arena::default();
     let cx = MatchCheckContext {
         pattern_arena: &pattern_arena,
+        tree_pattern_arena: &tree_pattern_arena,
     };
 
     let mut arms2: Vec<_> = arms
@@ -1333,7 +1381,7 @@ pub fn check_match<'tcx>(
                 // "else"
                 errors.push(SemanticError::UnreachableElseClause);
             } else {
-                let pat = arm.pat.to_pat();
+                let pat = arm.pat.to_pat(&cx);
 
                 errors.push(SemanticError::UnreachablePattern {
                     pattern: pat.kind().to_string(),
@@ -1343,7 +1391,7 @@ pub fn check_match<'tcx>(
     }
     // non exhaustiveness
     for pat in report.non_exhaustiveness_witnesses {
-        let pat = pat.to_pat();
+        let pat = pat.to_pat(&cx);
 
         errors.push(SemanticError::NonExhaustivePattern {
             pattern: pat.kind().to_string(),
@@ -1428,8 +1476,10 @@ mod tests_deconstructed_pat {
     #[test]
     fn from_pat() {
         let pattern_arena = Arena::default();
+        let tree_pattern_arena = Arena::default();
         let cx = MatchCheckContext {
             pattern_arena: &pattern_arena,
+            tree_pattern_arena: &tree_pattern_arena,
         };
         let kind = PatternKind::Range {
             lo: 1,
