@@ -103,7 +103,7 @@ pub enum ExprKind<'pcx, 'tcx> {
     TupleField(&'pcx Expr<'pcx, 'tcx>, usize),
     Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
     Let {
-        name: String,
+        pattern: &'pcx Pattern<'pcx, 'tcx>,
         rhs: &'pcx Expr<'pcx, 'tcx>,
         then: &'pcx Expr<'pcx, 'tcx>,
     },
@@ -371,8 +371,11 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                     let rhs = self.expr(it)?;
                     let then = self.decl(it)?;
 
+                    // variable pattern to bind a variable
+                    let pat = Pattern::new(PatternKind::Variable(name.clone()));
+
                     let mut r#let = Expr::new(ExprKind::Let {
-                        name: name.clone(),
+                        pattern: self.pat_arena.alloc(pat),
                         rhs,
                         then,
                     });

@@ -541,13 +541,27 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Printf(format_specs);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
-            syntax::ExprKind::Let { name, rhs, then } => {
+            syntax::ExprKind::Let { pattern, rhs, then } => {
                 let init = self._build(rhs, program, stmts);
-                let stmt = Stmt::VarDef {
-                    name: name.clone(),
-                    init: inc_used(init),
-                };
-                stmts.push(stmt);
+
+                match pattern.kind() {
+                    PatternKind::Variable(name) => {
+                        let stmt = Stmt::VarDef {
+                            name: name.clone(),
+                            init: inc_used(init),
+                        };
+                        stmts.push(stmt);
+                    }
+                    PatternKind::Integer(_)
+                    | PatternKind::Boolean(_)
+                    | PatternKind::String(_)
+                    | PatternKind::Range { .. }
+                    | PatternKind::Tuple(_)
+                    | PatternKind::Wildcard => {
+                        unreachable!("Unsupported let pattern: `{}`", pattern.kind());
+                    }
+                }
+
                 self._build(then, program, stmts)
             }
             syntax::ExprKind::Fn(syntax_fun) => {

@@ -208,15 +208,27 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
         }
-        syntax::ExprKind::Let { name, rhs, then } => {
+        syntax::ExprKind::Let { pattern, rhs, then } => {
             analyze_expr(tcx, rhs, vars, functions, errors);
 
-            let ty = rhs
-                .ty()
-                .unwrap_or_else(|| panic!("Untyped variable `{}` defined", name));
-            let binding = Binding::new(name, ty);
+            match pattern.kind() {
+                PatternKind::Variable(name) => {
+                    let ty = rhs
+                        .ty()
+                        .unwrap_or_else(|| panic!("Untyped variable `{}` defined", name));
+                    let binding = Binding::new(name, ty);
+                    vars.insert(binding);
+                }
+                PatternKind::Integer(_)
+                | PatternKind::Boolean(_)
+                | PatternKind::String(_)
+                | PatternKind::Range { .. }
+                | PatternKind::Tuple(_)
+                | PatternKind::Wildcard => {
+                    unreachable!("Unsupported let pattern: `{}`", pattern.kind());
+                }
+            }
 
-            vars.insert(binding);
             analyze_expr(tcx, then, vars, functions, errors);
         }
         syntax::ExprKind::TupleField(operand, index) => {
