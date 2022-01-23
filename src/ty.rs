@@ -28,6 +28,18 @@ impl<'tcx> TypeContext<'tcx> {
             .alloc(Type::Tuple(value_types.iter().copied().collect()))
     }
 
+    /// Returns a tuple type whose element type is unknown but has N elements.
+    pub fn tuple_n(&self, n: usize) -> &'tcx Type<'tcx> {
+        let mut value_types = vec![];
+
+        for _ in 0..n {
+            // TODO: add unknown type
+            value_types.push(self.int64());
+        }
+
+        self.tuple(&value_types)
+    }
+
     pub fn native_int(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::NativeInt)
     }

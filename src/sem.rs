@@ -305,14 +305,13 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             let mut expr_ty = None;
 
             for arm in arms {
-                // pattern's type
-                analyze_pattern(tcx, arm.pattern(), vars, functions, errors);
-
-                if !unify_pat_type(head_ty, arm.pattern(), errors) {
-                    return;
-                }
-
                 let mut scope = Scope::from_parent(vars);
+
+                // Infer pattern's type and bindings
+                //if !unify_pat_type(dbg!(head_ty), arm.pattern(), errors) {
+                //    return;
+                //}
+                analyze_pattern(tcx, arm.pattern(), head_ty, &mut scope, functions, errors);
                 analyze_expr(tcx, arm.body(), &mut scope, functions, errors);
 
                 if let Some(expected) = expr_ty {
@@ -351,10 +350,12 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
 fn analyze_pattern<'pcx: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+    expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
     functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
+    // Infer the type of pattern from its values.
     match pat.kind() {
         PatternKind::Integer(_) => {
             unify_pat_type(tcx.int64(), pat, errors);
@@ -369,15 +370,38 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
             unify_pat_type(tcx.int64(), pat, errors);
         }
         PatternKind::Tuple(patterns) => {
-            let mut sub_types = vec![];
+            let sub_types = if let Type::Tuple(sub_types) = expected_ty {
+                if sub_types.len() != patterns.len() {
+                    errors.push(SemanticError::MismatchedType {
+                        expected: expected_ty,
+                        actual: tcx.tuple_n(patterns.len()),
+                    });
+                    return;
+                }
+                sub_types
+            } else {
+                errors.push(SemanticError::MismatchedType {
+                    expected: expected_ty,
+                    actual: tcx.tuple_n(patterns.len()),
+                });
+                return;
+            };
 
-            for sub_pat in patterns {
-                analyze_pattern(tcx, sub_pat, vars, functions, errors);
-                sub_types.push(sub_pat.ty().unwrap());
+            for (sub_pat, sub_ty) in patterns.iter().zip(sub_types.iter()) {
+                analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, errors);
             }
 
-            unify_pat_type(tcx.tuple(&sub_types), pat, errors);
+            unify_pat_type(tcx.tuple(sub_types), pat, errors);
+        }
+        PatternKind::Variable(name) => {
+            // We need the type of pattern.
+            unify_pat_type(expected_ty, pat, errors);
+
+            let binding = Binding::new(name, pat.expect_ty());
+            vars.insert(binding);
         }
         PatternKind::Wildcard => {}
-    }
+    };
+
+    unify_pat_type(expected_ty, pat, errors);
 }

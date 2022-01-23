@@ -872,7 +872,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let ctor;
         let fields;
         match pat.kind() {
-            PatternKind::Wildcard => {
+            PatternKind::Variable(_) | PatternKind::Wildcard => {
                 ctor = Constructor::Wildcard;
                 fields = Fields::empty();
             }
