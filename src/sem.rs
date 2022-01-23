@@ -394,10 +394,16 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
             unify_pat_type(tcx.tuple(sub_types), pat, errors);
         }
         PatternKind::Variable(name) => {
+            if vars.get(name).is_some() {
+                errors.push(SemanticError::AlreadyBoundInPattern { name: name.clone() });
+                return;
+            }
+
             // We need the type of pattern.
             unify_pat_type(expected_ty, pat, errors);
 
             let binding = Binding::new(name, pat.expect_ty());
+
             vars.insert(binding);
         }
         PatternKind::Wildcard => {}
