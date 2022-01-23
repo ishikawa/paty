@@ -593,6 +593,16 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                     unreachable!("invalid tuple or group");
                 }
             }
+            TokenKind::Identifier(name) => {
+                it.next();
+
+                if name == "_" {
+                    let kind = PatternKind::Wildcard;
+                    self.alloc_pat(kind, token)
+                } else {
+                    return Err(ParseError::NotParsed);
+                }
+            }
             _ => {
                 return Err(ParseError::NotParsed);
             }
