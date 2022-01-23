@@ -117,6 +117,18 @@ case 102030
 when x
   puts(x)
 end"
+assert '15' "
+case (true, 15)
+when (false, _)
+  puts(0)
+when (true, x)
+  puts(x)
+end"
+assert '60' "
+case (10, 20, 30)
+when (x, y, z)
+  puts(x + y + z)
+end"
 # boolean
 assert 'true' "
   n = 5
