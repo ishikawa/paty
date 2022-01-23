@@ -374,7 +374,7 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
                 if sub_types.len() != patterns.len() {
                     errors.push(SemanticError::MismatchedType {
                         expected: expected_ty,
-                        actual: tcx.tuple_n(patterns.len()),
+                        actual: pattern_to_type(tcx, pat),
                     });
                     return;
                 }
@@ -382,7 +382,7 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
             } else {
                 errors.push(SemanticError::MismatchedType {
                     expected: expected_ty,
-                    actual: tcx.tuple_n(patterns.len()),
+                    actual: pattern_to_type(tcx, pat),
                 });
                 return;
             };
@@ -404,4 +404,26 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
     };
 
     unify_pat_type(expected_ty, pat, errors);
+}
+
+fn pattern_to_type<'pcx: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+) -> &'tcx Type<'tcx> {
+    // Infer the type of pattern from its values.
+    match pat.kind() {
+        PatternKind::Integer(_) => tcx.int64(),
+        PatternKind::Boolean(_) => tcx.boolean(),
+        PatternKind::String(_) => tcx.string(),
+        PatternKind::Range { .. } => tcx.int64(),
+        PatternKind::Tuple(patterns) => {
+            let sub_types: Vec<_> = patterns
+                .iter()
+                .map(|pat| pattern_to_type(tcx, pat))
+                .collect();
+
+            tcx.tuple(&sub_types)
+        }
+        PatternKind::Variable(_) | PatternKind::Wildcard => tcx.undetermined(),
+    }
 }

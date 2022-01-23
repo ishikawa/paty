@@ -56,6 +56,7 @@ impl<'a, 'tcx> Emitter {
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
                 unreachable!("invalid type for declaration type: {}", ty);
             }
+            Type::Undetermined => unreachable!("untyped code"),
         }
     }
 
@@ -286,6 +287,7 @@ impl<'a, 'tcx> Emitter {
                                 Type::Tuple(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
                                 }
+                                Type::Undetermined => unreachable!("untyped code"),
                             }
                         }
                     }
@@ -314,6 +316,7 @@ impl<'a, 'tcx> Emitter {
                             Type::Tuple(_) => {
                                 unreachable!("compound value can't be printed: {:?}", value);
                             }
+                            Type::Undetermined => unreachable!("untyped code"),
                         }
                     }
 
@@ -408,6 +411,7 @@ fn c_type(ty: &Type) -> String {
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
         }
+        Type::Undetermined => unreachable!("untyped code"),
     }
 }
 
@@ -451,5 +455,6 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
                 encode_ty(fty, buffer);
             }
         }
+        Type::Undetermined => unreachable!("untyped code"),
     }
 }

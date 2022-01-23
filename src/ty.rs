@@ -23,6 +23,10 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::String)
     }
 
+    pub fn undetermined(&self) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::Undetermined)
+    }
+
     pub fn tuple(&self, value_types: &[&'tcx Type<'tcx>]) -> &'tcx Type<'tcx> {
         self.type_arena
             .alloc(Type::Tuple(value_types.iter().copied().collect()))
@@ -31,10 +35,10 @@ impl<'tcx> TypeContext<'tcx> {
     /// Returns a tuple type whose element type is unknown but has N elements.
     pub fn tuple_n(&self, n: usize) -> &'tcx Type<'tcx> {
         let mut value_types = vec![];
+        let undetermined = &*self.type_arena.alloc(Type::Undetermined);
 
         for _ in 0..n {
-            // TODO: add unknown type
-            value_types.push(self.int64());
+            value_types.push(undetermined);
         }
 
         self.tuple(&value_types)
@@ -56,6 +60,9 @@ pub enum Type<'tcx> {
     /// tuple
     Tuple(Vec<&'tcx Type<'tcx>>),
 
+    /// Type is not specified and should be inferred in the later phase.
+    Undetermined,
+
     // C types for internal uses
     /// int
     NativeInt,
@@ -68,6 +75,7 @@ impl fmt::Display for Type<'_> {
             Type::Boolean => write!(f, "boolean"),
             Type::String => write!(f, "string"),
             Type::NativeInt => write!(f, "int"),
+            Type::Undetermined => write!(f, "_"),
             Type::Tuple(value_types) => {
                 let mut it = value_types.iter().peekable();
                 write!(f, "(")?;
