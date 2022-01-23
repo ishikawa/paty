@@ -1,5 +1,5 @@
 //! C code generator
-use super::ir::{Expr, ExprKind, Function, LiteralStr, Program, Stmt};
+use super::ir::{Expr, ExprKind, FormatSpec, Function, Program, Stmt};
 use crate::ty::Type;
 
 #[derive(Debug)]
@@ -256,17 +256,71 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push(')');
             }
-            ExprKind::Cond {
-                condition,
-                then_expr,
-                else_expr,
-            } => {
-                code.push('(');
-                self.emit_expr(condition, code);
-                code.push_str(" ? ");
-                self.emit_expr(then_expr, code);
-                code.push_str(" : ");
-                self.emit_expr(else_expr, code);
+            ExprKind::Printf(specs) => {
+                // emit printf() and format specifiers
+
+                code.push_str("printf(\"");
+                for spec in specs {
+                    match spec {
+                        FormatSpec::Str(s) => {
+                            for c in s.escape_default() {
+                                code.push(c);
+                            }
+                        }
+                        FormatSpec::Value(value) => {
+                            match value.ty() {
+                                Type::Int64 => {
+                                    // Use standard conversion specifier macros for integer types.
+                                    code.push_str("%\" PRId64 \"");
+                                }
+                                Type::Boolean => {
+                                    // "true" / "false"
+                                    code.push_str("%s");
+                                }
+                                Type::String => {
+                                    code.push_str("%s");
+                                }
+                                Type::NativeInt => {
+                                    code.push_str("%d");
+                                }
+                                Type::Tuple(_) => {
+                                    unreachable!("compound value can't be printed: {:?}", value);
+                                }
+                            }
+                        }
+                    }
+                }
+                code.push_str("\", ");
+
+                // arguments
+                let mut it = specs
+                    .iter()
+                    .filter(|spec| matches!(spec, FormatSpec::Value(_)))
+                    .peekable();
+
+                while let Some(spec) = it.next() {
+                    if let FormatSpec::Value(value) = spec {
+                        match value.ty() {
+                            Type::Int64 | Type::String | Type::NativeInt => {
+                                self.emit_expr(value, code);
+                            }
+                            Type::Boolean => {
+                                // "true" / "false"
+                                code.push('(');
+                                self.emit_expr(value, code);
+                                code.push_str(" ? \"true\" : \"false\"");
+                                code.push(')');
+                            }
+                            Type::Tuple(_) => {
+                                unreachable!("compound value can't be printed: {:?}", value);
+                            }
+                        }
+                    }
+
+                    if it.peek().is_some() {
+                        code.push_str(", ");
+                    }
+                }
                 code.push(')');
             }
             ExprKind::Int64(n) => {
@@ -294,33 +348,6 @@ impl<'a, 'tcx> Emitter {
                     code.push(c);
                 }
                 code.push('"');
-            }
-            ExprKind::LiteralStr(lits) => {
-                let mut it = lits.iter().peekable();
-
-                // concatenate adjusting literal string
-                while let Some(lit) = it.peek() {
-                    match lit {
-                        LiteralStr::Str(_) => {
-                            code.push_str("u8\"");
-                            while let Some(LiteralStr::Str(s)) = it.peek() {
-                                for c in s.escape_default() {
-                                    code.push(c);
-                                }
-                                it.next();
-                            }
-                            code.push('"');
-                        }
-                        LiteralStr::Macro(m) => {
-                            code.push_str(m);
-                            it.next();
-                        }
-                    };
-
-                    if it.peek().is_some() {
-                        code.push(' ');
-                    }
-                }
             }
             ExprKind::Tuple(values) => {
                 // Specify struct type explicitly.

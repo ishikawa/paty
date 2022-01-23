@@ -217,16 +217,13 @@ pub enum ExprKind<'a, 'tcx> {
     Ge(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     And(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     Or(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
-    // `condition ? yes_value : no_value`
-    Cond {
-        condition: &'a Expr<'a, 'tcx>,
-        then_expr: &'a Expr<'a, 'tcx>,
-        else_expr: &'a Expr<'a, 'tcx>,
-    },
     Call {
         name: String,
         args: Vec<&'a Expr<'a, 'tcx>>,
     },
+
+    // Built-in procedures
+    Printf(Vec<FormatSpec<'a, 'tcx>>),
 
     // Values
     Int64(i64),
@@ -239,24 +236,12 @@ pub enum ExprKind<'a, 'tcx> {
     },
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(&'tcx Type<'tcx>, String),
-    // Adjacent string literal (or macro) s can be combined into a single one.
-    LiteralStr(Vec<LiteralStr>),
 }
 
 #[derive(Debug, Clone)]
-pub enum LiteralStr {
-    Str(String),
-    Macro(String),
-}
-
-impl LiteralStr {
-    pub fn macro_str(s: &str) -> Self {
-        Self::Macro(s.to_string())
-    }
-
-    pub fn str(s: &str) -> Self {
-        Self::Str(s.to_string())
-    }
+pub enum FormatSpec<'a, 'tcx> {
+    Value(&'a Expr<'a, 'tcx>),
+    Str(&'static str),
 }
 
 pub struct Builder<'a, 'tcx> {
@@ -536,36 +521,24 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             syntax::ExprKind::Puts(args) => {
                 // Generates `printf(...)` code for `puts(...)`.
-                let mut format_literals = vec![];
+                let mut format_specs = vec![];
 
                 // Build format specifiers
                 let mut it = args.iter().peekable();
 
                 while let Some(arg) = it.next() {
-                    self._printf_format(arg.ty().unwrap(), &mut format_literals);
+                    let a = self._build(arg, program, stmts);
+                    self._printf_format(a, program, stmts, &mut format_specs);
 
                     // separated by a space
                     if it.peek().is_some() {
-                        format_literals.push(LiteralStr::str(" "));
+                        format_specs.push(FormatSpec::Str(" "));
                     }
                 }
-                format_literals.push(LiteralStr::str("\n"));
+                format_specs.push(FormatSpec::Str("\n"));
 
                 // Build arguments
-                let kind = ExprKind::LiteralStr(format_literals);
-                let format_expr: &'a Expr<'a, 'tcx> =
-                    self.expr_arena.alloc(Expr::new(kind, self.tcx.string()));
-                let mut printf_args = vec![format_expr];
-
-                for arg in args {
-                    self._build_printf_value(arg, program, stmts, &mut printf_args);
-                }
-
-                let kind = ExprKind::Call {
-                    name: "printf".to_string(),
-                    args: printf_args,
-                };
-
+                let kind = ExprKind::Printf(format_specs);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Let { name, rhs, then } => {
@@ -665,75 +638,35 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    fn _printf_format(&self, ty: &Type, literals: &mut Vec<LiteralStr>) {
-        match ty {
-            Type::Int64 => {
-                // Use standard conversion specifier macros for integer types.
-                literals.push(LiteralStr::str("%"));
-                literals.push(LiteralStr::macro_str("PRId64"));
-            }
-            Type::Boolean => {
-                // "true" / "false"
-                literals.push(LiteralStr::str("%s"));
-            }
-            Type::String => {
-                literals.push(LiteralStr::str("%s"));
-            }
-            Type::Tuple(fs) => {
-                let mut it = fs.iter().peekable();
-
-                literals.push(LiteralStr::str("("));
-                while let Some(sub_ty) = it.next() {
-                    self._printf_format(sub_ty, literals);
-                    if it.peek().is_some() {
-                        literals.push(LiteralStr::str(", "));
-                    }
-                }
-                literals.push(LiteralStr::str(")"));
-            }
-            Type::NativeInt => {
-                literals.push(LiteralStr::str("%d"));
-            }
-        }
-    }
-
-    fn _build_printf_value(
+    fn _printf_format(
         &mut self,
-        expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+        arg: &'a Expr<'a, 'tcx>,
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
-        args: &mut Vec<&'a Expr<'a, 'tcx>>,
+        specs: &mut Vec<FormatSpec<'a, 'tcx>>,
     ) {
-        match expr.ty().unwrap() {
+        match arg.ty() {
+            Type::Int64 | Type::NativeInt | Type::Boolean | Type::String => {
+                specs.push(FormatSpec::Value(inc_used(arg)));
+            }
             Type::Tuple(fs) => {
-                let operand = self._build(expr, program, stmts);
+                let mut it = fs.iter().enumerate().peekable();
 
-                // flatten values
-                for (i, sub_ty) in fs.iter().enumerate() {
+                specs.push(FormatSpec::Str("("));
+                while let Some((i, sub_ty)) = it.next() {
                     let kind = ExprKind::TupleField {
-                        operand: inc_used(operand),
+                        operand: inc_used(arg),
                         index: i,
                     };
+
                     let ir_expr = self.push_expr_kind(kind, sub_ty, stmts);
+                    self._printf_format(ir_expr, program, stmts, specs);
 
-                    args.push(inc_used(ir_expr));
+                    if it.peek().is_some() {
+                        specs.push(FormatSpec::Str(", "));
+                    }
                 }
-            }
-            Type::Boolean => {
-                // "true" / "false"
-                let cond = self._build(expr, program, stmts);
-                let kind = ExprKind::Cond {
-                    condition: inc_used(cond),
-                    then_expr: self.const_string("true"),
-                    else_expr: self.const_string("false"),
-                };
-                let ir_expr = self.push_expr_kind(kind, self.tcx.string(), stmts);
-
-                args.push(inc_used(ir_expr));
-            }
-            Type::Int64 | Type::String | Type::NativeInt => {
-                let a = self._build(expr, program, stmts);
-                args.push(inc_used(a));
+                specs.push(FormatSpec::Str(")"));
             }
         }
     }
@@ -917,14 +850,12 @@ impl<'a, 'tcx> Optimizer {
                     self.optimize_expr(arg);
                 }
             }
-            ExprKind::Cond {
-                condition,
-                then_expr,
-                else_expr,
-            } => {
-                self.optimize_expr(condition);
-                self.optimize_expr(then_expr);
-                self.optimize_expr(else_expr);
+            ExprKind::Printf(specs) => {
+                for spec in specs {
+                    if let FormatSpec::Value(expr) = spec {
+                        self.optimize_expr(expr);
+                    }
+                }
             }
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
@@ -932,8 +863,7 @@ impl<'a, 'tcx> Optimizer {
             | ExprKind::Tuple(_)
             | ExprKind::TupleField { .. }
             | ExprKind::TmpVar(_)
-            | ExprKind::Var(_, _)
-            | ExprKind::LiteralStr(_) => {}
+            | ExprKind::Var(_, _) => {}
         }
     }
 }
