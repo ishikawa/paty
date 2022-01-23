@@ -148,8 +148,37 @@ assert '1 2 3 4' "
     fruit_to_num(\"Orange\"),
     fruit_to_num(\"Strawberry\"),
     fruit_to_num(\"Grape\")
-  )
-"
+  )"
+# tuple
+assert "2022 1 22" "
+date = (2022, 1, 22)
+puts(date.0, date.1, date.2)"
+assert "30 false 110 true" "
+def add_and_moreThan100(t: (int64, int64))
+  (t.0 + t.1, t.0 + t.1 > 100)
+end
+t1 = add_and_moreThan100((10, 20))
+t2 = add_and_moreThan100((90, 20))
+puts(t1.0, t1.1, t2.0, t2.1)"
+assert "(1, 2, 3)" "puts((1, 2, 3))"
+assert "1" "
+case (1, 2, 3)
+when (2, 3, 4)
+  puts(0)
+when (1, 2, 3)
+  puts(1)
+else
+  puts(2)
+end"
+assert "2" '
+case ("hello", true, 15)
+when ("hello", false, 15)
+  puts(1)
+when ("hello", true, 0..=15)
+  puts(2)
+else
+  puts(3)
+end'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

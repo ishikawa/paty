@@ -105,5 +105,29 @@ assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
   n
 end
-foo(true)
-"
+foo(true)"
+assert 'Semantic error: expected type `(int64)`, found `int64`' "
+def foo(t: (int64,))
+  t
+end
+foo(100)"
+assert 'Semantic error: expected type `(int64, int64)`, found `(int64, int64, int64)`' "
+def foo(t: (int64, int64))
+  case t
+  when (1, 2, 3)
+    puts(1)
+  else
+    puts(2)
+  end
+end
+foo((1, 2))"
+assert 'Semantic error: non-exhaustive pattern: `(int64::MIN..=0)`
+Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "case (1,)
+when (1,)
+  puts(1)
+end"
+# tuple
+assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
+assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "
+x = (1, 2, 3)
+x.3"

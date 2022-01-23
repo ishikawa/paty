@@ -23,6 +23,11 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::String)
     }
 
+    pub fn tuple(&self, value_types: &[&'tcx Type<'tcx>]) -> &'tcx Type<'tcx> {
+        self.type_arena
+            .alloc(Type::Tuple(value_types.iter().copied().collect()))
+    }
+
     pub fn native_int(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::NativeInt)
     }
@@ -51,7 +56,17 @@ impl fmt::Display for Type<'_> {
             Type::Boolean => write!(f, "boolean"),
             Type::String => write!(f, "string"),
             Type::NativeInt => write!(f, "int"),
-            Type::Tuple(_) => todo!(),
+            Type::Tuple(value_types) => {
+                let mut it = value_types.iter().peekable();
+                write!(f, "(")?;
+                while let Some(ty) = it.next() {
+                    write!(f, "{}", ty)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
         }
     }
 }

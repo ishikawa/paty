@@ -44,6 +44,15 @@ impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
         self.ty.get()
     }
 
+    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
+        self.ty().unwrap_or_else(|| {
+            panic!(
+                "Semantic analyzer can't assign type for expression {:?}",
+                self
+            );
+        })
+    }
+
     pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
     }
@@ -71,6 +80,7 @@ pub enum ExprKind<'pcx, 'tcx> {
     Boolean(bool),
     String(String),
     Var(String),
+    Tuple(Vec<&'pcx Expr<'pcx, 'tcx>>),
 
     // unary operators
     Minus(&'pcx Expr<'pcx, 'tcx>),
@@ -89,6 +99,8 @@ pub enum ExprKind<'pcx, 'tcx> {
     And(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
     Or(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
 
+    // tuple.0, tuple.1, ...
+    TupleField(&'pcx Expr<'pcx, 'tcx>, usize),
     Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
     Let {
         name: String,
@@ -201,26 +213,40 @@ impl<'pcx, 'tcx> CaseArm<'pcx, 'tcx> {
 
 #[derive(Debug)]
 pub struct Pattern<'pcx, 'tcx> {
-    kind: PatternKind<'pcx, 'pcx>,
-    ty: &'tcx Type<'tcx>,
+    kind: PatternKind<'pcx, 'tcx>,
+    // The type of expression is determined in later phase.
+    ty: Cell<Option<&'tcx Type<'tcx>>>,
     comments: Vec<String>,
 }
 
 impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
-    pub fn new(kind: PatternKind<'pcx, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
+    pub fn new(kind: PatternKind<'pcx, 'tcx>) -> Self {
         Self {
             kind,
-            ty,
+            ty: Cell::new(None),
             comments: vec![],
         }
     }
 
-    pub fn kind(&self) -> &PatternKind<'pcx, 'pcx> {
+    pub fn kind(&self) -> &PatternKind<'pcx, 'tcx> {
         &self.kind
     }
 
-    pub fn ty(&self) -> &'tcx Type<'tcx> {
-        self.ty
+    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
+        self.ty().unwrap_or_else(|| {
+            panic!(
+                "Semantic analyzer can't assign type for pattern {}",
+                self.kind
+            );
+        })
+    }
+
+    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.ty.set(Some(ty))
     }
 
     pub fn comments(&self) -> impl Iterator<Item = &str> {
@@ -240,8 +266,8 @@ pub enum PatternKind<'pcx, 'tcx> {
     Boolean(bool),
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
-    Or(&'pcx Pattern<'pcx, 'tcx>, &'pcx Pattern<'pcx, 'tcx>),
-    Wildcard(&'tcx Type<'tcx>),
+    Tuple(Vec<&'pcx Pattern<'pcx, 'tcx>>),
+    Wildcard,
 }
 
 impl fmt::Display for PatternKind<'_, '_> {
@@ -265,8 +291,18 @@ impl fmt::Display for PatternKind<'_, '_> {
                     write!(f, "{}", hi)
                 }
             }
-            PatternKind::Or(_, _) => todo!(),
-            PatternKind::Wildcard(_) => write!(f, "_"),
+            PatternKind::Tuple(patterns) => {
+                let mut it = patterns.iter().peekable();
+                write!(f, "(")?;
+                while let Some(sub_pat) = it.next() {
+                    write!(f, "{}", sub_pat.kind())?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            PatternKind::Wildcard => write!(f, "_"),
         }
     }
 }
@@ -401,9 +437,44 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     ) -> Result<&'tcx Type<'tcx>, ParseError<'t>> {
         let token = self.peek_token(it)?;
         let ty = match token.kind() {
-            TokenKind::TypeInt64 => self.tcx.int64(),
-            TokenKind::TypeBoolean => self.tcx.boolean(),
-            TokenKind::TypeString => self.tcx.string(),
+            TokenKind::TypeInt64 => {
+                it.next();
+                self.tcx.int64()
+            }
+            TokenKind::TypeBoolean => {
+                it.next();
+                self.tcx.boolean()
+            }
+            TokenKind::TypeString => {
+                it.next();
+                self.tcx.string()
+            }
+            TokenKind::Operator('(') => {
+                it.next();
+
+                // Try to parse tuple type.
+                let mut value_types = vec![];
+
+                while !self.match_token(it, TokenKind::Operator(')')) {
+                    let ty = self.type_specifier(it)?;
+                    value_types.push(ty);
+
+                    // trailing comma allowed, if the number of values is `1`,
+                    // it's mandatory.
+                    if self.match_token(it, TokenKind::Operator(',')) {
+                        it.next();
+                    } else if value_types.len() == 1 {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "','".to_string(),
+                            actual: self.peek_token(it)?,
+                        });
+                    }
+                }
+                // ')'
+                it.next();
+
+                self.tcx.tuple(&value_types)
+            }
             _ => {
                 return Err(ParseError::UnexpectedToken {
                     expected: "type".to_string(),
@@ -411,7 +482,6 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 });
             }
         };
-        it.next();
         Ok(ty)
     }
 
@@ -465,25 +535,63 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                     PatternKind::Integer(i)
                 };
 
-                self.alloc_pat(kind, self.tcx.int64(), token)
+                self.alloc_pat(kind, token)
             }
             TokenKind::String(s) => {
                 it.next();
 
                 let kind = PatternKind::String(s.clone());
-                self.alloc_pat(kind, self.tcx.string(), token)
+                self.alloc_pat(kind, token)
             }
             TokenKind::True => {
                 it.next();
 
                 let kind = PatternKind::Boolean(true);
-                self.alloc_pat(kind, self.tcx.boolean(), token)
+                self.alloc_pat(kind, token)
             }
             TokenKind::False => {
                 it.next();
 
                 let kind = PatternKind::Boolean(false);
-                self.alloc_pat(kind, self.tcx.boolean(), token)
+                self.alloc_pat(kind, token)
+            }
+            TokenKind::Operator('(') => {
+                // tuple or grouping values.
+                // - `()` -> empty tuple
+                // - `(pat)` -> pattern
+                // - `(pat,)` -> tuple (n = 1)
+                // - `(pat1, pat2, ...)` tuple
+                it.next(); // '('
+
+                let mut comma_seen = false;
+                let mut patterns = vec![];
+
+                while !self.match_token(it, TokenKind::Operator(')')) {
+                    if let Some(pat) = self.lookahead(self.pattern(it))? {
+                        patterns.push(pat);
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "pattern".to_string(),
+                            actual: self.peek_token(it)?,
+                        });
+                    }
+
+                    // tuple (n >= 1) must contain ','
+                    if self.match_token(it, TokenKind::Operator(',')) {
+                        it.next(); // ','
+                        comma_seen = true;
+                    }
+                }
+                it.next(); // ')'
+
+                if comma_seen || patterns.is_empty() {
+                    let kind = PatternKind::Tuple(patterns);
+                    self.alloc_pat(kind, token)
+                } else if patterns.len() == 1 {
+                    patterns[0]
+                } else {
+                    unreachable!("invalid tuple or group");
+                }
             }
             _ => {
                 return Err(ParseError::NotParsed);
@@ -643,12 +751,34 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn unary(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
         if self.match_token(it, TokenKind::Operator('-')) {
             let token = it.next().unwrap();
-            let expr = self.unary(it)?;
+            let expr = self.access(it)?;
 
             Ok(self.alloc_expr(ExprKind::Minus(expr), token))
         } else {
-            self.atom(it)
+            self.access(it)
         }
+    }
+
+    fn access(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let mut lhs = self.atom(it)?;
+
+        while self.match_token(it, TokenKind::Operator('.')) {
+            let token = it.next().unwrap();
+
+            let t = self.peek_token(it)?;
+            if let TokenKind::Integer(n) = t.kind() {
+                it.next();
+                let index = n.parse().unwrap();
+                lhs = self.alloc_expr(ExprKind::TupleField(lhs, index), token);
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "index".to_string(),
+                    actual: t,
+                });
+            }
+        }
+
+        Ok(lhs)
     }
 
     fn atom(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
@@ -690,9 +820,42 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 ExprKind::Boolean(false)
             }
             TokenKind::Operator('(') => {
-                it.next();
-                let expr = self.expr(it)?;
+                // tuple or grouping values.
+                // - `()` -> empty tuple
+                // - `(expr)` -> expr
+                // - `(expr,)` -> tuple (n = 1)
+                // - `(expr1, expr2, ...)` tuple
+                self.expect_token(it, TokenKind::Operator('('))?;
+
+                let mut comma_seen = false;
+                let mut exprs = vec![];
+
+                while !self.match_token(it, TokenKind::Operator(')')) {
+                    if let Some(pat) = self.lookahead(self.expr(it))? {
+                        exprs.push(pat);
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "expr".to_string(),
+                            actual: self.peek_token(it)?,
+                        });
+                    }
+
+                    // tuple (n >= 1) must contain ','
+                    if self.match_token(it, TokenKind::Operator(',')) {
+                        it.next(); // ','
+                        comma_seen = true;
+                    }
+                }
                 self.expect_token(it, TokenKind::Operator(')'))?;
+
+                let expr = if comma_seen || exprs.is_empty() {
+                    let kind = ExprKind::Tuple(exprs);
+                    self.alloc_expr(kind, token)
+                } else if exprs.len() == 1 {
+                    exprs[0]
+                } else {
+                    unreachable!("invalid tuple or group");
+                };
 
                 return Ok(expr);
             }
@@ -767,8 +930,8 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     fn peek_token(&self, it: &mut TokenIterator<'t>) -> Result<&'t Token, ParseError<'t>> {
-        //Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
-        Ok(it.peek().unwrap())
+        Ok(it.peek().ok_or(ParseError::PrematureEnd)?)
+        //Ok(it.peek().unwrap())
     }
 
     fn expect_token(
@@ -803,13 +966,8 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         self.expr_arena.alloc(expr)
     }
 
-    fn alloc_pat(
-        &self,
-        kind: PatternKind<'pcx, 'tcx>,
-        ty: &'tcx Type<'tcx>,
-        token: &Token,
-    ) -> &'pcx Pattern<'pcx, 'tcx> {
-        let mut pat = Pattern::new(kind, ty);
+    fn alloc_pat(&self, kind: PatternKind<'pcx, 'tcx>, token: &Token) -> &'pcx Pattern<'pcx, 'tcx> {
+        let mut pat = Pattern::new(kind);
         pat.append_comments_from(token);
 
         self.pat_arena.alloc(pat)

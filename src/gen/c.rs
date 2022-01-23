@@ -1,7 +1,6 @@
 //! C code generator
+use super::ir::{Expr, ExprKind, FormatSpec, Function, Program, Stmt};
 use crate::ty::Type;
-
-use super::ir::{Expr, ExprKind, Function, Program, Stmt, Value};
 
 #[derive(Debug)]
 pub struct Emitter {}
@@ -28,7 +27,13 @@ impl<'a, 'tcx> Emitter {
         ]
         .join("\n");
 
-        for fun in &program.functions {
+        for ty in program.decl_types() {
+            self.emit_decl_type(ty, &mut code);
+            code.push('\n');
+            code.push('\n');
+        }
+
+        for fun in program.functions() {
             self.emit_function(fun, &mut code);
             code.push('\n');
         }
@@ -36,19 +41,37 @@ impl<'a, 'tcx> Emitter {
         code
     }
 
+    fn emit_decl_type(&mut self, ty: &Type<'tcx>, code: &mut String) {
+        match ty {
+            Type::Tuple(fs) => {
+                code.push_str(&c_type(ty));
+                code.push_str(" {\n");
+                for (i, fty) in fs.iter().enumerate() {
+                    code.push_str(&c_type(fty));
+                    code.push(' ');
+                    code.push_str(&format!("_{};\n", i));
+                }
+                code.push_str("};");
+            }
+            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
+                unreachable!("invalid type for declaration type: {}", ty);
+            }
+        }
+    }
+
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
         if fun.is_entry_point {
             // 'main' must return 'int'
-            code.push_str(c_type(&Type::NativeInt));
+            code.push_str(&c_type(&Type::NativeInt));
         } else {
-            code.push_str(c_type(fun.retty));
+            code.push_str(&c_type(fun.retty));
         }
         code.push(' ');
 
         code.push_str(&fun.name);
         code.push('(');
         for (i, param) in fun.params.iter().enumerate() {
-            code.push_str(c_type(param.ty));
+            code.push_str(&c_type(param.ty));
             code.push(' ');
             code.push_str(&param.name);
 
@@ -71,7 +94,7 @@ impl<'a, 'tcx> Emitter {
             Stmt::TmpVarDef { var, init, pruned } => {
                 if !pruned.get() {
                     if var.used.get() > 0 {
-                        code.push_str(c_type(init.ty()));
+                        code.push_str(&c_type(init.ty()));
                         code.push(' ');
                         code.push_str(&format!("t{} = ", var.index));
                     }
@@ -80,7 +103,7 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             Stmt::VarDef { name, init } => {
-                code.push_str(c_type(init.ty()));
+                code.push_str(&c_type(init.ty()));
                 code.push(' ');
                 code.push_str(name);
                 code.push_str(" = ");
@@ -103,7 +126,7 @@ impl<'a, 'tcx> Emitter {
             }
             Stmt::Cond { branches, var } => {
                 if var.used.get() > 0 {
-                    code.push_str(c_type(var.ty));
+                    code.push_str(&c_type(var.ty));
                     code.push(' ');
                     code.push_str(&format!("t{}", var.index));
                     code.push_str(";\n");
@@ -233,68 +256,85 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push(')');
             }
-            ExprKind::Printf { args } => {
-                code.push_str("printf(\"");
-                for (i, arg) in args.iter().enumerate() {
-                    match immediate(arg).ty() {
-                        Type::Int64 => {
-                            // Use standard conversion specifier macros for integer types.
-                            code.push_str("%\" PRId64 \"");
-                        }
-                        Type::Boolean => {
-                            // "true" / "false"
-                            code.push_str("%s");
-                        }
-                        Type::String => {
-                            code.push_str("%s");
-                        }
-                        Type::Tuple(_) => todo!(),
-                        Type::NativeInt => {
-                            code.push_str("%d");
-                        }
-                    }
+            ExprKind::Printf(specs) => {
+                // emit printf() and format specifiers
 
-                    // separated by a space
-                    if i != (args.len() - 1) {
-                        code.push(' ');
+                code.push_str("printf(\"");
+                for spec in specs {
+                    match spec {
+                        FormatSpec::Str(s) => {
+                            for c in s.escape_default() {
+                                code.push(c);
+                            }
+                        }
+                        FormatSpec::Value(value) => {
+                            match value.ty() {
+                                Type::Int64 => {
+                                    // Use standard conversion specifier macros for integer types.
+                                    code.push_str("%\" PRId64 \"");
+                                }
+                                Type::Boolean => {
+                                    // "true" / "false"
+                                    code.push_str("%s");
+                                }
+                                Type::String => {
+                                    code.push_str("%s");
+                                }
+                                Type::NativeInt => {
+                                    code.push_str("%d");
+                                }
+                                Type::Tuple(_) => {
+                                    unreachable!("compound value can't be printed: {:?}", value);
+                                }
+                            }
+                        }
                     }
                 }
-                code.push_str("\\n\", ");
+                code.push_str("\", ");
 
-                for (i, arg) in args.iter().enumerate() {
-                    match immediate(arg).ty() {
-                        Type::Int64 | Type::String | Type::NativeInt => {
-                            self.emit_expr(arg, code);
+                // arguments
+                let mut it = specs
+                    .iter()
+                    .filter(|spec| matches!(spec, FormatSpec::Value(_)))
+                    .peekable();
+
+                while let Some(spec) = it.next() {
+                    if let FormatSpec::Value(value) = spec {
+                        match value.ty() {
+                            Type::Int64 | Type::String | Type::NativeInt => {
+                                self.emit_expr(value, code);
+                            }
+                            Type::Boolean => {
+                                // "true" / "false"
+                                code.push('(');
+                                self.emit_expr(value, code);
+                                code.push_str(" ? \"true\" : \"false\"");
+                                code.push(')');
+                            }
+                            Type::Tuple(_) => {
+                                unreachable!("compound value can't be printed: {:?}", value);
+                            }
                         }
-                        Type::Boolean => {
-                            // "true" / "false"
-                            code.push('(');
-                            self.emit_expr(arg, code);
-                            code.push_str(" ? \"true\" : \"false\"");
-                            code.push(')');
-                        }
-                        Type::Tuple(_) => todo!(),
                     }
 
-                    if i != (args.len() - 1) {
+                    if it.peek().is_some() {
                         code.push_str(", ");
                     }
                 }
                 code.push(')');
             }
-            ExprKind::Value(value) => self.emit_value(value, code),
-        }
-    }
-
-    fn emit_value(&mut self, value: &Value, code: &mut String) {
-        match value {
-            Value::Int(n) => code.push_str(&format!("{}", *n)),
-            Value::Int64(n) => {
-                // Use standard macros for integer constant expression to expand
-                // a value to the type int_least_N.
-                code.push_str(&format!("INT64_C({})", *n))
+            ExprKind::Int64(n) => {
+                match expr.ty() {
+                    Type::Int64 => {
+                        // Use standard macros for integer constant expression to expand
+                        // a value to the type int_least_N.
+                        code.push_str(&format!("INT64_C({})", *n))
+                    }
+                    Type::NativeInt => code.push_str(&format!("{}", *n)),
+                    _ => unreachable!("Unexpected integral type: {}", expr.ty()),
+                }
             }
-            Value::Bool(b) => {
+            ExprKind::Bool(b) => {
                 // Use standard macros for boolean constant expression.
                 if *b {
                     code.push_str("true");
@@ -302,25 +342,52 @@ impl<'a, 'tcx> Emitter {
                     code.push_str("false");
                 }
             }
-            Value::String(s) => {
+            ExprKind::Str(s) => {
                 code.push_str("u8\"");
                 for c in s.escape_default() {
                     code.push(c);
                 }
                 code.push('"');
             }
-            Value::TmpVar(t) => {
+            ExprKind::Tuple(values) => {
+                // Specify struct type explicitly.
+                code.push('(');
+                code.push_str(&c_type(expr.ty()));
+                code.push(')');
+
+                // Initialize tuple struct with designated initializers.
+                code.push('{');
+
+                let mut peekable = values.iter().enumerate().peekable();
+
+                while let Some((i, value)) = peekable.next() {
+                    code.push_str(&format!("._{} = ", i));
+                    self.emit_expr(value, code);
+
+                    if peekable.peek().is_some() {
+                        code.push_str(", ");
+                    }
+                }
+
+                code.push('}');
+            }
+            ExprKind::TupleField { operand, index } => {
+                self.emit_expr(operand, code);
+                code.push_str(&format!("._{}", index));
+            }
+            ExprKind::TmpVar(t) => {
                 if let Some(expr) = t.immediate.get() {
                     self.emit_expr(expr, code);
                 } else {
                     code.push_str(&format!("t{}", t.index));
                 }
             }
-            Value::Var(name, _) => code.push_str(name),
+            ExprKind::Var(_, name) => code.push_str(name),
         }
     }
 }
 
+/*
 fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
     if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
         if let Some(expr) = t.immediate.get() {
@@ -329,13 +396,60 @@ fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
     }
     expr
 }
-
-fn c_type(ty: &Type) -> &'static str {
+*/
+fn c_type(ty: &Type) -> String {
     match ty {
-        Type::Int64 => "int64_t",
-        Type::Boolean => "bool",
-        Type::String => "const char *",
-        Type::NativeInt => "int",
-        Type::Tuple(_) => todo!(),
+        Type::Int64 => "int64_t".to_string(),
+        Type::Boolean => "bool".to_string(),
+        Type::String => "const char *".to_string(),
+        Type::NativeInt => "int".to_string(),
+        Type::Tuple(_) => {
+            let mut buffer = String::new();
+            encode_ty(ty, &mut buffer);
+            format!("struct _{}", buffer)
+        }
+    }
+}
+
+/// Encode type to C struct type name in universal way. "Universal" here means
+/// it is independent of runtime environment and machine architecture.
+///
+/// ## Integer types
+///
+/// ```ignore
+/// +-----+-------------------------+
+/// | "i" | digits (number of bits) |
+/// +-----+-------------------------+
+/// ```
+///
+/// ## Tuple type
+///
+/// ```ignore
+/// +-----+---------------------------+----------+
+/// | "T" | digits (number of fields) | (fields) |
+/// +-----+---------------------------+----------+
+/// ```
+///
+/// ## Other types
+///
+/// | Type           | Format |
+/// | -------------- | ------ |
+/// | `boolean`      | `"b"`  |
+/// | `string`       | `"s"`  |
+/// | `int` (C type) | `"ni"` |
+///
+fn encode_ty(ty: &Type, buffer: &mut String) {
+    match ty {
+        Type::Int64 => buffer.push_str("i64"),
+        Type::Boolean => buffer.push('b'),
+        Type::String => buffer.push('s'),
+        Type::NativeInt => buffer.push_str("ni"),
+        Type::Tuple(fs) => {
+            buffer.push('T');
+            buffer.push_str(&fs.len().to_string());
+            for fty in fs {
+                encode_ty(fty, buffer);
+            }
+        }
     }
 }
