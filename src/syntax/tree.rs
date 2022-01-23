@@ -335,7 +335,16 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     pub fn parse(&self, tokens: &'t [Token]) -> ParseResult<'t, 'pcx, 'tcx> {
         let mut it = tokens.iter().peekable();
-        self.decl(&mut it)
+        let expr = self.decl(&mut it)?;
+
+        if let Some(token) = it.peek() {
+            Err(ParseError::UnexpectedToken {
+                expected: "(EOF)".to_string(),
+                actual: token,
+            })
+        } else {
+            Ok(expr)
+        }
     }
 
     // --- Parser
