@@ -107,6 +107,28 @@ assert 152 "
     end
   end
   puts(pt(1) + pt(5) + pt(10) + pt(20))"
+assert '1' "
+case 102030
+when _
+  puts(1)
+end"
+assert '102030' "
+case 102030
+when x
+  puts(x)
+end"
+assert '15' "
+case (true, 15)
+when (false, _)
+  puts(0)
+when (true, x)
+  puts(x)
+end"
+assert '60' "
+case (10, 20, 30)
+when (x, y, z)
+  puts(x + y + z)
+end"
 # boolean
 assert 'true' "
   n = 5

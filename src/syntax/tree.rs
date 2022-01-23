@@ -47,7 +47,7 @@ impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
     pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
         self.ty().unwrap_or_else(|| {
             panic!(
-                "Semantic analyzer can't assign type for expression {:?}",
+                "Semantic analyzer couldn't assign type for expression {:?}",
                 self
             );
         })
@@ -239,7 +239,7 @@ impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
     pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
         self.ty().unwrap_or_else(|| {
             panic!(
-                "Semantic analyzer can't assign type for pattern {}",
+                "Semantic analyzer couldn't assign type for pattern {}",
                 self.kind
             );
         })
@@ -267,6 +267,7 @@ pub enum PatternKind<'pcx, 'tcx> {
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
     Tuple(Vec<&'pcx Pattern<'pcx, 'tcx>>),
+    Variable(String),
     Wildcard,
 }
 
@@ -302,6 +303,7 @@ impl fmt::Display for PatternKind<'_, '_> {
                 }
                 write!(f, ")")
             }
+            PatternKind::Variable(name) => write!(f, "{}", name),
             PatternKind::Wildcard => write!(f, "_"),
         }
     }
@@ -333,7 +335,16 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     pub fn parse(&self, tokens: &'t [Token]) -> ParseResult<'t, 'pcx, 'tcx> {
         let mut it = tokens.iter().peekable();
-        self.decl(&mut it)
+        let expr = self.decl(&mut it)?;
+
+        if let Some(token) = it.peek() {
+            Err(ParseError::UnexpectedToken {
+                expected: "(EOF)".to_string(),
+                actual: token,
+            })
+        } else {
+            Ok(expr)
+        }
     }
 
     // --- Parser
@@ -592,6 +603,16 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 } else {
                     unreachable!("invalid tuple or group");
                 }
+            }
+            TokenKind::Identifier(name) => {
+                it.next();
+
+                let kind = if name == "_" {
+                    PatternKind::Wildcard
+                } else {
+                    PatternKind::Variable(name.clone())
+                };
+                self.alloc_pat(kind, token)
             }
             _ => {
                 return Err(ParseError::NotParsed);

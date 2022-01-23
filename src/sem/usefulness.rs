@@ -335,9 +335,9 @@ impl<'tcx> SplitWildcard {
                 ));
                 vec![ctor]
             }
-            // This type is one for which we cannot list constructors, like `str` or `f64`.
-            Type::String => vec![Constructor::NonExhaustive],
             Type::Tuple(_) => vec![Constructor::Single],
+            // This type is one for which we cannot list constructors, like `str` or `f64`.
+            Type::String | Type::Undetermined => vec![Constructor::NonExhaustive],
             Type::NativeInt => unreachable!("Native C types are not supported."),
         };
 
@@ -872,7 +872,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let ctor;
         let fields;
         match pat.kind() {
-            PatternKind::Wildcard => {
+            PatternKind::Variable(_) | PatternKind::Wildcard => {
                 ctor = Constructor::Wildcard;
                 fields = Fields::empty();
             }

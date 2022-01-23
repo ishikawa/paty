@@ -595,11 +595,12 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let mut branches = arms
                     .iter()
                     .map(|arm| {
-                        // Build an immediate value from the pattern
-                        let condition = self._build_pattern(t_head, arm.pattern());
-
+                        // Build an condition and variable declarations from the pattern
                         let mut branch_stmts = vec![];
+                        let condition =
+                            self._build_pattern(t_head, arm.pattern(), &mut branch_stmts);
                         let ret = self._build(arm.body(), program, &mut branch_stmts);
+
                         branch_stmts.push(Stmt::Phi {
                             var: t,
                             value: inc_used(ret),
@@ -668,26 +669,28 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 }
                 specs.push(FormatSpec::Str(")"));
             }
+            Type::Undetermined => unreachable!("untyped code"),
         }
     }
 
     fn _build_pattern(
         &mut self,
-        t_head: &'a Expr<'a, 'tcx>,
+        t_expr: &'a Expr<'a, 'tcx>,
         pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         match pat.kind() {
             PatternKind::Integer(n) => {
                 let value = self.int64(*n);
-                let eq = ExprKind::Eq(inc_used(t_head), value);
+                let eq = ExprKind::Eq(inc_used(t_expr), value);
 
                 self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
             }
             PatternKind::Boolean(b) => {
                 if *b {
-                    inc_used(t_head)
+                    inc_used(t_expr)
                 } else {
-                    let expr = ExprKind::Not(inc_used(t_head));
+                    let expr = ExprKind::Not(inc_used(t_expr));
                     self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
                 }
             }
@@ -697,7 +700,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let value = self.const_string(s);
                 let kind = ExprKind::Call {
                     name: "strcmp".to_string(),
-                    args: vec![inc_used(t_head), value],
+                    args: vec![inc_used(t_expr), value],
                 };
                 let strcmp = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
 
@@ -710,11 +713,11 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let lo = self.int64(*lo);
                 let hi = self.int64(*hi);
 
-                let lhs = ExprKind::Ge(inc_used(t_head), lo);
+                let lhs = ExprKind::Ge(inc_used(t_expr), lo);
 
                 let rhs = match end {
-                    syntax::RangeEnd::Included => ExprKind::Le(inc_used(t_head), hi),
-                    syntax::RangeEnd::Excluded => ExprKind::Lt(inc_used(t_head), hi),
+                    syntax::RangeEnd::Included => ExprKind::Le(inc_used(t_expr), hi),
+                    syntax::RangeEnd::Excluded => ExprKind::Lt(inc_used(t_expr), hi),
                 };
 
                 let kind = ExprKind::And(
@@ -730,28 +733,37 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     self.bool(true)
                 } else {
                     let kind = ExprKind::TupleField {
-                        operand: inc_used(t_head),
+                        operand: inc_used(t_expr),
                         index: 0,
                     };
                     let operand = self
                         .expr_arena
                         .alloc(Expr::new(kind, sub_pats[0].expect_ty()));
 
-                    let mut condition = self._build_pattern(operand, sub_pats[0]);
+                    let mut condition = self._build_pattern(operand, sub_pats[0], stmts);
 
                     for (i, pat) in sub_pats.iter().enumerate().skip(1) {
                         let kind = ExprKind::TupleField {
-                            operand: inc_used(t_head),
+                            operand: inc_used(t_expr),
                             index: i,
                         };
                         let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
 
-                        let kind = ExprKind::And(condition, self._build_pattern(operand, pat));
+                        let kind =
+                            ExprKind::And(condition, self._build_pattern(operand, pat, stmts));
                         condition = self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
                     }
 
                     condition
                 }
+            }
+            PatternKind::Variable(name) => {
+                stmts.push(Stmt::VarDef {
+                    name: name.clone(),
+                    init: inc_used(t_expr),
+                });
+
+                self.bool(true)
             }
             PatternKind::Wildcard => self.bool(true),
         }

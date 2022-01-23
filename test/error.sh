@@ -100,6 +100,12 @@ assert 'Semantic error: non-exhaustive pattern: `_`' "
   when \"B\"
     puts(2)
   end"
+# binding variables
+assert 'identifier `x` is bound more than once in the same pattern' "
+case (10, 20, 30)
+when (x, x, z)
+  puts(x + x + z)
+end"
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)

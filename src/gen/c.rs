@@ -56,6 +56,7 @@ impl<'a, 'tcx> Emitter {
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
                 unreachable!("invalid type for declaration type: {}", ty);
             }
+            Type::Undetermined => unreachable!("untyped code"),
         }
     }
 
@@ -93,13 +94,19 @@ impl<'a, 'tcx> Emitter {
         match stmt {
             Stmt::TmpVarDef { var, init, pruned } => {
                 if !pruned.get() {
+                    // If a temporary variable is not referenced from anywhere,
+                    // we don't emit an assignment statement.
                     if var.used.get() > 0 {
                         code.push_str(&c_type(init.ty()));
                         code.push(' ');
                         code.push_str(&format!("t{} = ", var.index));
                     }
-                    self.emit_expr(init, code);
-                    code.push_str(";\n");
+
+                    // Emit init statement if needed
+                    if var.used.get() > 0 || self.has_side_effect(init) {
+                        self.emit_expr(init, code);
+                        code.push_str(";\n");
+                    }
                 }
             }
             Stmt::VarDef { name, init } => {
@@ -286,6 +293,7 @@ impl<'a, 'tcx> Emitter {
                                 Type::Tuple(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
                                 }
+                                Type::Undetermined => unreachable!("untyped code"),
                             }
                         }
                     }
@@ -314,6 +322,7 @@ impl<'a, 'tcx> Emitter {
                             Type::Tuple(_) => {
                                 unreachable!("compound value can't be printed: {:?}", value);
                             }
+                            Type::Undetermined => unreachable!("untyped code"),
                         }
                     }
 
@@ -385,6 +394,33 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Var(_, name) => code.push_str(name),
         }
     }
+
+    fn has_side_effect(&self, expr: &Expr) -> bool {
+        match expr.kind() {
+            ExprKind::Minus(a) | ExprKind::Not(a) => self.has_side_effect(a),
+            ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Le(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Ge(a, b)
+            | ExprKind::And(a, b)
+            | ExprKind::Or(a, b) => self.has_side_effect(a) || self.has_side_effect(b),
+            ExprKind::Call { .. } => true,
+            ExprKind::Printf(_) => true,
+            ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| self.has_side_effect(sub_expr)),
+            ExprKind::Int64(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::TupleField { .. }
+            | ExprKind::TmpVar(_)
+            | ExprKind::Var(_, _) => false,
+        }
+    }
 }
 
 /*
@@ -408,6 +444,7 @@ fn c_type(ty: &Type) -> String {
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
         }
+        Type::Undetermined => unreachable!("untyped code"),
     }
 }
 
@@ -451,5 +488,6 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
                 encode_ty(fty, buffer);
             }
         }
+        Type::Undetermined => unreachable!("untyped code"),
     }
 }

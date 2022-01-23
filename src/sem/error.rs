@@ -30,4 +30,6 @@ pub enum SemanticError<'tcx> {
     UnreachableElseClause,
     #[error("non-exhaustive pattern: `{pattern}`")]
     NonExhaustivePattern { pattern: String },
+    #[error("identifier `{name}` is bound more than once in the same pattern")]
+    AlreadyBoundInPattern { name: String },
 }
