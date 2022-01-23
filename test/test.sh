@@ -107,9 +107,13 @@ assert 152 "
     end
   end
   puts(pt(1) + pt(5) + pt(10) + pt(20))"
+assert '1' "
+case 102030
+when _
+  puts(1)
+end"
 assert '102030' "
-n = 102030
-case n
+case 102030
 when x
   puts(x)
 end"
