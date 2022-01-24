@@ -213,11 +213,10 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
 
             match pattern.kind() {
                 PatternKind::Variable(name) => {
-                    let ty = rhs
-                        .ty()
-                        .unwrap_or_else(|| panic!("Untyped variable `{}` defined", name));
-                    let binding = Binding::new(name, ty);
-                    vars.insert(binding);
+                    if name != "_" {
+                        let binding = Binding::new(name, rhs.expect_ty());
+                        vars.insert(binding);
+                    }
                 }
                 PatternKind::Integer(_)
                 | PatternKind::Boolean(_)

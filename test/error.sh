@@ -106,6 +106,10 @@ case (10, 20, 30)
 when (x, x, z)
   puts(x + x + z)
 end"
+assert 'cannot find variable `_` in scope' "
+_ = 1
+puts(_)
+"
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
