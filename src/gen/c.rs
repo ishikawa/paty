@@ -84,6 +84,13 @@ impl<'a, 'tcx> Emitter {
 
         // body
         code.push_str("{\n");
+        for param in &fun.params {
+            // Emit code to ignore unused variable.
+            if !param.used {
+                code.push_str(&format!("(void){};\n", param.name));
+            }
+        }
+
         for stmt in &fun.body {
             self.emit_stmt(stmt, code);
         }

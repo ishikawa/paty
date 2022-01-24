@@ -76,6 +76,10 @@ impl fmt::Display for Function<'_, '_> {
 pub struct Parameter<'tcx> {
     pub name: String,
     pub ty: &'tcx Type<'tcx>,
+
+    /// `true` if the parameter is not used, so the backend shouldn't
+    /// emit code for define it.
+    pub used: bool,
 }
 
 impl fmt::Display for Parameter<'_> {
@@ -552,12 +556,14 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         };
                         stmts.push(stmt);
                     }
+                    PatternKind::Wildcard => {
+                        // no bound variable to `_`
+                    }
                     PatternKind::Integer(_)
                     | PatternKind::Boolean(_)
                     | PatternKind::String(_)
                     | PatternKind::Range { .. }
-                    | PatternKind::Tuple(_)
-                    | PatternKind::Wildcard => {
+                    | PatternKind::Tuple(_) => {
                         unreachable!("Unsupported let pattern: `{}`", pattern.kind());
                     }
                 }
@@ -569,20 +575,37 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let saved_tmp_var_index = self.tmp_var_index;
                 self.tmp_var_index = 0;
 
+                // convert parameter pattern to parameter name and assign variable.
+                let mut params = vec![];
+
+                for (i, p) in syntax_fun.params().iter().enumerate() {
+                    let (name, used) = match p.pattern().kind() {
+                        PatternKind::Variable(name) => (name.to_string(), true),
+                        PatternKind::Wildcard => {
+                            // ignore pattern but we have to define a parameter.
+                            (format!("_{}", i), false)
+                        }
+                        PatternKind::Integer(_)
+                        | PatternKind::Boolean(_)
+                        | PatternKind::String(_)
+                        | PatternKind::Range { .. }
+                        | PatternKind::Tuple(_) => {
+                            unreachable!("Unsupported let pattern: `{}`", p.pattern().kind());
+                        }
+                    };
+
+                    params.push(Parameter {
+                        name,
+                        ty: p.ty(),
+                        used,
+                    });
+                }
+
                 let mut body_stmts = vec![];
                 let ret = self._build(syntax_fun.body(), program, &mut body_stmts);
                 body_stmts.push(Stmt::Ret(inc_used(ret)));
 
                 let retty = syntax_fun.body().ty().unwrap();
-
-                let params = syntax_fun
-                    .params()
-                    .iter()
-                    .map(|p| Parameter {
-                        name: p.name().to_string(),
-                        ty: p.ty(),
-                    })
-                    .collect();
 
                 let fun = Function {
                     name: syntax_fun.name().to_string(),

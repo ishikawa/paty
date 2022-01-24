@@ -265,24 +265,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
         }
         syntax::ExprKind::Let { pattern, rhs, then } => {
             analyze_expr(tcx, rhs, vars, functions, errors);
-
-            match pattern.kind() {
-                PatternKind::Variable(name) => {
-                    if name != "_" {
-                        let binding = Binding::new(name, rhs.expect_ty());
-                        vars.insert(binding);
-                    }
-                }
-                PatternKind::Integer(_)
-                | PatternKind::Boolean(_)
-                | PatternKind::String(_)
-                | PatternKind::Range { .. }
-                | PatternKind::Tuple(_)
-                | PatternKind::Wildcard => {
-                    unreachable!("Unsupported let pattern: `{}`", pattern.kind());
-                }
-            }
-
+            analyze_let_pattern(tcx, pattern, rhs.expect_ty(), vars, functions, errors);
             analyze_expr(tcx, then, vars, functions, errors);
         }
         syntax::ExprKind::Fn(fun) => {
@@ -292,8 +275,14 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             functions.push(fun);
             {
                 for param in fun.params() {
-                    let binding = Binding::new(param.name(), param.ty());
-                    scope.insert(binding);
+                    analyze_let_pattern(
+                        tcx,
+                        param.pattern(),
+                        param.ty(),
+                        &mut scope,
+                        functions,
+                        errors,
+                    );
                 }
 
                 let body = fun.body();
@@ -356,6 +345,28 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             }
         }
     }
+}
+
+fn analyze_let_pattern<'pcx: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+    expected_ty: &'tcx Type<'tcx>,
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match pat.kind() {
+        PatternKind::Variable(_) | PatternKind::Wildcard => {}
+        PatternKind::Integer(_)
+        | PatternKind::Boolean(_)
+        | PatternKind::String(_)
+        | PatternKind::Range { .. }
+        | PatternKind::Tuple(_) => {
+            unreachable!("Unsupported let pattern: `{}`", pat.kind());
+        }
+    }
+
+    analyze_pattern(tcx, pat, expected_ty, vars, functions, errors);
 }
 
 fn analyze_pattern<'pcx: 'tcx, 'tcx>(

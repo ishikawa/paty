@@ -72,6 +72,11 @@ assert 30 "
     x + y
   end
   puts(foo(10, 20))"
+assert 30 "
+  def foo(_, _, z)
+    z
+  end
+  puts(foo(10, 20, 30))"
 # comments
 assert 30 "
   # comment 1

@@ -121,7 +121,7 @@ pub enum ExprKind<'pcx, 'tcx> {
 #[derive(Debug)]
 pub struct Function<'pcx, 'tcx> {
     name: String,
-    params: Vec<Parameter<'tcx>>,
+    params: Vec<Parameter<'pcx, 'tcx>>,
     body: &'pcx Expr<'pcx, 'tcx>,
     then: &'pcx Expr<'pcx, 'tcx>,
 }
@@ -131,7 +131,7 @@ impl<'pcx, 'tcx> Function<'pcx, 'tcx> {
         &self.name
     }
 
-    pub fn params(&self) -> &[Parameter] {
+    pub fn params(&self) -> &[Parameter<'pcx, 'tcx>] {
         &self.params
     }
 
@@ -146,23 +146,23 @@ impl<'pcx, 'tcx> Function<'pcx, 'tcx> {
 
 /// Formal parameter for a function
 #[derive(Debug)]
-pub struct Parameter<'tcx> {
-    name: String,
+pub struct Parameter<'pcx, 'tcx> {
+    pattern: &'pcx Pattern<'pcx, 'tcx>,
     ty: &'tcx Type<'tcx>,
     comments: Vec<String>,
 }
 
-impl<'tcx> Parameter<'tcx> {
-    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
+impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
+    pub fn new(pattern: &'pcx Pattern<'pcx, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         Self {
-            name: name.to_string(),
+            pattern,
             ty,
             comments: vec![],
         }
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn pattern(&self) -> &'pcx Pattern<'pcx, 'tcx> {
+        self.pattern
     }
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
@@ -372,8 +372,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                     let then = self.decl(it)?;
 
                     // variable pattern to bind a variable
-                    let pat = Pattern::new(PatternKind::Variable(name.clone()));
-
+                    let pat = Pattern::new(self.variable_name_to_pattern(name));
                     let mut r#let = Expr::new(ExprKind::Let {
                         pattern: self.pat_arena.alloc(pat),
                         rhs,
@@ -427,7 +426,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn function_parameter(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<Parameter<'tcx>, ParseError<'t>> {
+    ) -> Result<Parameter<'pcx, 'tcx>, ParseError<'t>> {
         let (name_token, name) = self.try_identifier(it)?;
 
         let ty = if self.match_token(it, TokenKind::Operator(':')) {
@@ -439,10 +438,20 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             self.tcx.int64()
         };
 
-        let mut param = Parameter::new(name, ty);
+        // construct a pattern
+        let pat = self.alloc_pat(self.variable_name_to_pattern(name), name_token);
+        let mut param = Parameter::new(pat, ty);
 
         param.append_comments_from(name_token);
         Ok(param)
+    }
+
+    fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'pcx, 'tcx> {
+        if name == "_" {
+            PatternKind::Wildcard
+        } else {
+            PatternKind::Variable(name.to_string())
+        }
     }
 
     fn type_specifier(
@@ -609,13 +618,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             }
             TokenKind::Identifier(name) => {
                 it.next();
-
-                let kind = if name == "_" {
-                    PatternKind::Wildcard
-                } else {
-                    PatternKind::Variable(name.clone())
-                };
-                self.alloc_pat(kind, token)
+                self.alloc_pat(self.variable_name_to_pattern(name), token)
             }
             _ => {
                 return Err(ParseError::NotParsed);
