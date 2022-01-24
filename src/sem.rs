@@ -208,28 +208,6 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
         }
-        syntax::ExprKind::Let { pattern, rhs, then } => {
-            analyze_expr(tcx, rhs, vars, functions, errors);
-
-            match pattern.kind() {
-                PatternKind::Variable(name) => {
-                    if name != "_" {
-                        let binding = Binding::new(name, rhs.expect_ty());
-                        vars.insert(binding);
-                    }
-                }
-                PatternKind::Integer(_)
-                | PatternKind::Boolean(_)
-                | PatternKind::String(_)
-                | PatternKind::Range { .. }
-                | PatternKind::Tuple(_)
-                | PatternKind::Wildcard => {
-                    unreachable!("Unsupported let pattern: `{}`", pattern.kind());
-                }
-            }
-
-            analyze_expr(tcx, then, vars, functions, errors);
-        }
         syntax::ExprKind::TupleField(operand, index) => {
             analyze_expr(tcx, operand, vars, functions, errors);
 
@@ -284,6 +262,28 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 analyze_expr(tcx, arg, vars, functions, errors);
             }
             unify_expr_type(tcx.int64(), expr, errors);
+        }
+        syntax::ExprKind::Let { pattern, rhs, then } => {
+            analyze_expr(tcx, rhs, vars, functions, errors);
+
+            match pattern.kind() {
+                PatternKind::Variable(name) => {
+                    if name != "_" {
+                        let binding = Binding::new(name, rhs.expect_ty());
+                        vars.insert(binding);
+                    }
+                }
+                PatternKind::Integer(_)
+                | PatternKind::Boolean(_)
+                | PatternKind::String(_)
+                | PatternKind::Range { .. }
+                | PatternKind::Tuple(_)
+                | PatternKind::Wildcard => {
+                    unreachable!("Unsupported let pattern: `{}`", pattern.kind());
+                }
+            }
+
+            analyze_expr(tcx, then, vars, functions, errors);
         }
         syntax::ExprKind::Fn(fun) => {
             // Function definition creates a new scope without a parent scope.
