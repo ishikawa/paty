@@ -71,6 +71,8 @@ assert "33
 puts(44)"
 assert "66" "(x, y, z) = (11, 22, 33)
 puts(x + y + z)"
+assert "231" "((a, b, c), (d, e), (f,)) = ((11, 22, 33), (44, 55), (66,))
+puts(a + b + c + d + e + f)"
 # function
 assert 30 "
   def foo(x, y)

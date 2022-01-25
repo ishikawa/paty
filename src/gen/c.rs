@@ -1,4 +1,6 @@
 //! C code generator
+use std::collections::HashSet;
+
 use super::ir::{Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar};
 use crate::ty::Type;
 
@@ -27,10 +29,11 @@ impl<'a, 'tcx> Emitter {
         ]
         .join("\n");
 
+        // Emit declaration types
+        let mut emitted_types = HashSet::new();
+
         for ty in program.decl_types() {
-            self.emit_decl_type(ty, &mut code);
-            code.push('\n');
-            code.push('\n');
+            self.emit_decl_type(ty, &mut emitted_types, &mut code);
         }
 
         for fun in program.functions() {
@@ -41,9 +44,24 @@ impl<'a, 'tcx> Emitter {
         code
     }
 
-    fn emit_decl_type(&mut self, ty: &Type<'tcx>, code: &mut String) {
+    fn emit_decl_type<'t>(
+        &mut self,
+        ty: &'t Type<'tcx>,
+        emitted_types: &mut HashSet<&'t Type<'tcx>>,
+        code: &mut String,
+    ) {
+        if emitted_types.contains(ty) {
+            return;
+        }
+
         match ty {
             Type::Tuple(fs) => {
+                // Emit field types first for forward declaration.
+                for fty in fs.iter() {
+                    self.emit_decl_type(fty, emitted_types, code);
+                }
+
+                // Emit C struct
                 code.push_str(&c_type(ty));
                 code.push_str(" {\n");
                 for (i, fty) in fs.iter().enumerate() {
@@ -53,11 +71,13 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str("};");
             }
-            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
-                unreachable!("invalid type for declaration type: {}", ty);
-            }
+            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {}
             Type::Undetermined => unreachable!("untyped code"),
-        }
+        };
+
+        code.push('\n');
+        code.push('\n');
+        emitted_types.insert(ty);
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
