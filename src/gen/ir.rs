@@ -43,7 +43,7 @@ impl fmt::Display for Program<'_, '_> {
 #[derive(Debug)]
 pub struct Function<'a, 'tcx> {
     pub name: String,
-    pub params: Vec<Parameter<'tcx>>,
+    pub params: Vec<Parameter<'a, 'tcx>>,
     pub body: Vec<Stmt<'a, 'tcx>>,
     pub retty: &'tcx Type<'tcx>,
     /// Whether this function is `main` or not.
@@ -73,21 +73,49 @@ impl fmt::Display for Function<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct Parameter<'tcx> {
-    pub name: String,
-    pub ty: &'tcx Type<'tcx>,
-
-    /// `true` if the parameter is not used, so the backend shouldn't
-    /// emit code for define it.
-    pub used: bool,
+pub enum Parameter<'a, 'tcx> {
+    TmpVar(&'a TmpVar<'a, 'tcx>),
+    Var(Var<'tcx>),
 }
 
-impl fmt::Display for Parameter<'_> {
+impl<'a, 'tcx> Parameter<'a, 'tcx> {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        match self {
+            Self::TmpVar(t) => t.ty,
+            Self::Var(var) => var.ty,
+        }
+    }
+}
+
+impl fmt::Display for Parameter<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)?;
+        match self {
+            Self::TmpVar(t) => t.fmt(f),
+            Self::Var(name) => name.fmt(f),
+        }?;
         write!(f, ": ")?;
-        write!(f, "{}", self.ty)?;
-        Ok(())
+        match self {
+            Self::TmpVar(t) => t.ty.fmt(f),
+            Self::Var(var) => var.ty.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Var<'tcx> {
+    pub name: String,
+    pub ty: &'tcx Type<'tcx>,
+}
+
+impl<'tcx> Var<'tcx> {
+    pub fn new(name: String, ty: &'tcx Type<'tcx>) -> Self {
+        Self { name, ty }
+    }
+}
+
+impl fmt::Display for Var<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.name.fmt(f)
     }
 }
 
@@ -107,6 +135,12 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
             used: Cell::new(0),
             immediate: Cell::new(None),
         }
+    }
+}
+
+impl fmt::Display for TmpVar<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "t{}", self.index)
     }
 }
 
@@ -578,12 +612,17 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 // convert parameter pattern to parameter name and assign variable.
                 let mut params = vec![];
 
-                for (i, p) in syntax_fun.params().iter().enumerate() {
-                    let (name, used) = match p.pattern().kind() {
-                        PatternKind::Variable(name) => (name.to_string(), true),
+                for p in syntax_fun.params() {
+                    let pat = p.pattern();
+                    let param = match pat.kind() {
+                        PatternKind::Variable(name) => Parameter::Var(Var {
+                            name: name.to_string(),
+                            ty: pat.expect_ty(),
+                        }),
                         PatternKind::Wildcard => {
                             // ignore pattern but we have to define a parameter.
-                            (format!("_{}", i), false)
+                            let t = self.next_temp_var(pat.expect_ty());
+                            Parameter::TmpVar(t)
                         }
                         PatternKind::Integer(_)
                         | PatternKind::Boolean(_)
@@ -594,11 +633,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         }
                     };
 
-                    params.push(Parameter {
-                        name,
-                        ty: p.ty(),
-                        used,
-                    });
+                    params.push(param);
                 }
 
                 let mut body_stmts = vec![];
@@ -832,7 +867,7 @@ impl<'a, 'tcx> Optimizer {
             Stmt::TmpVarDef { var, init, pruned } => {
                 if var.used.get() == 1 {
                     // This temporary variable is used only once, so it could be
-                    // replaced with the expression if it has no side-effect.
+                    // replaced with the expression.
                     var.immediate.set(Some(init));
                     pruned.set(true);
                     return;
