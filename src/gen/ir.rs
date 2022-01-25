@@ -584,26 +584,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             syntax::ExprKind::Let { pattern, rhs, then } => {
                 let init = self._build(rhs, program, stmts);
 
-                match pattern.kind() {
-                    PatternKind::Variable(name) => {
-                        let stmt = Stmt::VarDef {
-                            name: name.to_string(),
-                            init: inc_used(init),
-                        };
-                        stmts.push(stmt);
-                    }
-                    PatternKind::Wildcard => {
-                        // no bound variable to `_`
-                    }
-                    PatternKind::Integer(_)
-                    | PatternKind::Boolean(_)
-                    | PatternKind::String(_)
-                    | PatternKind::Range { .. }
-                    | PatternKind::Tuple(_) => {
-                        unreachable!("Unsupported let pattern: `{}`", pattern.kind());
-                    }
-                }
-
+                self._build_let_pattern(pattern, init, stmts);
                 self._build(then, program, stmts)
             }
             syntax::ExprKind::Fn(syntax_fun) => {
@@ -711,6 +692,43 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.expr_arena.alloc(Expr::new(kind, t.ty))
             }
         }
+    }
+
+    fn _build_let_pattern(
+        &mut self,
+        pattern: &'pcx syntax::Pattern<'pcx, 'tcx>,
+        init: &'a Expr<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) {
+        match pattern.kind() {
+            PatternKind::Variable(name) => {
+                let stmt = Stmt::VarDef {
+                    name: name.to_string(),
+                    init: inc_used(init),
+                };
+                stmts.push(stmt);
+            }
+            PatternKind::Wildcard => {
+                // no bound variable to `_`
+            }
+            PatternKind::Tuple(fs) => {
+                for (i, sub_pat) in fs.iter().enumerate() {
+                    let kind = ExprKind::TupleField {
+                        operand: inc_used(init),
+                        index: i,
+                    };
+                    let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
+
+                    self._build_let_pattern(sub_pat, field, stmts)
+                }
+            }
+            PatternKind::Integer(_)
+            | PatternKind::Boolean(_)
+            | PatternKind::String(_)
+            | PatternKind::Range { .. } => {
+                unreachable!("Unsupported let pattern: `{}`", pattern.kind());
+            }
+        };
     }
 
     fn _printf_format(
