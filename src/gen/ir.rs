@@ -101,6 +101,7 @@ impl fmt::Display for Parameter<'_, '_> {
     }
 }
 
+// TODO: Currently it is only used in Parameter.
 #[derive(Debug)]
 pub struct Var<'tcx> {
     pub name: String,
@@ -146,6 +147,7 @@ impl fmt::Display for TmpVar<'_, '_> {
 
 #[derive(Debug)]
 pub enum Stmt<'a, 'tcx> {
+    // TODO: Can we unify TmpVar(Def) and Var(Def)?
     TmpVarDef {
         var: &'a TmpVar<'a, 'tcx>,
         init: &'a Expr<'a, 'tcx>,
