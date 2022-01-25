@@ -621,13 +621,22 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         &self,
         expr: &'pcx Expr<'pcx, 'tcx>,
     ) -> Result<&'pcx Pattern<'pcx, 'tcx>, ParseError<'t>> {
-        let pat = match expr.kind() {
-            ExprKind::Var(name) => Pattern::new(self.variable_name_to_pattern(name)),
-            ExprKind::Integer(_)
-            | ExprKind::Boolean(_)
-            | ExprKind::String(_)
-            | ExprKind::Tuple(_)
-            | ExprKind::Minus(_)
+        let kind = match expr.kind() {
+            ExprKind::Var(name) => self.variable_name_to_pattern(name),
+            ExprKind::Integer(n) => PatternKind::Integer(*n),
+            ExprKind::Boolean(b) => PatternKind::Boolean(*b),
+            ExprKind::String(s) => PatternKind::String(s.to_string()),
+            ExprKind::Tuple(fs) => {
+                let mut ps = vec![];
+
+                for sub_expr in fs {
+                    let sub_pat = self.expr_to_pattern(sub_expr)?;
+                    ps.push(sub_pat);
+                }
+
+                PatternKind::Tuple(ps)
+            }
+            ExprKind::Minus(_)
             | ExprKind::Add(_, _)
             | ExprKind::Sub(_, _)
             | ExprKind::Mul(_, _)
@@ -648,7 +657,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             | ExprKind::Puts(_) => return Err(ParseError::UnrecognizedPattern),
         };
 
-        Ok(self.pat_arena.alloc(pat))
+        Ok(self.pat_arena.alloc(Pattern::new(kind)))
     }
 
     fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'pcx, 'tcx> {

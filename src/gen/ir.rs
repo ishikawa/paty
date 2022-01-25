@@ -587,7 +587,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 match pattern.kind() {
                     PatternKind::Variable(name) => {
                         let stmt = Stmt::VarDef {
-                            name: name.clone(),
+                            name: name.to_string(),
                             init: inc_used(init),
                         };
                         stmts.push(stmt);

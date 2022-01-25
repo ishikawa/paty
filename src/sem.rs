@@ -356,12 +356,13 @@ fn analyze_let_pattern<'pcx: 'tcx, 'tcx>(
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match pat.kind() {
-        PatternKind::Variable(_) | PatternKind::Wildcard => {}
-        PatternKind::Integer(_)
+        PatternKind::Variable(_)
+        | PatternKind::Wildcard
+        | PatternKind::Integer(_)
         | PatternKind::Boolean(_)
         | PatternKind::String(_)
-        | PatternKind::Range { .. }
-        | PatternKind::Tuple(_) => {
+        | PatternKind::Tuple(_) => {}
+        PatternKind::Range { .. } => {
             unreachable!("Unsupported let pattern: `{}`", pat.kind());
         }
     }
