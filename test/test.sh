@@ -66,6 +66,9 @@ assert 3 "
 assert 5 "
   five = 5
   puts(five)"
+assert "33
+44" "_ = puts(33)
+puts(44)"
 # function
 assert 30 "
   def foo(x, y)
