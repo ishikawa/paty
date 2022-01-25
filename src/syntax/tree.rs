@@ -14,7 +14,9 @@ pub enum ParseError<'t> {
     NotParsed,
     #[error("expected {expected}, but was {actual}")]
     UnexpectedToken { expected: String, actual: &'t Token },
-    #[error("Premature end of file")]
+    #[error("expected pattern, but was expr")]
+    UnrecognizedPattern,
+    #[error("premature end of file")]
     PrematureEnd,
 }
 
@@ -356,33 +358,28 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         } else if let Some(expr) = self.lookahead(self.expr(it))? {
             // To make this LL(1) parser able to parse `assignment` grammar which is LL(2):
             //
-            //     assignment -> ID ASSIGN expr | expr
+            //     assignment -> pattern ASSIGN expr | expr
             //
             // First, we try to parse the grammar that is LL(1):
             //
             //     assignment -> expr ASSIGN expr | expr
             //
             // And then, construct an assignment node if the left hand of an assignment is
-            // assignable (e.g. Identifier).
-            if let ExprKind::Var(name) = expr.kind() {
-                if self.match_token(it, TokenKind::Operator('=')) {
-                    it.next();
+            // a pattern.
+            if self.match_token(it, TokenKind::Operator('=')) {
+                // convert Expr to Pattern
+                let pattern = self.expr_to_pattern(expr)?;
+                it.next();
 
-                    let rhs = self.expr(it)?;
-                    let then = self.decl(it)?;
+                let rhs = self.expr(it)?;
+                let then = self.decl(it)?;
 
-                    // variable pattern to bind a variable
-                    let pat = Pattern::new(self.variable_name_to_pattern(name));
-                    let mut r#let = Expr::new(ExprKind::Let {
-                        pattern: self.pat_arena.alloc(pat),
-                        rhs,
-                        then,
-                    });
+                let mut r#let = Expr::new(ExprKind::Let { pattern, rhs, then });
 
-                    r#let.append_comments_from_expr(expr);
-                    return Ok(self.expr_arena.alloc(r#let));
-                }
+                r#let.append_comments_from_expr(expr);
+                return Ok(self.expr_arena.alloc(r#let));
             }
+
             Ok(expr)
         } else {
             Err(ParseError::NotParsed)
@@ -444,14 +441,6 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
         param.append_comments_from(name_token);
         Ok(param)
-    }
-
-    fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'pcx, 'tcx> {
-        if name == "_" {
-            PatternKind::Wildcard
-        } else {
-            PatternKind::Variable(name.to_string())
-        }
     }
 
     fn type_specifier(
@@ -626,6 +615,48 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         };
 
         Ok(pat)
+    }
+
+    fn expr_to_pattern(
+        &self,
+        expr: &'pcx Expr<'pcx, 'tcx>,
+    ) -> Result<&'pcx Pattern<'pcx, 'tcx>, ParseError<'t>> {
+        let pat = match expr.kind() {
+            ExprKind::Var(name) => Pattern::new(self.variable_name_to_pattern(name)),
+            ExprKind::Integer(_)
+            | ExprKind::Boolean(_)
+            | ExprKind::String(_)
+            | ExprKind::Tuple(_)
+            | ExprKind::Minus(_)
+            | ExprKind::Add(_, _)
+            | ExprKind::Sub(_, _)
+            | ExprKind::Mul(_, _)
+            | ExprKind::Div(_, _)
+            | ExprKind::Eq(_, _)
+            | ExprKind::Ne(_, _)
+            | ExprKind::Le(_, _)
+            | ExprKind::Ge(_, _)
+            | ExprKind::Lt(_, _)
+            | ExprKind::Gt(_, _)
+            | ExprKind::And(_, _)
+            | ExprKind::Or(_, _)
+            | ExprKind::TupleField(_, _)
+            | ExprKind::Call(_, _)
+            | ExprKind::Let { .. }
+            | ExprKind::Fn(_)
+            | ExprKind::Case { .. }
+            | ExprKind::Puts(_) => return Err(ParseError::UnrecognizedPattern),
+        };
+
+        Ok(self.pat_arena.alloc(pat))
+    }
+
+    fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'pcx, 'tcx> {
+        if name == "_" {
+            PatternKind::Wildcard
+        } else {
+            PatternKind::Variable(name.to_string())
+        }
     }
 
     fn case_arm(&self, it: &mut TokenIterator<'t>) -> Result<CaseArm<'pcx, 'tcx>, ParseError<'t>> {
