@@ -71,7 +71,10 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str("};");
             }
-            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {}
+            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
+                // no emit
+                return;
+            }
             Type::Undetermined => unreachable!("untyped code"),
         };
 
