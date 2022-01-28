@@ -174,6 +174,8 @@ impl<'a, 'tcx> Emitter {
                 }
 
                 // Construct "if-else" statement from each branches.
+                // If a branch has only one branch and it has no condition,
+                // this loop finally generate a block statement.
                 for (i, branch) in branches.iter().enumerate() {
                     if i > 0 {
                         code.push_str("else ");
@@ -185,7 +187,7 @@ impl<'a, 'tcx> Emitter {
                         code.push_str(") ");
                     }
 
-                    // body
+                    // body (block)
                     code.push_str("{\n");
                     for stmt in &branch.body {
                         self.emit_stmt(stmt, code);
