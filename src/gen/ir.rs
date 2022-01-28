@@ -101,16 +101,28 @@ impl fmt::Display for Parameter<'_, '_> {
     }
 }
 
-// TODO: Currently it is only used in Parameter.
-#[derive(Debug)]
+// TODO: Unify temporary variables and regular variables so that
+// unnecessary assignment elimination can work in either case.
+#[derive(Debug, Clone)]
 pub struct Var<'tcx> {
-    pub name: String,
-    pub ty: &'tcx Type<'tcx>,
+    name: String,
+    ty: &'tcx Type<'tcx>,
 }
 
 impl<'tcx> Var<'tcx> {
-    pub fn new(name: String, ty: &'tcx Type<'tcx>) -> Self {
-        Self { name, ty }
+    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
+        Self {
+            name: name.to_string(),
+            ty,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
     }
 }
 
@@ -275,7 +287,7 @@ pub enum ExprKind<'a, 'tcx> {
         index: usize,
     },
     TmpVar(&'a TmpVar<'a, 'tcx>),
-    Var(&'tcx Type<'tcx>, String),
+    Var(Var<'tcx>),
 }
 
 #[derive(Debug, Clone)]
@@ -533,7 +545,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Var(name) => {
-                let kind = ExprKind::Var(expr.ty().unwrap(), name.clone());
+                let kind = ExprKind::Var(Var::new(name, expr.expect_ty()));
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::TupleField(operand, index) => {
@@ -594,24 +606,34 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 // convert parameter pattern to parameter name and assign variable.
                 let mut params = vec![];
+                let mut body_stmts = vec![];
 
                 for p in syntax_fun.params() {
                     let pat = p.pattern();
+                    let ty = pat.expect_ty();
+
+                    // Assign parameter names to be able to referenced later.
                     let param = match pat.kind() {
-                        PatternKind::Variable(name) => Parameter::Var(Var {
-                            name: name.to_string(),
-                            ty: pat.expect_ty(),
-                        }),
+                        PatternKind::Variable(name) => Parameter::Var(Var::new(name, ty)),
                         PatternKind::Wildcard => {
                             // ignore pattern but we have to define a parameter.
-                            let t = self.next_temp_var(pat.expect_ty());
+                            Parameter::TmpVar(self.next_temp_var(ty))
+                        }
+                        PatternKind::Tuple(_) => {
+                            // Create a temporary parameter name to be able to referenced in the body.
+                            // Simultaneously, we build deconstruct assignment expressions.
+                            let t = self.next_temp_var(ty);
+                            let param_expr =
+                                self.expr_arena.alloc(Expr::new(ExprKind::TmpVar(t), ty));
+
+                            self._build_let_pattern(pat, param_expr, &mut body_stmts);
+
                             Parameter::TmpVar(t)
                         }
                         PatternKind::Integer(_)
                         | PatternKind::Boolean(_)
                         | PatternKind::String(_)
-                        | PatternKind::Range { .. }
-                        | PatternKind::Tuple(_) => {
+                        | PatternKind::Range { .. } => {
                             unreachable!("Unsupported let pattern: `{}`", p.pattern().kind());
                         }
                     };
@@ -619,7 +641,6 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     params.push(param);
                 }
 
-                let mut body_stmts = vec![];
                 let ret = self._build(syntax_fun.body(), program, &mut body_stmts);
                 body_stmts.push(Stmt::Ret(inc_used(ret)));
 
@@ -967,7 +988,7 @@ impl<'a, 'tcx> Optimizer {
             | ExprKind::Tuple(_)
             | ExprKind::TupleField { .. }
             | ExprKind::TmpVar(_)
-            | ExprKind::Var(_, _) => {}
+            | ExprKind::Var(_) => {}
         }
     }
 }

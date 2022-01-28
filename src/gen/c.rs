@@ -96,7 +96,7 @@ impl<'a, 'tcx> Emitter {
             code.push(' ');
             match param {
                 Parameter::TmpVar(t) => code.push_str(&tmp_var(t)),
-                Parameter::Var(v) => code.push_str(&v.name),
+                Parameter::Var(v) => code.push_str(v.name()),
             };
 
             if i != (fun.params.len() - 1) {
@@ -425,7 +425,7 @@ impl<'a, 'tcx> Emitter {
                     code.push_str(&tmp_var(t));
                 }
             }
-            ExprKind::Var(_, name) => code.push_str(name),
+            ExprKind::Var(var) => code.push_str(var.name()),
         }
     }
 
@@ -452,7 +452,7 @@ impl<'a, 'tcx> Emitter {
             | ExprKind::Str(_)
             | ExprKind::TupleField { .. }
             | ExprKind::TmpVar(_)
-            | ExprKind::Var(_, _) => false,
+            | ExprKind::Var(_) => false,
         }
     }
 }

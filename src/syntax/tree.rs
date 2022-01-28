@@ -424,7 +424,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<Parameter<'pcx, 'tcx>, ParseError<'t>> {
-        let (name_token, name) = self.try_identifier(it)?;
+        let pat = self.pattern(it)?;
 
         let ty = if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
@@ -435,12 +435,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             self.tcx.int64()
         };
 
-        // construct a pattern
-        let pat = self.alloc_pat(self.variable_name_to_pattern(name), name_token);
-        let mut param = Parameter::new(pat, ty);
-
-        param.append_comments_from(name_token);
-        Ok(param)
+        Ok(Parameter::new(pat, ty))
     }
 
     fn type_specifier(

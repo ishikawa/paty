@@ -80,6 +80,11 @@ assert 30 "
   end
   puts(foo(10, 20))"
 assert 30 "
+  def foo((x, y): (int64, int64))
+    x + y
+  end
+  puts(foo((10, 20)))"
+assert 30 "
   def foo(_, _, z)
     z
   end
