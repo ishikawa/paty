@@ -208,17 +208,6 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
         }
-        syntax::ExprKind::Let { name, rhs, then } => {
-            analyze_expr(tcx, rhs, vars, functions, errors);
-
-            let ty = rhs
-                .ty()
-                .unwrap_or_else(|| panic!("Untyped variable `{}` defined", name));
-            let binding = Binding::new(name, ty);
-
-            vars.insert(binding);
-            analyze_expr(tcx, then, vars, functions, errors);
-        }
         syntax::ExprKind::TupleField(operand, index) => {
             analyze_expr(tcx, operand, vars, functions, errors);
 
@@ -274,6 +263,11 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             }
             unify_expr_type(tcx.int64(), expr, errors);
         }
+        syntax::ExprKind::Let { pattern, rhs, then } => {
+            analyze_expr(tcx, rhs, vars, functions, errors);
+            analyze_let_pattern(tcx, pattern, rhs.expect_ty(), vars, functions, errors);
+            analyze_expr(tcx, then, vars, functions, errors);
+        }
         syntax::ExprKind::Fn(fun) => {
             // Function definition creates a new scope without a parent scope.
             let mut scope = Scope::new();
@@ -281,8 +275,14 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             functions.push(fun);
             {
                 for param in fun.params() {
-                    let binding = Binding::new(param.name(), param.ty());
-                    scope.insert(binding);
+                    analyze_let_pattern(
+                        tcx,
+                        param.pattern(),
+                        param.ty(),
+                        &mut scope,
+                        functions,
+                        errors,
+                    );
                 }
 
                 let body = fun.body();
@@ -345,6 +345,29 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             }
         }
     }
+}
+
+fn analyze_let_pattern<'pcx: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+    expected_ty: &'tcx Type<'tcx>,
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match pat.kind() {
+        PatternKind::Variable(_)
+        | PatternKind::Wildcard
+        | PatternKind::Integer(_)
+        | PatternKind::Boolean(_)
+        | PatternKind::String(_)
+        | PatternKind::Tuple(_) => {}
+        PatternKind::Range { .. } => {
+            unreachable!("Unsupported let pattern: `{}`", pat.kind());
+        }
+    }
+
+    analyze_pattern(tcx, pat, expected_ty, vars, functions, errors);
 }
 
 fn analyze_pattern<'pcx: 'tcx, 'tcx>(

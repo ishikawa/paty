@@ -1,5 +1,7 @@
 //! C code generator
-use super::ir::{Expr, ExprKind, FormatSpec, Function, Program, Stmt};
+use std::collections::HashSet;
+
+use super::ir::{Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar};
 use crate::ty::Type;
 
 #[derive(Debug)]
@@ -27,10 +29,11 @@ impl<'a, 'tcx> Emitter {
         ]
         .join("\n");
 
+        // Emit declaration types
+        let mut emitted_types = HashSet::new();
+
         for ty in program.decl_types() {
-            self.emit_decl_type(ty, &mut code);
-            code.push('\n');
-            code.push('\n');
+            self.emit_decl_type(ty, &mut emitted_types, &mut code);
         }
 
         for fun in program.functions() {
@@ -41,9 +44,24 @@ impl<'a, 'tcx> Emitter {
         code
     }
 
-    fn emit_decl_type(&mut self, ty: &Type<'tcx>, code: &mut String) {
+    fn emit_decl_type<'t>(
+        &mut self,
+        ty: &'t Type<'tcx>,
+        emitted_types: &mut HashSet<&'t Type<'tcx>>,
+        code: &mut String,
+    ) {
+        if emitted_types.contains(ty) {
+            return;
+        }
+
         match ty {
             Type::Tuple(fs) => {
+                // Emit field types first for forward declaration.
+                for fty in fs.iter() {
+                    self.emit_decl_type(fty, emitted_types, code);
+                }
+
+                // Emit C struct
                 code.push_str(&c_type(ty));
                 code.push_str(" {\n");
                 for (i, fty) in fs.iter().enumerate() {
@@ -53,11 +71,13 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str("};");
             }
-            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
-                unreachable!("invalid type for declaration type: {}", ty);
-            }
+            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {}
             Type::Undetermined => unreachable!("untyped code"),
-        }
+        };
+
+        code.push('\n');
+        code.push('\n');
+        emitted_types.insert(ty);
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
@@ -72,9 +92,12 @@ impl<'a, 'tcx> Emitter {
         code.push_str(&fun.name);
         code.push('(');
         for (i, param) in fun.params.iter().enumerate() {
-            code.push_str(&c_type(param.ty));
+            code.push_str(&c_type(param.ty()));
             code.push(' ');
-            code.push_str(&param.name);
+            match param {
+                Parameter::TmpVar(t) => code.push_str(&tmp_var(t)),
+                Parameter::Var(v) => code.push_str(v.name()),
+            };
 
             if i != (fun.params.len() - 1) {
                 code.push_str(", ");
@@ -84,6 +107,15 @@ impl<'a, 'tcx> Emitter {
 
         // body
         code.push_str("{\n");
+        for param in &fun.params {
+            // Emit code to ignore unused variable.
+            if let Parameter::TmpVar(t) = param {
+                if t.used.get() == 0 {
+                    code.push_str(&format!("(void){};\n", tmp_var(t)));
+                }
+            }
+        }
+
         for stmt in &fun.body {
             self.emit_stmt(stmt, code);
         }
@@ -99,7 +131,8 @@ impl<'a, 'tcx> Emitter {
                     if var.used.get() > 0 {
                         code.push_str(&c_type(init.ty()));
                         code.push(' ');
-                        code.push_str(&format!("t{} = ", var.index));
+                        code.push_str(&tmp_var(var));
+                        code.push_str(" = ");
                     }
 
                     // Emit init statement if needed
@@ -125,7 +158,8 @@ impl<'a, 'tcx> Emitter {
             Stmt::Phi { var, value, pruned } => {
                 if !pruned.get() {
                     if var.used.get() > 0 {
-                        code.push_str(&format!("t{} = ", var.index));
+                        code.push_str(&tmp_var(var));
+                        code.push_str(" = ");
                     }
                     self.emit_expr(value, code);
                     code.push_str(";\n");
@@ -135,7 +169,7 @@ impl<'a, 'tcx> Emitter {
                 if var.used.get() > 0 {
                     code.push_str(&c_type(var.ty));
                     code.push(' ');
-                    code.push_str(&format!("t{}", var.index));
+                    code.push_str(&tmp_var(var));
                     code.push_str(";\n");
                 }
 
@@ -388,10 +422,10 @@ impl<'a, 'tcx> Emitter {
                 if let Some(expr) = t.immediate.get() {
                     self.emit_expr(expr, code);
                 } else {
-                    code.push_str(&format!("t{}", t.index));
+                    code.push_str(&tmp_var(t));
                 }
             }
-            ExprKind::Var(_, name) => code.push_str(name),
+            ExprKind::Var(var) => code.push_str(var.name()),
         }
     }
 
@@ -418,7 +452,7 @@ impl<'a, 'tcx> Emitter {
             | ExprKind::Str(_)
             | ExprKind::TupleField { .. }
             | ExprKind::TmpVar(_)
-            | ExprKind::Var(_, _) => false,
+            | ExprKind::Var(_) => false,
         }
     }
 }
@@ -433,6 +467,10 @@ fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
     expr
 }
 */
+fn tmp_var(t: &TmpVar) -> String {
+    format!("t{}", t.index)
+}
+
 fn c_type(ty: &Type) -> String {
     match ty {
         Type::Int64 => "int64_t".to_string(),

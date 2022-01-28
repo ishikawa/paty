@@ -14,7 +14,9 @@ pub enum ParseError<'t> {
     NotParsed,
     #[error("expected {expected}, but was {actual}")]
     UnexpectedToken { expected: String, actual: &'t Token },
-    #[error("Premature end of file")]
+    #[error("expected pattern, but was expr")]
+    UnrecognizedPattern,
+    #[error("premature end of file")]
     PrematureEnd,
 }
 
@@ -103,7 +105,7 @@ pub enum ExprKind<'pcx, 'tcx> {
     TupleField(&'pcx Expr<'pcx, 'tcx>, usize),
     Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
     Let {
-        name: String,
+        pattern: &'pcx Pattern<'pcx, 'tcx>,
         rhs: &'pcx Expr<'pcx, 'tcx>,
         then: &'pcx Expr<'pcx, 'tcx>,
     },
@@ -121,7 +123,7 @@ pub enum ExprKind<'pcx, 'tcx> {
 #[derive(Debug)]
 pub struct Function<'pcx, 'tcx> {
     name: String,
-    params: Vec<Parameter<'tcx>>,
+    params: Vec<Parameter<'pcx, 'tcx>>,
     body: &'pcx Expr<'pcx, 'tcx>,
     then: &'pcx Expr<'pcx, 'tcx>,
 }
@@ -131,7 +133,7 @@ impl<'pcx, 'tcx> Function<'pcx, 'tcx> {
         &self.name
     }
 
-    pub fn params(&self) -> &[Parameter] {
+    pub fn params(&self) -> &[Parameter<'pcx, 'tcx>] {
         &self.params
     }
 
@@ -146,23 +148,23 @@ impl<'pcx, 'tcx> Function<'pcx, 'tcx> {
 
 /// Formal parameter for a function
 #[derive(Debug)]
-pub struct Parameter<'tcx> {
-    name: String,
+pub struct Parameter<'pcx, 'tcx> {
+    pattern: &'pcx Pattern<'pcx, 'tcx>,
     ty: &'tcx Type<'tcx>,
     comments: Vec<String>,
 }
 
-impl<'tcx> Parameter<'tcx> {
-    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
+impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
+    pub fn new(pattern: &'pcx Pattern<'pcx, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         Self {
-            name: name.to_string(),
+            pattern,
             ty,
             comments: vec![],
         }
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn pattern(&self) -> &'pcx Pattern<'pcx, 'tcx> {
+        self.pattern
     }
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
@@ -356,31 +358,28 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         } else if let Some(expr) = self.lookahead(self.expr(it))? {
             // To make this LL(1) parser able to parse `assignment` grammar which is LL(2):
             //
-            //     assignment -> ID ASSIGN expr | expr
+            //     assignment -> pattern ASSIGN expr | expr
             //
             // First, we try to parse the grammar that is LL(1):
             //
             //     assignment -> expr ASSIGN expr | expr
             //
             // And then, construct an assignment node if the left hand of an assignment is
-            // assignable (e.g. Identifier).
-            if let ExprKind::Var(name) = expr.kind() {
-                if self.match_token(it, TokenKind::Operator('=')) {
-                    it.next();
+            // a pattern.
+            if self.match_token(it, TokenKind::Operator('=')) {
+                // convert Expr to Pattern
+                let pattern = self.expr_to_pattern(expr)?;
+                it.next();
 
-                    let rhs = self.expr(it)?;
-                    let then = self.decl(it)?;
+                let rhs = self.expr(it)?;
+                let then = self.decl(it)?;
 
-                    let mut r#let = Expr::new(ExprKind::Let {
-                        name: name.clone(),
-                        rhs,
-                        then,
-                    });
+                let mut r#let = Expr::new(ExprKind::Let { pattern, rhs, then });
 
-                    r#let.append_comments_from_expr(expr);
-                    return Ok(self.expr_arena.alloc(r#let));
-                }
+                r#let.append_comments_from_expr(expr);
+                return Ok(self.expr_arena.alloc(r#let));
             }
+
             Ok(expr)
         } else {
             Err(ParseError::NotParsed)
@@ -424,8 +423,8 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn function_parameter(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<Parameter<'tcx>, ParseError<'t>> {
-        let (name_token, name) = self.try_identifier(it)?;
+    ) -> Result<Parameter<'pcx, 'tcx>, ParseError<'t>> {
+        let pat = self.pattern(it)?;
 
         let ty = if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
@@ -436,10 +435,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             self.tcx.int64()
         };
 
-        let mut param = Parameter::new(name, ty);
-
-        param.append_comments_from(name_token);
-        Ok(param)
+        Ok(Parameter::new(pat, ty))
     }
 
     fn type_specifier(
@@ -606,13 +602,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             }
             TokenKind::Identifier(name) => {
                 it.next();
-
-                let kind = if name == "_" {
-                    PatternKind::Wildcard
-                } else {
-                    PatternKind::Variable(name.clone())
-                };
-                self.alloc_pat(kind, token)
+                self.alloc_pat(self.variable_name_to_pattern(name), token)
             }
             _ => {
                 return Err(ParseError::NotParsed);
@@ -620,6 +610,57 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         };
 
         Ok(pat)
+    }
+
+    fn expr_to_pattern(
+        &self,
+        expr: &'pcx Expr<'pcx, 'tcx>,
+    ) -> Result<&'pcx Pattern<'pcx, 'tcx>, ParseError<'t>> {
+        let kind = match expr.kind() {
+            ExprKind::Var(name) => self.variable_name_to_pattern(name),
+            ExprKind::Integer(n) => PatternKind::Integer(*n),
+            ExprKind::Boolean(b) => PatternKind::Boolean(*b),
+            ExprKind::String(s) => PatternKind::String(s.to_string()),
+            ExprKind::Tuple(fs) => {
+                let mut ps = vec![];
+
+                for sub_expr in fs {
+                    let sub_pat = self.expr_to_pattern(sub_expr)?;
+                    ps.push(sub_pat);
+                }
+
+                PatternKind::Tuple(ps)
+            }
+            ExprKind::Minus(_)
+            | ExprKind::Add(_, _)
+            | ExprKind::Sub(_, _)
+            | ExprKind::Mul(_, _)
+            | ExprKind::Div(_, _)
+            | ExprKind::Eq(_, _)
+            | ExprKind::Ne(_, _)
+            | ExprKind::Le(_, _)
+            | ExprKind::Ge(_, _)
+            | ExprKind::Lt(_, _)
+            | ExprKind::Gt(_, _)
+            | ExprKind::And(_, _)
+            | ExprKind::Or(_, _)
+            | ExprKind::TupleField(_, _)
+            | ExprKind::Call(_, _)
+            | ExprKind::Let { .. }
+            | ExprKind::Fn(_)
+            | ExprKind::Case { .. }
+            | ExprKind::Puts(_) => return Err(ParseError::UnrecognizedPattern),
+        };
+
+        Ok(self.pat_arena.alloc(Pattern::new(kind)))
+    }
+
+    fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'pcx, 'tcx> {
+        if name == "_" {
+            PatternKind::Wildcard
+        } else {
+            PatternKind::Variable(name.to_string())
+        }
     }
 
     fn case_arm(&self, it: &mut TokenIterator<'t>) -> Result<CaseArm<'pcx, 'tcx>, ParseError<'t>> {

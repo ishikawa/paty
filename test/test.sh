@@ -66,12 +66,29 @@ assert 3 "
 assert 5 "
   five = 5
   puts(five)"
+assert "33
+44" "_ = puts(33)
+puts(44)"
+assert "66" "(x, y, z) = (11, 22, 33)
+puts(x + y + z)"
+assert "231" "((a, b, c), (d, e), (f,)) = ((11, 22, 33), (44, 55), (66,))
+puts(a + b + c + d + e + f)"
 # function
 assert 30 "
   def foo(x, y)
     x + y
   end
   puts(foo(10, 20))"
+assert 30 "
+  def foo((x, y): (int64, int64))
+    x + y
+  end
+  puts(foo((10, 20)))"
+assert 30 "
+  def foo(_, _, z)
+    z
+  end
+  puts(foo(10, 20, 30))"
 # comments
 assert 30 "
   # comment 1

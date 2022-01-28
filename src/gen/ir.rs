@@ -43,7 +43,7 @@ impl fmt::Display for Program<'_, '_> {
 #[derive(Debug)]
 pub struct Function<'a, 'tcx> {
     pub name: String,
-    pub params: Vec<Parameter<'tcx>>,
+    pub params: Vec<Parameter<'a, 'tcx>>,
     pub body: Vec<Stmt<'a, 'tcx>>,
     pub retty: &'tcx Type<'tcx>,
     /// Whether this function is `main` or not.
@@ -73,17 +73,62 @@ impl fmt::Display for Function<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct Parameter<'tcx> {
-    pub name: String,
-    pub ty: &'tcx Type<'tcx>,
+pub enum Parameter<'a, 'tcx> {
+    TmpVar(&'a TmpVar<'a, 'tcx>),
+    Var(Var<'tcx>),
 }
 
-impl fmt::Display for Parameter<'_> {
+impl<'a, 'tcx> Parameter<'a, 'tcx> {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        match self {
+            Self::TmpVar(t) => t.ty,
+            Self::Var(var) => var.ty,
+        }
+    }
+}
+
+impl fmt::Display for Parameter<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)?;
+        match self {
+            Self::TmpVar(t) => t.fmt(f),
+            Self::Var(name) => name.fmt(f),
+        }?;
         write!(f, ": ")?;
-        write!(f, "{}", self.ty)?;
-        Ok(())
+        match self {
+            Self::TmpVar(t) => t.ty.fmt(f),
+            Self::Var(var) => var.ty.fmt(f),
+        }
+    }
+}
+
+// TODO: Unify temporary variables and regular variables so that
+// unnecessary assignment elimination can work in either case.
+#[derive(Debug, Clone)]
+pub struct Var<'tcx> {
+    name: String,
+    ty: &'tcx Type<'tcx>,
+}
+
+impl<'tcx> Var<'tcx> {
+    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
+        Self {
+            name: name.to_string(),
+            ty,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
+    }
+}
+
+impl fmt::Display for Var<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.name.fmt(f)
     }
 }
 
@@ -106,8 +151,15 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
     }
 }
 
+impl fmt::Display for TmpVar<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "t{}", self.index)
+    }
+}
+
 #[derive(Debug)]
 pub enum Stmt<'a, 'tcx> {
+    // TODO: Can we unify TmpVar(Def) and Var(Def)?
     TmpVarDef {
         var: &'a TmpVar<'a, 'tcx>,
         init: &'a Expr<'a, 'tcx>,
@@ -235,7 +287,7 @@ pub enum ExprKind<'a, 'tcx> {
         index: usize,
     },
     TmpVar(&'a TmpVar<'a, 'tcx>),
-    Var(&'tcx Type<'tcx>, String),
+    Var(Var<'tcx>),
 }
 
 #[derive(Debug, Clone)]
@@ -493,7 +545,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Var(name) => {
-                let kind = ExprKind::Var(expr.ty().unwrap(), name.clone());
+                let kind = ExprKind::Var(Var::new(name, expr.expect_ty()));
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::TupleField(operand, index) => {
@@ -541,13 +593,10 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Printf(format_specs);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
-            syntax::ExprKind::Let { name, rhs, then } => {
+            syntax::ExprKind::Let { pattern, rhs, then } => {
                 let init = self._build(rhs, program, stmts);
-                let stmt = Stmt::VarDef {
-                    name: name.clone(),
-                    init: inc_used(init),
-                };
-                stmts.push(stmt);
+
+                self._build_let_pattern(pattern, init, stmts);
                 self._build(then, program, stmts)
             }
             syntax::ExprKind::Fn(syntax_fun) => {
@@ -555,20 +604,47 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let saved_tmp_var_index = self.tmp_var_index;
                 self.tmp_var_index = 0;
 
+                // convert parameter pattern to parameter name and assign variable.
+                let mut params = vec![];
                 let mut body_stmts = vec![];
+
+                for p in syntax_fun.params() {
+                    let pat = p.pattern();
+                    let ty = pat.expect_ty();
+
+                    // Assign parameter names to be able to referenced later.
+                    let param = match pat.kind() {
+                        PatternKind::Variable(name) => Parameter::Var(Var::new(name, ty)),
+                        PatternKind::Wildcard => {
+                            // ignore pattern but we have to define a parameter.
+                            Parameter::TmpVar(self.next_temp_var(ty))
+                        }
+                        PatternKind::Tuple(_) => {
+                            // Create a temporary parameter name to be able to referenced in the body.
+                            // Simultaneously, we build deconstruct assignment expressions.
+                            let t = self.next_temp_var(ty);
+                            let param_expr =
+                                self.expr_arena.alloc(Expr::new(ExprKind::TmpVar(t), ty));
+
+                            self._build_let_pattern(pat, param_expr, &mut body_stmts);
+
+                            Parameter::TmpVar(t)
+                        }
+                        PatternKind::Integer(_)
+                        | PatternKind::Boolean(_)
+                        | PatternKind::String(_)
+                        | PatternKind::Range { .. } => {
+                            unreachable!("Unsupported let pattern: `{}`", p.pattern().kind());
+                        }
+                    };
+
+                    params.push(param);
+                }
+
                 let ret = self._build(syntax_fun.body(), program, &mut body_stmts);
                 body_stmts.push(Stmt::Ret(inc_used(ret)));
 
                 let retty = syntax_fun.body().ty().unwrap();
-
-                let params = syntax_fun
-                    .params()
-                    .iter()
-                    .map(|p| Parameter {
-                        name: p.name().to_string(),
-                        ty: p.ty(),
-                    })
-                    .collect();
 
                 let fun = Function {
                     name: syntax_fun.name().to_string(),
@@ -637,6 +713,43 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.expr_arena.alloc(Expr::new(kind, t.ty))
             }
         }
+    }
+
+    fn _build_let_pattern(
+        &mut self,
+        pattern: &'pcx syntax::Pattern<'pcx, 'tcx>,
+        init: &'a Expr<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) {
+        match pattern.kind() {
+            PatternKind::Variable(name) => {
+                let stmt = Stmt::VarDef {
+                    name: name.to_string(),
+                    init: inc_used(init),
+                };
+                stmts.push(stmt);
+            }
+            PatternKind::Wildcard => {
+                // no bound variable to `_`
+            }
+            PatternKind::Tuple(fs) => {
+                for (i, sub_pat) in fs.iter().enumerate() {
+                    let kind = ExprKind::TupleField {
+                        operand: inc_used(init),
+                        index: i,
+                    };
+                    let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
+
+                    self._build_let_pattern(sub_pat, field, stmts)
+                }
+            }
+            PatternKind::Integer(_)
+            | PatternKind::Boolean(_)
+            | PatternKind::String(_)
+            | PatternKind::Range { .. } => {
+                unreachable!("Unsupported let pattern: `{}`", pattern.kind());
+            }
+        };
     }
 
     fn _printf_format(
@@ -795,7 +908,7 @@ impl<'a, 'tcx> Optimizer {
             Stmt::TmpVarDef { var, init, pruned } => {
                 if var.used.get() == 1 {
                     // This temporary variable is used only once, so it could be
-                    // replaced with the expression if it has no side-effect.
+                    // replaced with the expression.
                     var.immediate.set(Some(init));
                     pruned.set(true);
                     return;
@@ -875,7 +988,7 @@ impl<'a, 'tcx> Optimizer {
             | ExprKind::Tuple(_)
             | ExprKind::TupleField { .. }
             | ExprKind::TmpVar(_)
-            | ExprKind::Var(_, _) => {}
+            | ExprKind::Var(_) => {}
         }
     }
 }
