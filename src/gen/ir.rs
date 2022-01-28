@@ -405,6 +405,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
+    #[allow(unused)]
     fn bool(&self, value: bool) -> &'a Expr<'a, 'tcx> {
         let kind = ExprKind::Bool(value);
         let ty = self.tcx.boolean();
@@ -684,7 +685,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         });
 
                         Branch {
-                            condition: Some(condition),
+                            condition,
                             body: branch_stmts,
                         }
                     })
@@ -786,26 +787,29 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
+    // Returns `None` for no condition.
     fn _build_pattern(
         &mut self,
         t_expr: &'a Expr<'a, 'tcx>,
         pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
-    ) -> &'a Expr<'a, 'tcx> {
+    ) -> Option<&'a Expr<'a, 'tcx>> {
         match pat.kind() {
             PatternKind::Integer(n) => {
                 let value = self.int64(*n);
                 let eq = ExprKind::Eq(inc_used(t_expr), value);
 
-                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
+                let expr = self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()));
+                Some(expr)
             }
             PatternKind::Boolean(b) => {
-                if *b {
+                let expr = if *b {
                     inc_used(t_expr)
                 } else {
                     let expr = ExprKind::Not(inc_used(t_expr));
                     self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
-                }
+                };
+                Some(expr)
             }
             PatternKind::String(s) => {
                 // Compare the value of head expression and pattern string with
@@ -820,7 +824,8 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let zero = self.native_int(0);
                 let eq = ExprKind::Eq(inc_used(strcmp), zero);
 
-                self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()))
+                let expr = self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()));
+                Some(expr)
             }
             PatternKind::Range { lo, hi, end } => {
                 let lo = self.int64(*lo);
@@ -838,12 +843,13 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     self.expr_arena.alloc(Expr::new(rhs, self.tcx.boolean())),
                 );
 
-                self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
+                let expr = self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()));
+                Some(expr)
             }
             PatternKind::Tuple(sub_pats) => {
                 if sub_pats.is_empty() {
                     // Empty tuple is always matched with an empty tuple.
-                    self.bool(true)
+                    None
                 } else {
                     let kind = ExprKind::TupleField {
                         operand: inc_used(t_expr),
@@ -861,10 +867,18 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             index: i,
                         };
                         let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
+                        let sub_condition = self._build_pattern(operand, pat, stmts);
 
-                        let kind =
-                            ExprKind::And(condition, self._build_pattern(operand, pat, stmts));
-                        condition = self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()))
+                        if let Some(cond) = condition {
+                            if let Some(sub_cond) = sub_condition {
+                                let kind = ExprKind::And(cond, sub_cond);
+                                condition = Some(
+                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
+                                );
+                            }
+                        } else {
+                            condition = sub_condition;
+                        }
                     }
 
                     condition
@@ -876,9 +890,9 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     init: inc_used(t_expr),
                 });
 
-                self.bool(true)
+                None
             }
-            PatternKind::Wildcard => self.bool(true),
+            PatternKind::Wildcard => None,
         }
     }
 }
