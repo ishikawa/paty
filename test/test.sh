@@ -218,6 +218,12 @@ when ("hello", true, 0..=15)
 else
   puts(3)
 end'
+# struct
+assert "ok" '
+struct A {}
+struct B { a: int64 }
+struct C { b: B, c: (A, B), }
+puts("ok")'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

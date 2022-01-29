@@ -591,22 +591,22 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<StructField<'tcx>, ParseError<'t>> {
-        let name_token = self.peek_token(it)?;
-        let name = if let TokenKind::Identifier(name) = name_token.kind() {
-            it.next();
-            name
+        let (name_token, name) = if let Some(t) = it.peek() {
+            if let TokenKind::Identifier(name) = t.kind() {
+                let t = it.next().unwrap();
+                (t, name.to_string())
+            } else {
+                return Err(ParseError::NotParsed);
+            }
         } else {
-            return Err(ParseError::UnexpectedToken {
-                expected: "field name".to_string(),
-                actual: name_token,
-            });
+            return Err(ParseError::NotParsed);
         };
 
         self.expect_token(it, TokenKind::Operator(':'))?;
 
         let ty = self.type_specifier(it)?;
 
-        let mut field = StructField::new(name, ty);
+        let mut field = StructField::new(&name, ty);
         field.data_mut().append_comments_from_token(name_token);
 
         Ok(field)
