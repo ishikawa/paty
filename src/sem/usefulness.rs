@@ -461,7 +461,7 @@ impl<'p, 'tcx> PatStack<'p, 'tcx> {
         self.pats[0]
     }
 
-    fn iter(&self) -> impl Iterator<Item = &DeconstructedPat> {
+    fn iter(&self) -> impl Iterator<Item = &DeconstructedPat<'p, 'tcx>> {
         self.pats.iter().copied()
     }
 

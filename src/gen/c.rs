@@ -18,6 +18,7 @@ impl<'a, 'tcx> Emitter {
         Self {}
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub fn emit(&mut self, program: &'a Program<'a, 'tcx>) -> String {
         let mut code = [
             "#include <stdio.h>",
@@ -44,6 +45,7 @@ impl<'a, 'tcx> Emitter {
         code
     }
 
+    #[allow(clippy::mutable_key_type)]
     fn emit_decl_type<'t>(
         &mut self,
         ty: &'t Type<'tcx>,

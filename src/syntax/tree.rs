@@ -1,5 +1,5 @@
 use crate::syntax::{RangeEnd, Token, TokenKind};
-use crate::ty::{StructTy, StructTyField, Type, TypeContext};
+use crate::ty::{NamedTy, StructTy, StructTyField, Type, TypeContext};
 use std::cell::Cell;
 use std::fmt;
 use std::iter::Peekable;
@@ -659,7 +659,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             TokenKind::Identifier(name) => {
                 it.next();
 
-                let ty = Type::Named(name.to_string());
+                let ty = Type::Named(NamedTy::new(name));
                 self.tcx.type_arena.alloc(ty)
             }
             _ => {

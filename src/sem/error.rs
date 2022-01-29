@@ -32,4 +32,6 @@ pub enum SemanticError<'tcx> {
     NonExhaustivePattern { pattern: String },
     #[error("identifier `{name}` is bound more than once in the same pattern")]
     AlreadyBoundInPattern { name: String },
+    #[error("named type `{name}` is bound more than once in the same scope")]
+    DuplicateNamedType { name: String },
 }
