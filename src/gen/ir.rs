@@ -660,7 +660,10 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.tmp_var_index = saved_tmp_var_index;
                 self._build(syntax_fun.then(), program, stmts)
             }
-            syntax::ExprKind::StructDef(_) => todo!(),
+            syntax::ExprKind::StructDef(struct_def) => {
+                program.add_decl_type(struct_def.ty());
+                self._build(struct_def.then(), program, stmts)
+            }
             syntax::ExprKind::Case {
                 head,
                 arms,
@@ -785,6 +788,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Str(")"));
             }
             Type::Struct(_) => todo!(),
+            Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
     }

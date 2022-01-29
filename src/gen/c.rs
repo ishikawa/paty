@@ -91,6 +91,7 @@ impl<'a, 'tcx> Emitter {
                 // no emit
                 return;
             }
+            Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         };
 
@@ -348,6 +349,9 @@ impl<'a, 'tcx> Emitter {
                                 Type::Tuple(_) | Type::Struct(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
                                 }
+                                Type::Named(name) => {
+                                    unreachable!("untyped for the type named: {}", name)
+                                }
                                 Type::Undetermined => unreachable!("untyped code"),
                             }
                         }
@@ -376,6 +380,9 @@ impl<'a, 'tcx> Emitter {
                             }
                             Type::Tuple(_) | Type::Struct(_) => {
                                 unreachable!("compound value can't be printed: {:?}", value);
+                            }
+                            Type::Named(name) => {
+                                unreachable!("untyped for the type named: {}", name)
                             }
                             Type::Undetermined => unreachable!("untyped code"),
                         }
@@ -503,6 +510,7 @@ fn c_type(ty: &Type) -> String {
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
         }
+        Type::Named(name) => unreachable!("untyped for the type named: {}", name),
         Type::Undetermined => unreachable!("untyped code"),
     }
 }
@@ -559,6 +567,7 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
             buffer.push('S');
             buffer.push_str(struct_ty.name());
         }
+        Type::Named(name) => unreachable!("untyped for the type named: {}", name),
         Type::Undetermined => unreachable!("untyped code"),
     }
 }

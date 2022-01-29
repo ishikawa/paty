@@ -656,6 +656,12 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
                 self.tcx.tuple(&value_types)
             }
+            TokenKind::Identifier(name) => {
+                it.next();
+
+                let ty = Type::Named(name.to_string());
+                self.tcx.type_arena.alloc(ty)
+            }
             _ => {
                 return Err(ParseError::UnexpectedToken {
                     expected: "type".to_string(),

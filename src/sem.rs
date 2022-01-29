@@ -292,6 +292,9 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             }
             functions.pop();
         }
+        syntax::ExprKind::StructDef(struct_def) => {
+            analyze_expr(tcx, struct_def.then(), vars, functions, errors);
+        }
         syntax::ExprKind::Case {
             head,
             arms,
@@ -344,7 +347,6 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 errors.extend(err);
             }
         }
-        syntax::ExprKind::StructDef(_) => {}
     }
 }
 

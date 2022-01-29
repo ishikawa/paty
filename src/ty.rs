@@ -62,6 +62,9 @@ pub enum Type<'tcx> {
     /// struct
     Struct(StructTy<'tcx>),
 
+    /// Type is named but not resolved yet.
+    Named(String),
+
     /// Type is not specified and should be inferred in the later phase.
     Undetermined,
 
@@ -77,6 +80,7 @@ impl fmt::Display for Type<'_> {
             Type::Boolean => write!(f, "boolean"),
             Type::String => write!(f, "string"),
             Type::NativeInt => write!(f, "int"),
+            Type::Named(name) => write!(f, "{}", name),
             Type::Undetermined => write!(f, "_"),
             Type::Tuple(value_types) => {
                 let mut it = value_types.iter().peekable();
