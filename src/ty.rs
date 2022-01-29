@@ -116,6 +116,13 @@ pub struct StructTy<'tcx> {
 }
 
 impl<'tcx> StructTy<'tcx> {
+    pub fn new(name: &str, fields: Vec<StructTyField<'tcx>>) -> Self {
+        Self {
+            name: name.to_string(),
+            fields,
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

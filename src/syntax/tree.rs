@@ -1,5 +1,5 @@
 use crate::syntax::{RangeEnd, Token, TokenKind};
-use crate::ty::{Type, TypeContext};
+use crate::ty::{StructTy, StructTyField, Type, TypeContext};
 use std::cell::Cell;
 use std::fmt;
 use std::iter::Peekable;
@@ -213,16 +213,35 @@ impl<'pcx, 'tcx> Node for Parameter<'pcx, 'tcx> {
 pub struct StructDef<'pcx, 'tcx> {
     name: String,
     fields: Vec<StructField<'tcx>>,
+    ty: &'tcx Type<'tcx>,
     then: &'pcx Expr<'pcx, 'tcx>,
 }
 
 impl<'pcx, 'tcx> StructDef<'pcx, 'tcx> {
+    pub fn new(
+        name: &str,
+        fields: Vec<StructField<'tcx>>,
+        ty: &'tcx Type<'tcx>,
+        then: &'pcx Expr<'pcx, 'tcx>,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            fields,
+            ty,
+            then,
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
 
     pub fn fields(&self) -> &[StructField<'tcx>] {
         &self.fields
+    }
+
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
     }
 
     pub fn then(&self) -> &Expr<'pcx, 'tcx> {
@@ -442,6 +461,8 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn decl(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
         if let Some(r#fn) = self.lookahead(self.function_definition(it))? {
             Ok(r#fn)
+        } else if let Some(r#struct) = self.lookahead(self.struct_definition(it))? {
+            Ok(r#struct)
         } else if let Some(expr) = self.lookahead(self.expr(it))? {
             // To make this LL(1) parser able to parse `assignment` grammar which is LL(2):
             //
@@ -487,7 +508,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             });
         };
 
-        let params = self.parse_elements(it, Self::function_parameter)?;
+        let params = self.parse_elements(it, ('(', ')'), Self::function_parameter)?;
 
         let body = self.expr(it)?;
 
@@ -495,7 +516,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
         let then = self.decl(it)?;
 
-        let var = self.alloc_expr(
+        let r#fn = self.alloc_expr(
             ExprKind::Fn(Function {
                 name,
                 params,
@@ -504,7 +525,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             }),
             def_token,
         );
-        Ok(var)
+        Ok(r#fn)
     }
 
     fn function_parameter(
@@ -526,6 +547,69 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         param.data_mut().append_comments_from_node(pat);
 
         Ok(param)
+    }
+
+    fn struct_definition(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+        let struct_token = self.try_token(it, TokenKind::Struct)?;
+
+        let name_token = self.peek_token(it)?;
+        let name = if let TokenKind::Identifier(name) = name_token.kind() {
+            it.next();
+            name.clone()
+        } else {
+            return Err(ParseError::UnexpectedToken {
+                expected: "struct name".to_string(),
+                actual: name_token,
+            });
+        };
+
+        let fields = self.parse_elements(it, ('{', '}'), Self::struct_field)?;
+
+        let then = self.decl(it)?;
+
+        // Build struct type
+        let fs: Vec<StructTyField> = fields
+            .iter()
+            .map(|f| (f.name().to_string(), f.ty()))
+            .collect();
+        let struct_ty = StructTy::new(&name, fs);
+        let ty = self.tcx.type_arena.alloc(Type::Struct(struct_ty));
+
+        let r#struct = self.alloc_expr(
+            ExprKind::StructDef(StructDef {
+                name,
+                fields,
+                ty,
+                then,
+            }),
+            struct_token,
+        );
+        Ok(r#struct)
+    }
+
+    fn struct_field(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<StructField<'tcx>, ParseError<'t>> {
+        let name_token = self.peek_token(it)?;
+        let name = if let TokenKind::Identifier(name) = name_token.kind() {
+            it.next();
+            name
+        } else {
+            return Err(ParseError::UnexpectedToken {
+                expected: "field name".to_string(),
+                actual: name_token,
+            });
+        };
+
+        self.expect_token(it, TokenKind::Operator(':'))?;
+
+        let ty = self.type_specifier(it)?;
+
+        let mut field = StructField::new(name, ty);
+        field.data_mut().append_comments_from_token(name_token);
+
+        Ok(field)
     }
 
     fn type_specifier(
@@ -948,7 +1032,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
                 // call?
                 if self.match_token(it, TokenKind::Operator('(')) {
-                    let args = self.parse_elements(it, Self::expr)?;
+                    let args = self.parse_elements(it, ('(', ')'), Self::expr)?;
                     ExprKind::Call(name.clone(), args)
                 } else {
                     ExprKind::Var(name.clone())
@@ -957,7 +1041,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             TokenKind::Puts => {
                 it.next();
 
-                let args = self.parse_elements(it, Self::expr)?;
+                let args = self.parse_elements(it, ('(', ')'), Self::expr)?;
                 ExprKind::Puts(args)
             }
             TokenKind::String(s) => {
@@ -1024,11 +1108,12 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn parse_elements<T>(
         &self,
         it: &mut TokenIterator<'t>,
+        enclosing_char: (char, char),
         parser: fn(&Self, it: &mut TokenIterator<'t>) -> Result<T, ParseError<'t>>,
     ) -> Result<Vec<T>, ParseError<'t>> {
         let mut args = vec![];
 
-        self.expect_token(it, TokenKind::Operator('('))?;
+        self.expect_token(it, TokenKind::Operator(enclosing_char.0))?;
         {
             while let Some(arg) = self.lookahead(parser(self, it))? {
                 args.push(arg);
@@ -1036,16 +1121,16 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 // trailing comma can be omitted
                 if self.match_token(it, TokenKind::Operator(',')) {
                     it.next();
-                } else if !self.match_token(it, TokenKind::Operator(')')) {
+                } else if !self.match_token(it, TokenKind::Operator(enclosing_char.1)) {
                     let actual = self.peek_token(it)?;
                     return Err(ParseError::UnexpectedToken {
-                        expected: "')' or ','".to_string(),
+                        expected: format!("'{}' or ','", enclosing_char.1),
                         actual,
                     });
                 }
             }
         }
-        self.expect_token(it, TokenKind::Operator(')'))?;
+        self.expect_token(it, TokenKind::Operator(enclosing_char.1))?;
         Ok(args)
     }
 
@@ -1063,19 +1148,6 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         if let Some(token) = it.peek() {
             if *token.kind() == kind {
                 return Ok(it.next().unwrap());
-            }
-        }
-
-        Err(ParseError::NotParsed)
-    }
-
-    fn try_identifier(
-        &self,
-        it: &mut TokenIterator<'t>,
-    ) -> Result<(&'t Token, &'t str), ParseError<'t>> {
-        if let Some(token) = it.peek() {
-            if let TokenKind::Identifier(id) = token.kind() {
-                return Ok((it.next().unwrap(), id));
             }
         }
 
