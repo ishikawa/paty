@@ -144,6 +144,38 @@ fn check_type<'tcx>(
     }
 }
 
+fn resolve_type<'tcx>(
+    tcx: TypeContext<'tcx>,
+    ty: &'tcx Type<'tcx>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match ty {
+        Type::Tuple(fs) => {
+            for fty in fs {
+                resolve_type(tcx, fty, named_types, errors);
+            }
+        }
+        Type::Struct(struct_ty) => {
+            for (_, fty) in struct_ty.fields() {
+                resolve_type(tcx, fty, named_types, errors);
+            }
+        }
+        Type::Named(named_ty) => {
+            if named_ty.ty().is_none() {
+                if let Some(ty) = named_types.get(named_ty.name()) {
+                    named_ty.assign_ty(ty);
+                } else {
+                    errors.push(SemanticError::UndefinedNamedType {
+                        name: named_ty.name().to_string(),
+                    })
+                }
+            }
+        }
+        Type::Int64 | Type::Boolean | Type::String | Type::Undetermined | Type::NativeInt => {}
+    }
+}
+
 fn analyze_expr<'pcx: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     expr: &'pcx syntax::Expr<'pcx, 'tcx>,
@@ -292,6 +324,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             functions.push(fun);
             {
                 for param in fun.params() {
+                    resolve_type(tcx, param.ty(), named_types, errors);
                     analyze_let_pattern(
                         tcx,
                         param.pattern(),
@@ -319,6 +352,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 named_types.insert(struct_def.name().to_string(), struct_def.ty());
             }
 
+            resolve_type(tcx, struct_def.ty(), named_types, errors);
             analyze_expr(tcx, struct_def.then(), vars, functions, named_types, errors);
         }
         syntax::ExprKind::Case {

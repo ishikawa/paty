@@ -79,13 +79,25 @@ impl<'a, 'tcx> Emitter {
                     self.emit_decl_type(fty, emitted_types, code);
                 }
 
-                // Emit C struct
+                // Emit C struct.
+                // Note that C structure have to contain at least one member.
+                let mut fs = struct_ty.fields().peekable();
+
                 code.push_str(&c_type(ty));
                 code.push_str(" {\n");
-                for (name, fty) in struct_ty.fields() {
-                    code.push_str(&c_type(fty));
+                if fs.peek().is_some() {
+                    for (name, fty) in fs {
+                        code.push_str(&c_type(fty));
+                        code.push(' ');
+                        code.push_str(&format!("{};\n", name));
+                    }
+                } else {
+                    // language's struct has no member, but C struct has to contain
+                    // at least one member. We generate unused dummy member to confirm it,
+                    // but we should handle empty struct as zero-sized type.
+                    code.push_str(&c_type(&Type::NativeInt));
                     code.push(' ');
-                    code.push_str(&format!("{};\n", name));
+                    code.push_str("_placeholder;\n");
                 }
                 code.push_str("};");
             }
@@ -93,7 +105,11 @@ impl<'a, 'tcx> Emitter {
                 // no emit
                 return;
             }
-            Type::Named(name) => unreachable!("untyped for the type named: {}", name),
+            Type::Named(named_ty) => {
+                self.emit_decl_type(named_ty.expect_ty(), emitted_types, code);
+                // no emit
+                return;
+            }
             Type::Undetermined => unreachable!("untyped code"),
         };
 
@@ -512,7 +528,7 @@ fn c_type(ty: &Type) -> String {
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
         }
-        Type::Named(name) => unreachable!("untyped for the type named: {}", name),
+        Type::Named(named_ty) => c_type(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
     }
 }
@@ -569,7 +585,9 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
             buffer.push('S');
             buffer.push_str(struct_ty.name());
         }
-        Type::Named(name) => unreachable!("untyped for the type named: {}", name),
+        Type::Named(named_ty) => {
+            encode_ty(named_ty.expect_ty(), buffer);
+        }
         Type::Undetermined => unreachable!("untyped code"),
     }
 }

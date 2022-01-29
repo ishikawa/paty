@@ -34,4 +34,6 @@ pub enum SemanticError<'tcx> {
     AlreadyBoundInPattern { name: String },
     #[error("named type `{name}` is bound more than once in the same scope")]
     DuplicateNamedType { name: String },
+    #[error("cannot find named type `{name}` in scope")]
+    UndefinedNamedType { name: String },
 }
