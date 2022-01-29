@@ -344,6 +344,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 errors.extend(err);
             }
         }
+        syntax::ExprKind::StructDef(_) => {}
     }
 }
 

@@ -136,6 +136,7 @@ pub enum ExprKind<'pcx, 'tcx> {
         then: &'pcx Expr<'pcx, 'tcx>,
     },
     Fn(Function<'pcx, 'tcx>),
+    StructDef(StructDef<'pcx, 'tcx>),
     Case {
         head: &'pcx Expr<'pcx, 'tcx>,
         arms: Vec<CaseArm<'pcx, 'tcx>>,
@@ -199,6 +200,62 @@ impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
 }
 
 impl<'pcx, 'tcx> Node for Parameter<'pcx, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
+    }
+}
+
+#[derive(Debug)]
+pub struct StructDef<'pcx, 'tcx> {
+    name: String,
+    fields: Vec<StructField<'tcx>>,
+    then: &'pcx Expr<'pcx, 'tcx>,
+}
+
+impl<'pcx, 'tcx> StructDef<'pcx, 'tcx> {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fields(&self) -> &[StructField<'tcx>] {
+        &self.fields
+    }
+
+    pub fn then(&self) -> &Expr<'pcx, 'tcx> {
+        self.then
+    }
+}
+
+#[derive(Debug)]
+pub struct StructField<'tcx> {
+    name: String,
+    ty: &'tcx Type<'tcx>,
+    data: NodeData,
+}
+
+impl<'tcx> StructField<'tcx> {
+    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
+        Self {
+            name: name.to_string(),
+            ty,
+            data: NodeData::new(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
+    }
+}
+
+impl<'tcx> Node for StructField<'tcx> {
     fn data(&self) -> &NodeData {
         &self.data
     }
@@ -681,6 +738,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             | ExprKind::Call(_, _)
             | ExprKind::Let { .. }
             | ExprKind::Fn(_)
+            | ExprKind::StructDef(_)
             | ExprKind::Case { .. }
             | ExprKind::Puts(_) => return Err(ParseError::UnrecognizedPattern),
         };

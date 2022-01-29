@@ -660,6 +660,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.tmp_var_index = saved_tmp_var_index;
                 self._build(syntax_fun.then(), program, stmts)
             }
+            syntax::ExprKind::StructDef(_) => todo!(),
             syntax::ExprKind::Case {
                 head,
                 arms,
