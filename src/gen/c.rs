@@ -71,6 +71,22 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str("};");
             }
+            Type::Struct(struct_ty) => {
+                // Emit field types first for forward declaration.
+                for (_, fty) in struct_ty.fields() {
+                    self.emit_decl_type(fty, emitted_types, code);
+                }
+
+                // Emit C struct
+                code.push_str(&c_type(ty));
+                code.push_str(" {\n");
+                for (name, fty) in struct_ty.fields() {
+                    code.push_str(&c_type(fty));
+                    code.push(' ');
+                    code.push_str(&format!("{};\n", name));
+                }
+                code.push_str("};");
+            }
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
                 // no emit
                 return;
@@ -329,7 +345,7 @@ impl<'a, 'tcx> Emitter {
                                 Type::NativeInt => {
                                     code.push_str("%d");
                                 }
-                                Type::Tuple(_) => {
+                                Type::Tuple(_) | Type::Struct(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
                                 }
                                 Type::Undetermined => unreachable!("untyped code"),
@@ -358,7 +374,7 @@ impl<'a, 'tcx> Emitter {
                                 code.push_str(" ? \"true\" : \"false\"");
                                 code.push(')');
                             }
-                            Type::Tuple(_) => {
+                            Type::Tuple(_) | Type::Struct(_) => {
                                 unreachable!("compound value can't be printed: {:?}", value);
                             }
                             Type::Undetermined => unreachable!("untyped code"),
@@ -482,7 +498,7 @@ fn c_type(ty: &Type) -> String {
         Type::Boolean => "bool".to_string(),
         Type::String => "const char *".to_string(),
         Type::NativeInt => "int".to_string(),
-        Type::Tuple(_) => {
+        Type::Tuple(_) | Type::Struct(_) => {
             let mut buffer = String::new();
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
@@ -510,6 +526,14 @@ fn c_type(ty: &Type) -> String {
 /// +-----+---------------------------+----------+
 /// ```
 ///
+/// ## Struct type
+///
+/// ```ignore
+/// +-----+-------+
+/// | "S" | name  |
+/// +-----+-------+
+/// ```
+///
 /// ## Other types
 ///
 /// | Type           | Format |
@@ -530,6 +554,10 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
             for fty in fs {
                 encode_ty(fty, buffer);
             }
+        }
+        Type::Struct(struct_ty) => {
+            buffer.push('S');
+            buffer.push_str(struct_ty.name());
         }
         Type::Undetermined => unreachable!("untyped code"),
     }

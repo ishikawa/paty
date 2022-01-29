@@ -59,6 +59,8 @@ pub enum Type<'tcx> {
     String,
     /// tuple
     Tuple(Vec<&'tcx Type<'tcx>>),
+    /// struct
+    Struct(StructTy<'tcx>),
 
     /// Type is not specified and should be inferred in the later phase.
     Undetermined,
@@ -87,6 +89,38 @@ impl fmt::Display for Type<'_> {
                 }
                 write!(f, ")")
             }
+            Type::Struct(struct_ty) => {
+                write!(f, "struct {} ", struct_ty.name())?;
+
+                let mut it = struct_ty.fields().peekable();
+                write!(f, "{{")?;
+                while let Some((fname, ty)) = it.next() {
+                    write!(f, "{}: ", fname)?;
+                    write!(f, "{}", ty)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "}}")
+            }
         }
+    }
+}
+
+pub type StructTyField<'tcx> = (String, &'tcx Type<'tcx>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StructTy<'tcx> {
+    name: String,
+    fields: Vec<StructTyField<'tcx>>,
+}
+
+impl<'tcx> StructTy<'tcx> {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fields(&self) -> impl Iterator<Item = &StructTyField<'tcx>> {
+        self.fields.iter()
     }
 }

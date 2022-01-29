@@ -784,6 +784,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 }
                 specs.push(FormatSpec::Str(")"));
             }
+            Type::Struct(_) => todo!(),
             Type::Undetermined => unreachable!("untyped code"),
         }
     }
