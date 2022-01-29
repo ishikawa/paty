@@ -20,13 +20,45 @@ pub enum ParseError<'t> {
     PrematureEnd,
 }
 
+pub trait Node {
+    fn data(&self) -> &NodeData;
+    fn data_mut(&mut self) -> &mut NodeData;
+}
+
+#[derive(Debug, Default)]
+pub struct NodeData {
+    // comments followed by this node.
+    comments: Vec<String>,
+}
+
+impl NodeData {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn comments(&self) -> impl Iterator<Item = &str> {
+        self.comments.iter().map(AsRef::as_ref)
+    }
+
+    pub fn append_comments_from_token(&mut self, token: &Token) {
+        for comment in token.comments() {
+            self.comments.push(comment.to_string());
+        }
+    }
+
+    pub fn append_comments_from_node(&mut self, node: &dyn Node) {
+        for comment in node.data().comments() {
+            self.comments.push(comment.to_string());
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Expr<'pcx, 'tcx> {
     kind: ExprKind<'pcx, 'tcx>,
     // The type of expression is determined in later phase.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
-    // comments followed by this token.
-    comments: Vec<String>,
+    data: NodeData,
 }
 
 impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
@@ -34,7 +66,7 @@ impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
         Self {
             kind,
             ty: Cell::new(None),
-            comments: vec![],
+            data: NodeData::new(),
         }
     }
 
@@ -58,21 +90,15 @@ impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
     pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
     }
+}
 
-    pub fn comments(&self) -> impl Iterator<Item = &str> {
-        self.comments.iter().map(AsRef::as_ref)
+impl<'pcx, 'tcx> Node for Expr<'pcx, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
     }
 
-    pub fn append_comments_from(&mut self, token: &Token) {
-        for comment in token.comments() {
-            self.comments.push(comment.to_string());
-        }
-    }
-
-    pub fn append_comments_from_expr(&mut self, expr: &Expr<'pcx, 'tcx>) {
-        for comment in expr.comments() {
-            self.comments.push(comment.to_string());
-        }
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
     }
 }
 
@@ -151,7 +177,7 @@ impl<'pcx, 'tcx> Function<'pcx, 'tcx> {
 pub struct Parameter<'pcx, 'tcx> {
     pattern: &'pcx Pattern<'pcx, 'tcx>,
     ty: &'tcx Type<'tcx>,
-    comments: Vec<String>,
+    data: NodeData,
 }
 
 impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
@@ -159,7 +185,7 @@ impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
         Self {
             pattern,
             ty,
-            comments: vec![],
+            data: NodeData::new(),
         }
     }
 
@@ -170,11 +196,15 @@ impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
+}
 
-    pub fn append_comments_from(&mut self, token: &Token) {
-        for comment in token.comments() {
-            self.comments.push(comment.to_string());
-        }
+impl<'pcx, 'tcx> Node for Parameter<'pcx, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
     }
 }
 
@@ -182,7 +212,7 @@ impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
 pub struct CaseArm<'pcx, 'tcx> {
     pattern: &'pcx Pattern<'pcx, 'tcx>,
     body: &'pcx Expr<'pcx, 'tcx>,
-    comments: Vec<String>,
+    data: NodeData,
 }
 
 impl<'pcx, 'tcx> CaseArm<'pcx, 'tcx> {
@@ -190,7 +220,7 @@ impl<'pcx, 'tcx> CaseArm<'pcx, 'tcx> {
         Self {
             pattern,
             body,
-            comments: vec![],
+            data: NodeData::new(),
         }
     }
 
@@ -201,15 +231,15 @@ impl<'pcx, 'tcx> CaseArm<'pcx, 'tcx> {
     pub fn body(&self) -> &'pcx Expr<'pcx, 'tcx> {
         self.body
     }
+}
 
-    pub fn comments(&self) -> impl Iterator<Item = &str> {
-        self.comments.iter().map(AsRef::as_ref)
+impl<'pcx, 'tcx> Node for CaseArm<'pcx, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
     }
 
-    pub fn append_comments_from(&mut self, token: &Token) {
-        for comment in token.comments() {
-            self.comments.push(comment.to_string());
-        }
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
     }
 }
 
@@ -218,7 +248,7 @@ pub struct Pattern<'pcx, 'tcx> {
     kind: PatternKind<'pcx, 'tcx>,
     // The type of expression is determined in later phase.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
-    comments: Vec<String>,
+    data: NodeData,
 }
 
 impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
@@ -226,7 +256,7 @@ impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
         Self {
             kind,
             ty: Cell::new(None),
-            comments: vec![],
+            data: NodeData::new(),
         }
     }
 
@@ -250,15 +280,15 @@ impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
     pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
     }
+}
 
-    pub fn comments(&self) -> impl Iterator<Item = &str> {
-        self.comments.iter().map(AsRef::as_ref)
+impl<'pcx, 'tcx> Node for Pattern<'pcx, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
     }
 
-    pub fn append_comments_from(&mut self, token: &Token) {
-        for comment in token.comments() {
-            self.comments.push(comment.to_string());
-        }
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
     }
 }
 
@@ -376,7 +406,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
                 let mut r#let = Expr::new(ExprKind::Let { pattern, rhs, then });
 
-                r#let.append_comments_from_expr(expr);
+                r#let.data_mut().append_comments_from_node(expr);
                 return Ok(self.expr_arena.alloc(r#let));
             }
 
@@ -435,7 +465,10 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             self.tcx.int64()
         };
 
-        Ok(Parameter::new(pat, ty))
+        let mut param = Parameter::new(pat, ty);
+        param.data_mut().append_comments_from_node(pat);
+
+        Ok(param)
     }
 
     fn type_specifier(
@@ -670,7 +703,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         let body = self.expr(it)?;
 
         let mut arm = CaseArm::new(pattern, body);
-        arm.append_comments_from(when_token);
+        arm.data_mut().append_comments_from_token(when_token);
         Ok(arm)
     }
 
@@ -1023,14 +1056,14 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     fn alloc_expr(&self, kind: ExprKind<'pcx, 'tcx>, token: &Token) -> &'pcx Expr<'pcx, 'tcx> {
         let mut expr = Expr::new(kind);
-        expr.append_comments_from(token);
+        expr.data_mut().append_comments_from_token(token);
 
         self.expr_arena.alloc(expr)
     }
 
     fn alloc_pat(&self, kind: PatternKind<'pcx, 'tcx>, token: &Token) -> &'pcx Pattern<'pcx, 'tcx> {
         let mut pat = Pattern::new(kind);
-        pat.append_comments_from(token);
+        pat.data_mut().append_comments_from_token(token);
 
         self.pat_arena.alloc(pat)
     }
