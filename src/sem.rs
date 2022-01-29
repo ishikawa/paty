@@ -90,6 +90,7 @@ pub fn analyze<'pcx: 'tcx, 'tcx>(
     let mut scope = Scope::new();
     let mut named_types = HashMap::new();
 
+    collect_types(tcx, expr, &mut named_types, &mut errors);
     analyze_expr(
         tcx,
         expr,
@@ -173,6 +174,35 @@ fn resolve_type<'tcx>(
             }
         }
         Type::Int64 | Type::Boolean | Type::String | Type::Undetermined | Type::NativeInt => {}
+    }
+}
+
+/// Collect named types before analyze program.
+fn collect_types<'pcx: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match expr.kind() {
+        syntax::ExprKind::Let { then, .. } => {
+            collect_types(tcx, then, named_types, errors);
+        }
+        syntax::ExprKind::Fn(syntax_fn) => {
+            collect_types(tcx, syntax_fn.then(), named_types, errors);
+        }
+        syntax::ExprKind::StructDef(struct_def) => {
+            if named_types.contains_key(struct_def.name()) {
+                errors.push(SemanticError::DuplicateNamedType {
+                    name: struct_def.name().to_string(),
+                });
+            } else {
+                named_types.insert(struct_def.name().to_string(), struct_def.ty());
+            }
+
+            collect_types(tcx, struct_def.then(), named_types, errors);
+        }
+        _ => {}
     }
 }
 
@@ -344,14 +374,6 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             functions.pop();
         }
         syntax::ExprKind::StructDef(struct_def) => {
-            if named_types.contains_key(struct_def.name()) {
-                errors.push(SemanticError::DuplicateNamedType {
-                    name: struct_def.name().to_string(),
-                });
-            } else {
-                named_types.insert(struct_def.name().to_string(), struct_def.ty());
-            }
-
             resolve_type(tcx, struct_def.ty(), named_types, errors);
             analyze_expr(tcx, struct_def.then(), vars, functions, named_types, errors);
         }
