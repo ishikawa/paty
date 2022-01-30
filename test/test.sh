@@ -218,10 +218,6 @@ when ("hello", true, 0..=15)
 else
   puts(3)
 end'
-# struct
-assert "10" "
-a = 10
-puts(a)"
 # zero-sized struct/tuple
 assert "()" "
 a = ()
@@ -230,6 +226,13 @@ assert "A {}" "
 struct A {}
 a = A {}
 puts(a)"
+assert '((), E {})' '
+struct E {}
+def foo(t: (), s: E)
+  (t, s)
+end
+puts(foo((), E {}))'
+# struct
 assert "C { b: B { a: 50 }, c: (A {}, B { a: 60 }) }" '
 struct A {}
 struct B { a: int64 }

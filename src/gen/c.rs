@@ -91,6 +91,8 @@ impl<'a, 'tcx> Emitter {
         if fun.is_entry_point {
             // 'main' must return 'int'
             code.push_str(&c_type(&Type::NativeInt));
+        } else if fun.retty.is_zero_sized() {
+            code.push_str("void");
         } else {
             code.push_str(&c_type(fun.retty));
         }
@@ -99,6 +101,10 @@ impl<'a, 'tcx> Emitter {
         code.push_str(&fun.name);
         code.push('(');
         for (i, param) in fun.params.iter().enumerate() {
+            if param.ty().is_zero_sized() {
+                continue;
+            }
+
             code.push_str(&c_type(param.ty()));
             code.push(' ');
             match param {
@@ -132,7 +138,7 @@ impl<'a, 'tcx> Emitter {
     fn emit_stmt(&mut self, stmt: &Stmt<'a, 'tcx>, code: &mut String) {
         match stmt {
             Stmt::TmpVarDef { var, init, pruned } => {
-                if !pruned.get() {
+                if !pruned.get() && !init.ty().is_zero_sized() {
                     // If a temporary variable is not referenced from anywhere,
                     // we don't emit an assignment statement.
                     if var.used.get() > 0 {
@@ -160,8 +166,11 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             Stmt::Ret(expr) => {
-                code.push_str("return ");
-                self.emit_expr(expr, code);
+                code.push_str("return");
+                if !expr.ty().is_zero_sized() {
+                    code.push(' ');
+                    self.emit_expr(expr, code);
+                }
                 code.push_str(";\n");
             }
             Stmt::Phi { var, value, pruned } => {
@@ -518,16 +527,6 @@ impl<'a, 'tcx> Emitter {
     }
 }
 
-/*
-fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
-    if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
-        if let Some(expr) = t.immediate.get() {
-            return expr;
-        }
-    }
-    expr
-}
-*/
 fn tmp_var(t: &TmpVar) -> String {
     format!("t{}", t.index)
 }
