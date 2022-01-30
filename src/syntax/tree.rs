@@ -241,6 +241,10 @@ impl<'pcx, 'tcx> StructDef<'pcx, 'tcx> {
         &self.fields
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }

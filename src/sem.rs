@@ -333,7 +333,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
 
             // index boundary check
-            let ty = operand.ty().unwrap();
+            let ty = operand.expect_ty();
             if let Type::Tuple(fs) = ty {
                 if *index < fs.len() {
                     // apply type

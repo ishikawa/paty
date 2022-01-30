@@ -785,6 +785,8 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Value(inc_used(arg)));
             }
             Type::Tuple(fs) => {
+                inc_used(arg);
+
                 let mut it = fs.iter().enumerate().peekable();
 
                 specs.push(FormatSpec::Str("("));
@@ -804,6 +806,8 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Str(")"));
             }
             Type::Struct(struct_ty) => {
+                inc_used(arg);
+
                 let mut it = struct_ty.fields().peekable();
                 let empty = it.peek().is_none();
 

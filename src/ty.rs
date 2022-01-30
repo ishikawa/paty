@@ -185,7 +185,11 @@ impl<'tcx> StructTy<'tcx> {
         &self.name
     }
 
-    pub fn fields(&self) -> impl Iterator<Item = &StructTyField<'tcx>> {
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = &StructTyField<'tcx>> {
         self.fields.iter()
     }
 
