@@ -17,9 +17,35 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
     }
 
     pub fn add_decl_type(&mut self, ty: &'tcx Type<'tcx>) {
-        if !self.decl_types.contains(&ty) {
-            self.decl_types.push(ty);
+        if self.decl_types.contains(&ty) {
+            return;
         }
+
+        // To follow forward declaration rule, add field types first.
+        match ty {
+            Type::Tuple(fs) => {
+                for fty in fs.iter() {
+                    self.add_decl_type(fty);
+                }
+            }
+            Type::Struct(struct_ty) => {
+                for (_, fty) in struct_ty.fields() {
+                    self.add_decl_type(fty);
+                }
+            }
+            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
+                // no declaration
+                return;
+            }
+            Type::Named(named_ty) => {
+                // no declaration
+                self.add_decl_type(named_ty.expect_ty());
+                return;
+            }
+            Type::Undetermined => unreachable!("untyped code"),
+        };
+
+        self.decl_types.push(ty);
     }
 
     pub fn decl_types(&self) -> impl Iterator<Item = &Type<'tcx>> {
@@ -447,6 +473,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             syntax::ExprKind::Tuple(sub_exprs) => {
                 // Add tuple type to declaration types, because we have to
                 // declare tuple type as a struct type in C.
+                // However, the Zero-sized struct should not have a definition.
                 let tuple_ty = expr.expect_ty();
                 program.add_decl_type(tuple_ty);
 
@@ -612,8 +639,8 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             syntax::ExprKind::Let { pattern, rhs, then } => {
                 let init = self._build(rhs, program, stmts);
-
                 self._build_let_pattern(pattern, init, stmts);
+
                 self._build(then, program, stmts)
             }
             syntax::ExprKind::Fn(syntax_fun) => {
@@ -785,8 +812,6 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Value(inc_used(arg)));
             }
             Type::Tuple(fs) => {
-                inc_used(arg);
-
                 let mut it = fs.iter().enumerate().peekable();
 
                 specs.push(FormatSpec::Str("("));
@@ -806,8 +831,6 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Str(")"));
             }
             Type::Struct(struct_ty) => {
-                inc_used(arg);
-
                 let mut it = struct_ty.fields().peekable();
                 let empty = it.peek().is_none();
 

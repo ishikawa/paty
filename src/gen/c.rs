@@ -1,13 +1,6 @@
 //! C code generator
-use std::collections::HashSet;
-
 use super::ir::{Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar};
 use crate::ty::Type;
-
-// language's struct has no member, but C struct has to contain
-// at least one member. We generate unused dummy member to confirm it,
-// but we should handle empty struct as zero-sized type.
-const EMPTY_C_STRUCT_PLACEHOLDER_FIELD_NAME: &str = "_empty";
 
 #[derive(Debug)]
 pub struct Emitter {}
@@ -36,10 +29,8 @@ impl<'a, 'tcx> Emitter {
         .join("\n");
 
         // Emit declaration types
-        let mut emitted_types = HashSet::new();
-
         for ty in program.decl_types() {
-            self.emit_decl_type(ty, &mut emitted_types, &mut code);
+            self.emit_decl_type(ty, &mut code);
         }
 
         for fun in program.functions() {
@@ -51,73 +42,49 @@ impl<'a, 'tcx> Emitter {
     }
 
     #[allow(clippy::mutable_key_type)]
-    fn emit_decl_type<'t>(
-        &mut self,
-        ty: &'t Type<'tcx>,
-        emitted_types: &mut HashSet<&'t Type<'tcx>>,
-        code: &mut String,
-    ) {
-        if emitted_types.contains(ty) {
+    fn emit_decl_type<'t>(&mut self, ty: &'t Type<'tcx>, code: &mut String) {
+        // Zero-size data should not has declaration.
+        if ty.is_zero_sized() {
             return;
         }
 
+        // Emit C struct.
+        // Note that C structure have to contain at least one member.
         match ty {
             Type::Tuple(fs) => {
-                // Emit field types first for forward declaration.
-                for fty in fs.iter() {
-                    self.emit_decl_type(fty, emitted_types, code);
-                }
-
-                // Emit C struct
                 code.push_str(&c_type(ty));
                 code.push_str(" {\n");
+
                 for (i, fty) in fs.iter().enumerate() {
-                    code.push_str(&c_type(fty));
-                    code.push(' ');
-                    code.push_str(&format!("_{};\n", i));
+                    if !fty.is_zero_sized() {
+                        code.push_str(&c_type(fty));
+                        code.push(' ');
+                        code.push_str(&format!("_{};\n", i));
+                    }
                 }
-                code.push_str("};");
+
+                code.push_str("};\n\n");
             }
             Type::Struct(struct_ty) => {
-                // Emit field types first for forward declaration.
-                for (_, fty) in struct_ty.fields() {
-                    self.emit_decl_type(fty, emitted_types, code);
-                }
-
-                // Emit C struct.
-                // Note that C structure have to contain at least one member.
-                let mut fs = struct_ty.fields().peekable();
-
                 code.push_str(&c_type(ty));
                 code.push_str(" {\n");
-                if fs.peek().is_some() {
-                    for (name, fty) in fs {
+                for (name, fty) in struct_ty.fields() {
+                    if !fty.is_zero_sized() {
                         code.push_str(&c_type(fty));
                         code.push(' ');
                         code.push_str(&format!("{};\n", name));
                     }
-                } else {
-                    code.push_str(&c_type(&Type::NativeInt));
-                    code.push(' ');
-                    code.push_str(&format!("{};\n", EMPTY_C_STRUCT_PLACEHOLDER_FIELD_NAME));
                 }
-                code.push_str("};");
+                code.push_str("};\n\n");
             }
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
                 // no emit
-                return;
             }
             Type::Named(named_ty) => {
-                self.emit_decl_type(named_ty.expect_ty(), emitted_types, code);
-                // no emit
-                return;
+                unreachable!("untyped code for named type `{}`", named_ty.name())
             }
             Type::Undetermined => unreachable!("untyped code"),
         };
-
-        code.push('\n');
-        code.push('\n');
-        emitted_types.insert(ty);
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
@@ -183,12 +150,14 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             Stmt::VarDef { name, init } => {
-                code.push_str(&c_type(init.ty()));
-                code.push(' ');
-                code.push_str(name);
-                code.push_str(" = ");
-                self.emit_expr(init, code);
-                code.push_str(";\n");
+                if !init.ty().is_zero_sized() {
+                    code.push_str(&c_type(init.ty()));
+                    code.push(' ');
+                    code.push_str(name);
+                    code.push_str(" = ");
+                    self.emit_expr(init, code);
+                    code.push_str(";\n");
+                }
             }
             Stmt::Ret(expr) => {
                 code.push_str("return ");
@@ -377,9 +346,10 @@ impl<'a, 'tcx> Emitter {
                         }
                     }
                 }
-                code.push_str("\", ");
+                code.push('"');
 
                 // arguments
+                let mut is_first_arg = true;
                 let mut it = specs
                     .iter()
                     .filter(|spec| matches!(spec, FormatSpec::Value(_)))
@@ -387,6 +357,11 @@ impl<'a, 'tcx> Emitter {
 
                 while let Some(spec) = it.next() {
                     if let FormatSpec::Value(value) = spec {
+                        if is_first_arg {
+                            code.push_str(", ");
+                            is_first_arg = false;
+                        }
+
                         match value.ty() {
                             Type::Int64 | Type::String | Type::NativeInt => {
                                 self.emit_expr(value, code);
@@ -452,6 +427,10 @@ impl<'a, 'tcx> Emitter {
                 let mut peekable = values.iter().enumerate().peekable();
 
                 while let Some((i, value)) = peekable.next() {
+                    if value.ty().is_zero_sized() {
+                        continue;
+                    }
+
                     code.push_str(&format!("._{} = ", i));
                     self.emit_expr(value, code);
 
@@ -473,18 +452,17 @@ impl<'a, 'tcx> Emitter {
 
                 let mut peekable = fs.iter().peekable();
 
-                if peekable.peek().is_some() {
-                    while let Some((name, value)) = peekable.next() {
-                        code.push_str(&format!(".{} = ", name));
-                        self.emit_expr(value, code);
-
-                        if peekable.peek().is_some() {
-                            code.push_str(", ");
-                        }
+                while let Some((name, value)) = peekable.next() {
+                    if value.ty().is_zero_sized() {
+                        continue;
                     }
-                } else {
-                    // empty struct
-                    code.push_str(&format!(".{} = 0", EMPTY_C_STRUCT_PLACEHOLDER_FIELD_NAME));
+
+                    code.push_str(&format!(".{} = ", name));
+                    self.emit_expr(value, code);
+
+                    if peekable.peek().is_some() {
+                        code.push_str(", ");
+                    }
                 }
 
                 code.push('}');

@@ -92,6 +92,25 @@ impl<'tcx> Type<'tcx> {
             self
         }
     }
+
+    /// Returns `true` if the type is zero-sized.
+    pub fn is_zero_sized(&self) -> bool {
+        match self {
+            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => false,
+            Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
+            Type::Struct(struct_ty) => {
+                struct_ty.is_empty() || struct_ty.fields().all(|(_, fty)| fty.is_zero_sized())
+            }
+            Type::Named(named_ty) => {
+                if let Some(ty) = named_ty.ty() {
+                    ty.is_zero_sized()
+                } else {
+                    true
+                }
+            }
+            Type::Undetermined => true,
+        }
+    }
 }
 
 impl PartialEq for Type<'_> {
