@@ -7,6 +7,14 @@ pub enum SemanticError<'tcx> {
     UndefinedVariable { name: String },
     #[error("cannot find function `{name}` in scope")]
     UndefinedFunction { name: String },
+    #[error("cannot find named type `{name}` in scope")]
+    UndefinedNamedType { name: String },
+    #[error("cannot find named field `{name}` in struct `{struct_name}`")]
+    UndefinedStructField { name: String, struct_name: String },
+    #[error("named field `{name}` is defined more than once in struct `{struct_name}`")]
+    DuplicateStructField { name: String, struct_name: String },
+    #[error("named type `{name}` is bound more than once in the same scope")]
+    DuplicateNamedType { name: String },
     #[error(
         "wrong number of arguments for function `{name}`: expected {expected}, found {actual}"
     )]
@@ -32,8 +40,4 @@ pub enum SemanticError<'tcx> {
     NonExhaustivePattern { pattern: String },
     #[error("identifier `{name}` is bound more than once in the same pattern")]
     AlreadyBoundInPattern { name: String },
-    #[error("named type `{name}` is bound more than once in the same scope")]
-    DuplicateNamedType { name: String },
-    #[error("cannot find named type `{name}` in scope")]
-    UndefinedNamedType { name: String },
 }

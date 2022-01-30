@@ -5,7 +5,7 @@ use crate::{
     syntax,
     ty::{Type, TypeContext},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 mod error;
 mod usefulness;
@@ -234,6 +234,56 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
 
             unify_expr_type(tcx.tuple(&value_types), expr, errors);
         }
+        syntax::ExprKind::Struct(struct_value) => {
+            // Assign named struct type to struct value
+            let ty = if let Some(ty) = named_types.get(struct_value.name()) {
+                ty
+            } else {
+                errors.push(SemanticError::UndefinedNamedType {
+                    name: struct_value.name().to_string(),
+                });
+                return;
+            };
+
+            let struct_ty = if let Type::Struct(struct_ty) = ty {
+                struct_ty
+            } else {
+                errors.push(SemanticError::MismatchedType {
+                    expected: tcx.named_struct(struct_value.name()),
+                    actual: ty,
+                });
+                return;
+            };
+
+            unify_expr_type(ty, expr, errors);
+
+            // Analyze fields
+            let mut defined_fields = HashSet::new();
+
+            for field in struct_value.fields() {
+                if defined_fields.contains(field.name()) {
+                    errors.push(SemanticError::DuplicateStructField {
+                        name: field.name().to_string(),
+                        struct_name: struct_value.name().to_string(),
+                    });
+                    continue;
+                }
+                defined_fields.insert(field.name());
+
+                let field_ty = if let Some((_, fty)) = struct_ty.get_field(field.name()) {
+                    fty
+                } else {
+                    errors.push(SemanticError::UndefinedStructField {
+                        name: field.name().to_string(),
+                        struct_name: struct_value.name().to_string(),
+                    });
+                    return;
+                };
+
+                analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
+                unify_expr_type(field_ty, field.value(), errors);
+            }
+        }
         syntax::ExprKind::Minus(a) => {
             analyze_expr(tcx, a, vars, functions, named_types, errors);
 
@@ -279,7 +329,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
         }
-        syntax::ExprKind::TupleField(operand, index) => {
+        syntax::ExprKind::IndexAccess(operand, index) => {
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
 
             // index boundary check

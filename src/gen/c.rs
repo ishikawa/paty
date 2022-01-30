@@ -460,9 +460,35 @@ impl<'a, 'tcx> Emitter {
 
                 code.push('}');
             }
-            ExprKind::TupleField { operand, index } => {
+            ExprKind::StructValue(_, fs) => {
+                // Specify struct type explicitly.
+                code.push('(');
+                code.push_str(&c_type(expr.ty()));
+                code.push(')');
+
+                // Initialize tuple struct with designated initializers.
+                code.push('{');
+
+                let mut peekable = fs.iter().peekable();
+
+                while let Some((name, value)) = peekable.next() {
+                    code.push_str(&format!(".{} = ", name));
+                    self.emit_expr(value, code);
+
+                    if peekable.peek().is_some() {
+                        code.push_str(", ");
+                    }
+                }
+
+                code.push('}');
+            }
+            ExprKind::IndexAccess { operand, index } => {
                 self.emit_expr(operand, code);
                 code.push_str(&format!("._{}", index));
+            }
+            ExprKind::FieldAccess { operand, name } => {
+                self.emit_expr(operand, code);
+                code.push_str(&format!(".{}", name));
             }
             ExprKind::TmpVar(t) => {
                 if let Some(expr) = t.immediate.get() {
@@ -493,10 +519,14 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Call { .. } => true,
             ExprKind::Printf(_) => true,
             ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| self.has_side_effect(sub_expr)),
+            ExprKind::StructValue(_, fs) => fs
+                .iter()
+                .any(|(_, sub_expr)| self.has_side_effect(sub_expr)),
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
-            | ExprKind::TupleField { .. }
+            | ExprKind::IndexAccess { .. }
+            | ExprKind::FieldAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => false,
         }

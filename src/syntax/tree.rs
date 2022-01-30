@@ -109,6 +109,7 @@ pub enum ExprKind<'pcx, 'tcx> {
     String(String),
     Var(String),
     Tuple(Vec<&'pcx Expr<'pcx, 'tcx>>),
+    Struct(StructValue<'pcx, 'tcx>),
 
     // unary operators
     Minus(&'pcx Expr<'pcx, 'tcx>),
@@ -128,7 +129,7 @@ pub enum ExprKind<'pcx, 'tcx> {
     Or(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
 
     // tuple.0, tuple.1, ...
-    TupleField(&'pcx Expr<'pcx, 'tcx>, usize),
+    IndexAccess(&'pcx Expr<'pcx, 'tcx>, usize),
     Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
     Let {
         pattern: &'pcx Pattern<'pcx, 'tcx>,
@@ -212,7 +213,7 @@ impl<'pcx, 'tcx> Node for Parameter<'pcx, 'tcx> {
 #[derive(Debug)]
 pub struct StructDef<'pcx, 'tcx> {
     name: String,
-    fields: Vec<StructField<'tcx>>,
+    fields: Vec<StructFieldDef<'tcx>>,
     ty: &'tcx Type<'tcx>,
     then: &'pcx Expr<'pcx, 'tcx>,
 }
@@ -220,7 +221,7 @@ pub struct StructDef<'pcx, 'tcx> {
 impl<'pcx, 'tcx> StructDef<'pcx, 'tcx> {
     pub fn new(
         name: &str,
-        fields: Vec<StructField<'tcx>>,
+        fields: Vec<StructFieldDef<'tcx>>,
         ty: &'tcx Type<'tcx>,
         then: &'pcx Expr<'pcx, 'tcx>,
     ) -> Self {
@@ -236,7 +237,7 @@ impl<'pcx, 'tcx> StructDef<'pcx, 'tcx> {
         &self.name
     }
 
-    pub fn fields(&self) -> &[StructField<'tcx>] {
+    pub fn fields(&self) -> &[StructFieldDef<'tcx>] {
         &self.fields
     }
 
@@ -250,13 +251,13 @@ impl<'pcx, 'tcx> StructDef<'pcx, 'tcx> {
 }
 
 #[derive(Debug)]
-pub struct StructField<'tcx> {
+pub struct StructFieldDef<'tcx> {
     name: String,
     ty: &'tcx Type<'tcx>,
     data: NodeData,
 }
 
-impl<'tcx> StructField<'tcx> {
+impl<'tcx> StructFieldDef<'tcx> {
     pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             name: name.to_string(),
@@ -274,7 +275,65 @@ impl<'tcx> StructField<'tcx> {
     }
 }
 
-impl<'tcx> Node for StructField<'tcx> {
+impl<'tcx> Node for StructFieldDef<'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
+    }
+}
+
+#[derive(Debug)]
+pub struct StructValue<'pcx, 'tcx> {
+    name: String,
+    fields: Vec<ValueField<'pcx, 'tcx>>,
+}
+
+impl<'pcx, 'tcx> StructValue<'pcx, 'tcx> {
+    pub fn new(name: &str, fields: Vec<ValueField<'pcx, 'tcx>>) -> Self {
+        Self {
+            name: name.to_string(),
+            fields,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fields(&self) -> &[ValueField<'pcx, 'tcx>] {
+        &self.fields
+    }
+}
+
+#[derive(Debug)]
+pub struct ValueField<'pcx, 'tcx> {
+    name: String,
+    value: &'pcx Expr<'pcx, 'tcx>,
+    data: NodeData,
+}
+
+impl<'pcx, 'tcx> ValueField<'pcx, 'tcx> {
+    pub fn new(name: &str, value: &'pcx Expr<'pcx, 'tcx>) -> Self {
+        Self {
+            name: name.to_string(),
+            value,
+            data: NodeData::new(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn value(&self) -> &'pcx Expr<'pcx, 'tcx> {
+        self.value
+    }
+}
+
+impl<'pcx, 'tcx> Node for ValueField<'pcx, 'tcx> {
     fn data(&self) -> &NodeData {
         &self.data
     }
@@ -563,7 +622,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             });
         };
 
-        let fields = self.parse_elements(it, ('{', '}'), Self::struct_field)?;
+        let fields = self.parse_elements(it, ('{', '}'), Self::struct_field_definition)?;
 
         let then = self.decl(it)?;
 
@@ -587,10 +646,10 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(r#struct)
     }
 
-    fn struct_field(
+    fn struct_field_definition(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<StructField<'tcx>, ParseError<'t>> {
+    ) -> Result<StructFieldDef<'tcx>, ParseError<'t>> {
         let (name_token, name) = if let Some(t) = it.peek() {
             if let TokenKind::Identifier(name) = t.kind() {
                 let t = it.next().unwrap();
@@ -606,7 +665,32 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
         let ty = self.type_specifier(it)?;
 
-        let mut field = StructField::new(&name, ty);
+        let mut field = StructFieldDef::new(&name, ty);
+        field.data_mut().append_comments_from_token(name_token);
+
+        Ok(field)
+    }
+
+    fn value_field(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<ValueField<'pcx, 'tcx>, ParseError<'t>> {
+        let (name_token, name) = if let Some(t) = it.peek() {
+            if let TokenKind::Identifier(name) = t.kind() {
+                let t = it.next().unwrap();
+                (t, name.to_string())
+            } else {
+                return Err(ParseError::NotParsed);
+            }
+        } else {
+            return Err(ParseError::NotParsed);
+        };
+
+        self.expect_token(it, TokenKind::Operator(':'))?;
+
+        let value = self.expr(it)?;
+
+        let mut field = ValueField::new(&name, value);
         field.data_mut().append_comments_from_token(name_token);
 
         Ok(field)
@@ -824,13 +908,14 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             | ExprKind::Gt(_, _)
             | ExprKind::And(_, _)
             | ExprKind::Or(_, _)
-            | ExprKind::TupleField(_, _)
+            | ExprKind::IndexAccess(_, _)
             | ExprKind::Call(_, _)
             | ExprKind::Let { .. }
             | ExprKind::Fn(_)
             | ExprKind::StructDef(_)
             | ExprKind::Case { .. }
-            | ExprKind::Puts(_) => return Err(ParseError::UnrecognizedPattern),
+            | ExprKind::Puts(_)
+            | ExprKind::Struct(_) => return Err(ParseError::UnrecognizedPattern),
         };
 
         Ok(self.pat_arena.alloc(Pattern::new(kind)))
@@ -1012,7 +1097,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             if let TokenKind::Integer(n) = t.kind() {
                 it.next();
                 let index = n.parse().unwrap();
-                lhs = self.alloc_expr(ExprKind::TupleField(lhs, index), token);
+                lhs = self.alloc_expr(ExprKind::IndexAccess(lhs, index), token);
             } else {
                 return Err(ParseError::UnexpectedToken {
                     expected: "index".to_string(),
@@ -1036,10 +1121,14 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             TokenKind::Identifier(name) => {
                 it.next();
 
-                // call?
+                // call/struct/var
                 if self.match_token(it, TokenKind::Operator('(')) {
                     let args = self.parse_elements(it, ('(', ')'), Self::expr)?;
                     ExprKind::Call(name.clone(), args)
+                } else if self.match_token(it, TokenKind::Operator('{')) {
+                    let fields = self.parse_elements(it, ('{', '}'), Self::value_field)?;
+                    let struct_value = StructValue::new(name, fields);
+                    ExprKind::Struct(struct_value)
                 } else {
                     ExprKind::Var(name.clone())
                 }

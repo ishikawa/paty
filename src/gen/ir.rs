@@ -282,9 +282,14 @@ pub enum ExprKind<'a, 'tcx> {
     Bool(bool),
     Str(String),
     Tuple(Vec<&'a Expr<'a, 'tcx>>),
-    TupleField {
+    StructValue(String, Vec<(String, &'a Expr<'a, 'tcx>)>),
+    IndexAccess {
         operand: &'a Expr<'a, 'tcx>,
         index: usize,
+    },
+    FieldAccess {
+        operand: &'a Expr<'a, 'tcx>,
+        name: String,
     },
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(Var<'tcx>),
@@ -455,6 +460,17 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Tuple(values);
                 self.push_expr_kind(kind, tuple_ty, stmts)
             }
+            syntax::ExprKind::Struct(struct_value) => {
+                let mut fields = vec![];
+
+                for field in struct_value.fields() {
+                    let value = self._build(field.value(), program, stmts);
+                    fields.push((field.name().to_string(), inc_used(value)));
+                }
+
+                let kind = ExprKind::StructValue(struct_value.name().to_string(), fields);
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
                 let kind = ExprKind::Minus(inc_used(a));
@@ -549,9 +565,9 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Var(Var::new(name, expr.expect_ty()));
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
-            syntax::ExprKind::TupleField(operand, index) => {
+            syntax::ExprKind::IndexAccess(operand, index) => {
                 let operand = self._build(operand, program, stmts);
-                let kind = ExprKind::TupleField {
+                let kind = ExprKind::IndexAccess {
                     operand: inc_used(operand),
                     index: *index,
                 };
@@ -739,7 +755,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             PatternKind::Tuple(fs) => {
                 for (i, sub_pat) in fs.iter().enumerate() {
-                    let kind = ExprKind::TupleField {
+                    let kind = ExprKind::IndexAccess {
                         operand: inc_used(init),
                         index: i,
                     };
@@ -773,7 +789,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 specs.push(FormatSpec::Str("("));
                 while let Some((i, sub_ty)) = it.next() {
-                    let kind = ExprKind::TupleField {
+                    let kind = ExprKind::IndexAccess {
                         operand: inc_used(arg),
                         index: i,
                     };
@@ -787,7 +803,30 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 }
                 specs.push(FormatSpec::Str(")"));
             }
-            Type::Struct(_) => todo!(),
+            Type::Struct(struct_ty) => {
+                let mut it = struct_ty.fields().peekable();
+
+                specs.push(FormatSpec::Value(self.const_string(struct_ty.name())));
+                specs.push(FormatSpec::Str(" {"));
+
+                while let Some((name, fty)) = it.next() {
+                    specs.push(FormatSpec::Value(self.const_string(name)));
+                    specs.push(FormatSpec::Str(": "));
+
+                    let kind = ExprKind::FieldAccess {
+                        operand: inc_used(arg),
+                        name: name.to_string(),
+                    };
+
+                    let ir_expr = self.push_expr_kind(kind, fty, stmts);
+                    self._printf_format(ir_expr, program, stmts, specs);
+
+                    if it.peek().is_some() {
+                        specs.push(FormatSpec::Str(", "));
+                    }
+                }
+                specs.push(FormatSpec::Str("}"));
+            }
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
@@ -857,7 +896,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     // Empty tuple is always matched with an empty tuple.
                     None
                 } else {
-                    let kind = ExprKind::TupleField {
+                    let kind = ExprKind::IndexAccess {
                         operand: inc_used(t_expr),
                         index: 0,
                     };
@@ -868,7 +907,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     let mut condition = self._build_pattern(operand, sub_pats[0], stmts);
 
                     for (i, pat) in sub_pats.iter().enumerate().skip(1) {
-                        let kind = ExprKind::TupleField {
+                        let kind = ExprKind::IndexAccess {
                             operand: inc_used(t_expr),
                             index: i,
                         };
@@ -1002,11 +1041,21 @@ impl<'a, 'tcx> Optimizer {
                     }
                 }
             }
+            ExprKind::Tuple(fs) => {
+                for value in fs {
+                    self.optimize_expr(value);
+                }
+            }
+            ExprKind::StructValue(_, fs) => {
+                for (_, value) in fs {
+                    self.optimize_expr(value);
+                }
+            }
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
-            | ExprKind::Tuple(_)
-            | ExprKind::TupleField { .. }
+            | ExprKind::IndexAccess { .. }
+            | ExprKind::FieldAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => {}
         }

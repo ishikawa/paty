@@ -45,6 +45,12 @@ impl<'tcx> TypeContext<'tcx> {
         self.tuple(&value_types)
     }
 
+    /// Returns a struct type whose name is `name` and has no value.
+    pub fn named_struct(&self, name: &str) -> &'tcx Type<'tcx> {
+        let struct_ty = StructTy::new(name, vec![]);
+        self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+
     pub fn native_int(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::NativeInt)
     }
@@ -121,6 +127,10 @@ impl<'tcx> StructTy<'tcx> {
 
     pub fn fields(&self) -> impl Iterator<Item = &StructTyField<'tcx>> {
         self.fields.iter()
+    }
+
+    pub fn get_field(&self, name: &str) -> Option<&StructTyField<'tcx>> {
+        self.fields.iter().find(|f| f.0 == name)
     }
 }
 

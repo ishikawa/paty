@@ -229,6 +229,11 @@ struct C { b: B, c: (A, B), }
 struct B { a: int64 }
 struct A {}
 puts("ok")'
+assert "A {a: 50}" '
+struct A { a: int64 }
+a = A { a: 50 }
+puts(a)
+'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
