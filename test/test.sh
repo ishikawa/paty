@@ -232,6 +232,18 @@ def foo(t: (), s: E)
   (t, s)
 end
 puts(foo((), E {}))'
+assert 'WeAreZst { one: Zst {}, two: Zst {} }
+(Zst {})' '
+struct Zst {}
+struct WeAreZst {
+  one: Zst,
+  two: Zst,
+}
+def printZst()
+  puts(WeAreZst { one: Zst {}, two: Zst {} })
+end
+_ = printZst()
+puts((Zst {},))'
 # struct
 assert "C { b: B { a: 50 }, c: (A {}, B { a: 60 }) }" '
 struct A {}
