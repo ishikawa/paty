@@ -4,6 +4,11 @@ use std::collections::HashSet;
 use super::ir::{Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar};
 use crate::ty::Type;
 
+// language's struct has no member, but C struct has to contain
+// at least one member. We generate unused dummy member to confirm it,
+// but we should handle empty struct as zero-sized type.
+const EMPTY_C_STRUCT_PLACEHOLDER_FIELD_NAME: &str = "_empty";
+
 #[derive(Debug)]
 pub struct Emitter {}
 
@@ -92,12 +97,9 @@ impl<'a, 'tcx> Emitter {
                         code.push_str(&format!("{};\n", name));
                     }
                 } else {
-                    // language's struct has no member, but C struct has to contain
-                    // at least one member. We generate unused dummy member to confirm it,
-                    // but we should handle empty struct as zero-sized type.
                     code.push_str(&c_type(&Type::NativeInt));
                     code.push(' ');
-                    code.push_str("_placeholder;\n");
+                    code.push_str(&format!("{};\n", EMPTY_C_STRUCT_PLACEHOLDER_FIELD_NAME));
                 }
                 code.push_str("};");
             }
@@ -471,13 +473,18 @@ impl<'a, 'tcx> Emitter {
 
                 let mut peekable = fs.iter().peekable();
 
-                while let Some((name, value)) = peekable.next() {
-                    code.push_str(&format!(".{} = ", name));
-                    self.emit_expr(value, code);
+                if peekable.peek().is_some() {
+                    while let Some((name, value)) = peekable.next() {
+                        code.push_str(&format!(".{} = ", name));
+                        self.emit_expr(value, code);
 
-                    if peekable.peek().is_some() {
-                        code.push_str(", ");
+                        if peekable.peek().is_some() {
+                            code.push_str(", ");
+                        }
                     }
+                } else {
+                    // empty struct
+                    code.push_str(&format!(".{} = 0", EMPTY_C_STRUCT_PLACEHOLDER_FIELD_NAME));
                 }
 
                 code.push('}');

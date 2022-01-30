@@ -249,7 +249,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     }
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
-        self.ty
+        self.ty.bottom_ty()
     }
 }
 
@@ -805,9 +805,13 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             Type::Struct(struct_ty) => {
                 let mut it = struct_ty.fields().peekable();
+                let empty = it.peek().is_none();
 
                 specs.push(FormatSpec::Value(self.const_string(struct_ty.name())));
                 specs.push(FormatSpec::Str(" {"));
+                if !empty {
+                    specs.push(FormatSpec::Str(" "));
+                }
 
                 while let Some((name, fty)) = it.next() {
                     specs.push(FormatSpec::Value(self.const_string(name)));
@@ -824,6 +828,10 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     if it.peek().is_some() {
                         specs.push(FormatSpec::Str(", "));
                     }
+                }
+
+                if !empty {
+                    specs.push(FormatSpec::Str(" "));
                 }
                 specs.push(FormatSpec::Str("}"));
             }

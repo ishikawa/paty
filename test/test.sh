@@ -219,21 +219,24 @@ else
   puts(3)
 end'
 # struct
-assert "ok" '
+assert "10" "
+a = 10
+b = (a,)
+puts(b.0)"
+assert "C { b: B { a: 50 }, c: (A {}, B { a: 60 }) }" '
 struct A {}
 struct B { a: int64 }
 struct C { b: B, c: (A, B), }
-puts("ok")'
-assert "ok" '
+c = C { b: B { a: 50 }, c: (A {}, B { a: 60 })}
+puts(c)'
+assert "C { b: B { a: 88 }, c: (A {}, B { a: 99 }) }" '
 struct C { b: B, c: (A, B), }
 struct B { a: int64 }
 struct A {}
-puts("ok")'
-assert "A {a: 50}" '
-struct A { a: int64 }
-a = A { a: 50 }
-puts(a)
-'
+a = A {}
+b = B { a: 88 }
+c = C { b: b, c: (A {}, B { a: 33*3 })}
+puts(c)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

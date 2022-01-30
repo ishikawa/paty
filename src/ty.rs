@@ -56,7 +56,7 @@ impl<'tcx> TypeContext<'tcx> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Eq)]
 pub enum Type<'tcx> {
     /// 64bit integer
     Int64,
@@ -78,6 +78,66 @@ pub enum Type<'tcx> {
     // C types for internal uses
     /// int
     NativeInt,
+}
+
+impl<'tcx> Type<'tcx> {
+    pub fn bottom_ty(&'tcx self) -> &'tcx Type<'tcx> {
+        if let Type::Named(named_ty) = self {
+            if let Some(ty) = named_ty.ty() {
+                ty.bottom_ty()
+            } else {
+                self
+            }
+        } else {
+            self
+        }
+    }
+}
+
+impl PartialEq for Type<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
+            (Self::Struct(l0), Self::Struct(r0)) => l0 == r0,
+            (Self::Named(named_ty1), Self::Named(named_ty2)) => {
+                named_ty1.name() == named_ty2.name() || named_ty1.ty() == named_ty2.ty()
+            }
+            (Self::Named(named_ty1), ty2) => {
+                if let Some(ty1) = named_ty1.ty() {
+                    ty1 == ty2
+                } else {
+                    false
+                }
+            }
+            (ty1, Self::Named(named_ty2)) => {
+                if let Some(ty2) = named_ty2.ty() {
+                    ty1 == ty2
+                } else {
+                    false
+                }
+            }
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
+impl Hash for Type<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Type::Tuple(fs) => fs.hash(state),
+            Type::Struct(struct_ty) => struct_ty.hash(state),
+            Type::Named(named_ty) => {
+                if let Some(ty) = named_ty.ty() {
+                    ty.hash(state)
+                } else {
+                    named_ty.name().hash(state)
+                }
+            }
+            Type::Int64 | Type::Boolean | Type::String | Type::Undetermined | Type::NativeInt => {
+                core::mem::discriminant(self).hash(state)
+            }
+        }
+    }
 }
 
 impl fmt::Display for Type<'_> {
@@ -184,12 +244,6 @@ impl<'tcx> NamedTy<'tcx> {
 
     pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
-    }
-}
-
-impl Hash for NamedTy<'_> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
     }
 }
 
