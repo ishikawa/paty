@@ -3,7 +3,7 @@
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/deconstruct_pat.rs
 use super::error::SemanticError;
 use crate::syntax::token::RangeEnd;
-use crate::syntax::tree::{CaseArm, Pattern, PatternKind};
+use crate::syntax::tree::{CaseArm, Pattern, PatternField, PatternKind, StructPattern};
 use crate::ty::Type;
 use std::{
     cell::Cell,
@@ -806,6 +806,9 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         match constructor {
             Constructor::Single => match ty {
                 Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
+                Type::Struct(struct_ty) => {
+                    Fields::wildcards_from_tys(cx, struct_ty.fields().map(|(_, ty)| ty).copied())
+                }
                 _ => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
             Constructor::IntRange(..)
@@ -867,7 +870,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     }
 
     pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
-        let pat_ty = pat.ty().unwrap();
+        let pat_ty = pat.expect_ty();
 
         let ctor;
         let fields;
@@ -907,6 +910,32 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
                 fields = Fields::from_iter(cx, pats);
             }
+            PatternKind::Struct(struct_pat) => {
+                ctor = Constructor::Single;
+
+                // Convert struct fields to deconstruct patterns.
+                // We must follow the order of fields in the type.
+                let struct_ty = if let Type::Struct(struct_ty) = pat_ty {
+                    struct_ty
+                } else {
+                    unreachable!("Pattern type {} must be struct type.", pat_ty);
+                };
+
+                let mut sub_pats = vec![];
+
+                for (fname, fty) in struct_ty.fields() {
+                    let sub_pat =
+                        if let Some(pat_field) = struct_pat.fields().find(|f| f.name() == fname) {
+                            DeconstructedPat::from_pat(cx, pat_field.pattern())
+                        } else {
+                            // omitted field is handled by wildcard
+                            DeconstructedPat::wildcard(fty)
+                        };
+                    sub_pats.push(sub_pat);
+                }
+
+                fields = Fields::from_iter(cx, sub_pats);
+            }
         }
 
         DeconstructedPat::new(ctor, fields, pat_ty)
@@ -918,6 +947,19 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 Type::Tuple(_) => {
                     let sub_patterns = self.iter_fields().map(|p| p.to_pat(cx));
                     PatternKind::Tuple(sub_patterns.collect())
+                }
+                Type::Struct(struct_ty) => {
+                    let fields: Vec<_> = self.iter_fields().collect();
+
+                    assert!(fields.len() == struct_ty.fields().len());
+
+                    let pat_fields: Vec<_> = fields
+                        .iter()
+                        .zip(struct_ty.fields())
+                        .map(|(pat, (fname, _))| PatternField::new(fname, pat.to_pat(cx)))
+                        .collect();
+
+                    PatternKind::Struct(StructPattern::new(struct_ty.name(), pat_fields))
                 }
                 _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
             },

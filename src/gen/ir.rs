@@ -663,7 +663,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             // ignore pattern but we have to define a parameter.
                             Parameter::TmpVar(self.next_temp_var(ty))
                         }
-                        PatternKind::Tuple(_) => {
+                        PatternKind::Tuple(_) | PatternKind::Struct(_) => {
                             // Create a temporary parameter name to be able to referenced in the body.
                             // Simultaneously, we build deconstruct assignment expressions.
                             let t = self.next_temp_var(ty);
@@ -791,6 +791,19 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     self._build_let_pattern(sub_pat, field, stmts)
                 }
             }
+            PatternKind::Struct(struct_pat) => {
+                for pat_field in struct_pat.fields() {
+                    let kind = ExprKind::FieldAccess {
+                        operand: inc_used(init),
+                        name: pat_field.name().to_string(),
+                    };
+                    let field = self
+                        .expr_arena
+                        .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+
+                    self._build_let_pattern(pat_field.pattern(), field, stmts)
+                }
+            }
             PatternKind::Integer(_)
             | PatternKind::Boolean(_)
             | PatternKind::String(_)
@@ -874,6 +887,11 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
+        // zero-sized type is always matched with a value.
+        if pat.expect_ty().is_zero_sized() {
+            return None;
+        }
+
         match pat.kind() {
             PatternKind::Integer(n) => {
                 let value = self.int64(*n);
@@ -928,8 +946,9 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             PatternKind::Tuple(sub_pats) => {
                 if sub_pats.is_empty() {
-                    // Empty tuple is always matched with an empty tuple.
-                    None
+                    unreachable!(
+                        "Empty tuple must be zero-sized type. It should be handled above."
+                    );
                 } else {
                     let kind = ExprKind::IndexAccess {
                         operand: inc_used(t_expr),
@@ -948,6 +967,49 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         };
                         let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
                         let sub_condition = self._build_pattern(operand, pat, stmts);
+
+                        if let Some(cond) = condition {
+                            if let Some(sub_cond) = sub_condition {
+                                let kind = ExprKind::And(cond, sub_cond);
+                                condition = Some(
+                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
+                                );
+                            }
+                        } else {
+                            condition = sub_condition;
+                        }
+                    }
+
+                    condition
+                }
+            }
+            PatternKind::Struct(struct_pat) => {
+                if struct_pat.fields().len() == 0 {
+                    unreachable!(
+                        "Empty struct must be zero-sized type. It should be handled above."
+                    );
+                } else {
+                    let first_field = struct_pat.fields().next().unwrap();
+                    let kind = ExprKind::FieldAccess {
+                        operand: inc_used(t_expr),
+                        name: first_field.name().to_string(),
+                    };
+                    let operand = self
+                        .expr_arena
+                        .alloc(Expr::new(kind, first_field.pattern().expect_ty()));
+
+                    let mut condition = self._build_pattern(operand, first_field.pattern(), stmts);
+
+                    for pat_field in struct_pat.fields().skip(1) {
+                        let kind = ExprKind::FieldAccess {
+                            operand: inc_used(t_expr),
+                            name: pat_field.name().to_string(),
+                        };
+                        let operand = self
+                            .expr_arena
+                            .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+                        let sub_condition =
+                            self._build_pattern(operand, pat_field.pattern(), stmts);
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {

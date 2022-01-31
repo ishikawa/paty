@@ -505,7 +505,8 @@ fn analyze_let_pattern<'pcx: 'tcx, 'tcx>(
         | PatternKind::Integer(_)
         | PatternKind::Boolean(_)
         | PatternKind::String(_)
-        | PatternKind::Tuple(_) => {}
+        | PatternKind::Tuple(_)
+        | PatternKind::Struct(_) => {}
         PatternKind::Range { .. } => {
             unreachable!("Unsupported let pattern: `{}`", pat.kind());
         }
@@ -561,6 +562,38 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
 
             unify_pat_type(tcx.tuple(sub_types), pat, errors);
         }
+        PatternKind::Struct(struct_pat) => {
+            let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
+                struct_ty
+            } else {
+                errors.push(SemanticError::MismatchedType {
+                    expected: expected_ty,
+                    actual: pattern_to_type(tcx, pat),
+                });
+                return;
+            };
+
+            if unify_pat_type(expected_ty, pat, errors) {
+                for field in struct_pat.fields() {
+                    if let Some((_, fty)) = struct_ty.get_field(field.name()) {
+                        analyze_pattern(
+                            tcx,
+                            field.pattern(),
+                            fty,
+                            vars,
+                            functions,
+                            named_types,
+                            errors,
+                        );
+                    } else {
+                        errors.push(SemanticError::UndefinedStructField {
+                            name: field.name().to_string(),
+                            struct_name: struct_ty.name().to_string(),
+                        });
+                    }
+                }
+            }
+        }
         PatternKind::Variable(name) => {
             if vars.get(name).is_some() {
                 errors.push(SemanticError::AlreadyBoundInPattern { name: name.clone() });
@@ -597,6 +630,14 @@ fn pattern_to_type<'pcx: 'tcx, 'tcx>(
                 .collect();
 
             tcx.tuple(&sub_types)
+        }
+        PatternKind::Struct(struct_pat) => {
+            let field_types: Vec<_> = struct_pat
+                .fields()
+                .map(|f| (f.name().to_string(), pattern_to_type(tcx, f.pattern())))
+                .collect();
+
+            tcx.struct_ty(struct_pat.name(), field_types)
         }
         PatternKind::Variable(_) | PatternKind::Wildcard => tcx.undetermined(),
     }

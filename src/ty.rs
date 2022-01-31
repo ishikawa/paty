@@ -33,6 +33,14 @@ impl<'tcx> TypeContext<'tcx> {
             .alloc(Type::Tuple(value_types.iter().copied().collect()))
     }
 
+    pub fn struct_ty(&self, name: &str, fields: Vec<StructTyField<'tcx>>) -> &'tcx Type<'tcx> {
+        let struct_ty = StructTy {
+            name: name.to_string(),
+            fields,
+        };
+        self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+
     /// Returns a tuple type whose element type is unknown but has N elements.
     pub fn tuple_n(&self, n: usize) -> &'tcx Type<'tcx> {
         let mut value_types = vec![];
@@ -222,13 +230,21 @@ impl fmt::Display for StructTy<'_> {
         write!(f, "struct {} ", self.name())?;
 
         let mut it = self.fields().peekable();
+        let empty = it.peek().is_none();
+
         write!(f, "{{")?;
+        if !empty {
+            write!(f, " ")?;
+        }
         while let Some((fname, ty)) = it.next() {
             write!(f, "{}: ", fname)?;
             write!(f, "{}", ty)?;
             if it.peek().is_some() {
                 write!(f, ", ")?;
             }
+        }
+        if !empty {
+            write!(f, " ")?;
         }
         write!(f, "}}")
     }

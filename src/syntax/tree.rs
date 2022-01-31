@@ -438,6 +438,7 @@ pub enum PatternKind<'pcx, 'tcx> {
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
     Tuple(Vec<&'pcx Pattern<'pcx, 'tcx>>),
+    Struct(StructPattern<'pcx, 'tcx>),
     Variable(String),
     Wildcard,
 }
@@ -474,9 +475,92 @@ impl fmt::Display for PatternKind<'_, '_> {
                 }
                 write!(f, ")")
             }
+            PatternKind::Struct(struct_pat) => struct_pat.fmt(f),
             PatternKind::Variable(name) => write!(f, "{}", name),
             PatternKind::Wildcard => write!(f, "_"),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct StructPattern<'pcx, 'tcx> {
+    name: String,
+    fields: Vec<PatternField<'pcx, 'tcx>>,
+}
+
+impl<'pcx, 'tcx> StructPattern<'pcx, 'tcx> {
+    pub fn new(name: &str, fields: Vec<PatternField<'pcx, 'tcx>>) -> Self {
+        Self {
+            name: name.to_string(),
+            fields,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternField<'pcx, 'tcx>> {
+        self.fields.iter()
+    }
+}
+
+impl fmt::Display for StructPattern<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ", self.name())?;
+
+        let mut it = self.fields().peekable();
+        let empty = it.peek().is_none();
+        write!(f, "{{")?;
+        if !empty {
+            write!(f, " ")?;
+        }
+        while let Some(field) = it.next() {
+            write!(f, "{}: ", field.name())?;
+            write!(f, "{}", field.pattern().kind())?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        if !empty {
+            write!(f, " ")?;
+        }
+        write!(f, "}}")
+    }
+}
+
+#[derive(Debug)]
+pub struct PatternField<'pcx, 'tcx> {
+    name: String,
+    pattern: &'pcx Pattern<'pcx, 'tcx>,
+    data: NodeData,
+}
+
+impl<'pcx, 'tcx> PatternField<'pcx, 'tcx> {
+    pub fn new(name: &str, pattern: &'pcx Pattern<'pcx, 'tcx>) -> Self {
+        Self {
+            name: name.to_string(),
+            pattern,
+            data: NodeData::new(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn pattern(&self) -> &'pcx Pattern<'pcx, 'tcx> {
+        self.pattern
+    }
+}
+
+impl<'pcx, 'tcx> Node for PatternField<'pcx, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
     }
 }
 
@@ -700,6 +784,31 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(field)
     }
 
+    fn pattern_field(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<PatternField<'pcx, 'tcx>, ParseError<'t>> {
+        let (name_token, name) = if let Some(t) = it.peek() {
+            if let TokenKind::Identifier(name) = t.kind() {
+                let t = it.next().unwrap();
+                (t, name.to_string())
+            } else {
+                return Err(ParseError::NotParsed);
+            }
+        } else {
+            return Err(ParseError::NotParsed);
+        };
+
+        self.expect_token(it, TokenKind::Operator(':'))?;
+
+        let pat = self.pattern(it)?;
+
+        let mut field = PatternField::new(&name, pat);
+        field.data_mut().append_comments_from_token(name_token);
+
+        Ok(field)
+    }
+
     fn type_specifier(
         &self,
         it: &mut TokenIterator<'t>,
@@ -870,7 +979,14 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             }
             TokenKind::Identifier(name) => {
                 it.next();
-                self.alloc_pat(self.variable_name_to_pattern(name), token)
+                if self.match_token(it, TokenKind::Operator('{')) {
+                    let fields = self.parse_elements(it, ('{', '}'), Self::pattern_field)?;
+                    let struct_value = StructPattern::new(name, fields);
+                    let kind = PatternKind::Struct(struct_value);
+                    self.alloc_pat(kind, token)
+                } else {
+                    self.alloc_pat(self.variable_name_to_pattern(name), token)
+                }
             }
             _ => {
                 return Err(ParseError::NotParsed);

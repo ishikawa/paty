@@ -74,6 +74,15 @@ assert 'Semantic error: unreachable `else` clause' "
   else
     puts(0)
   end"
+assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
+  struct T { value: int64 }
+  t = T { value: 123 }
+  case t
+  when T { value: _ }
+    puts(t)
+  when T { value: 0 }
+    puts(t)
+  end"
 # non-exhaustive pattern
 assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
   n = 100
