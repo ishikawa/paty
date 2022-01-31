@@ -259,6 +259,15 @@ a = A {}
 b = B { a: 88 }
 c = C { b: b, c: (A {}, B { a: 33*3 })}
 puts(c)'
+assert 'Year 2022' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: true, foo: 2022, baz: "Year" }
+case d
+when D { bar: false }
+  puts(false)
+when D { foo: foo, baz: baz }
+  puts(baz, foo)
+end'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
