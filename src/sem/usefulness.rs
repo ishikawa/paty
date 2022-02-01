@@ -653,6 +653,7 @@ impl<'tcx> Constructor {
         match self {
             Self::Single => match pcx.ty {
                 Type::Tuple(fs) => fs.len(),
+                Type::Struct(struct_ty) => struct_ty.fields().len(),
                 _ => unreachable!("Unexpected type for `Single` constructor: {:?}", pcx.ty),
             },
             Self::Wildcard
@@ -875,7 +876,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let ctor;
         let fields;
         match pat.kind() {
-            PatternKind::Variable(_) | PatternKind::Wildcard => {
+            PatternKind::Var(_) | PatternKind::Wildcard => {
                 ctor = Constructor::Wildcard;
                 fields = Fields::empty();
             }

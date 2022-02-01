@@ -601,6 +601,15 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
+            syntax::ExprKind::FieldAccess(operand, name) => {
+                let operand = self._build(operand, program, stmts);
+                let kind = ExprKind::FieldAccess {
+                    operand: inc_used(operand),
+                    name: name.to_string(),
+                };
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
             syntax::ExprKind::Call(name, args) => {
                 let kind = ExprKind::Call {
                     name: name.clone(),
@@ -658,7 +667,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                     // Assign parameter names to be able to referenced later.
                     let param = match pat.kind() {
-                        PatternKind::Variable(name) => Parameter::Var(Var::new(name, ty)),
+                        PatternKind::Var(name) => Parameter::Var(Var::new(name, ty)),
                         PatternKind::Wildcard => {
                             // ignore pattern but we have to define a parameter.
                             Parameter::TmpVar(self.next_temp_var(ty))
@@ -770,7 +779,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) {
         match pattern.kind() {
-            PatternKind::Variable(name) => {
+            PatternKind::Var(name) => {
                 let stmt = Stmt::VarDef {
                     name: name.to_string(),
                     init: inc_used(init),
@@ -1026,7 +1035,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     condition
                 }
             }
-            PatternKind::Variable(name) => {
+            PatternKind::Var(name) => {
                 stmts.push(Stmt::VarDef {
                     name: name.clone(),
                     init: inc_used(t_expr),

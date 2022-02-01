@@ -83,6 +83,38 @@ assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
   when T { value: 0 }
     puts(t)
   end"
+assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
+  struct T { value: int64 }
+  t = T { value: 123 }
+  case t
+  when T {}
+    puts(t)
+  when T { value: 0 }
+    puts(t)
+  end"
+assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
+  struct T { value: int64 }
+  t = T { value: 123 }
+  case t
+  when x
+    puts(x)
+  when T { value: 0 }
+    puts(t)
+  end"
+assert 'Semantic error: unreachable pattern: `T { a: _, b: _ }`' "
+  struct T { a: boolean, b: boolean }
+  case T { a: true, b: false }
+  when T { a: true, b: true }
+    puts(1)
+  when T { a: true, b: false }
+    puts(2)
+  when T { a: false, b: true }
+    puts(3)
+  when T { a: false, b: false }
+    puts(4)
+  when T { a, b }
+    puts(5)
+  end"
 # non-exhaustive pattern
 assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
   n = 100
@@ -109,16 +141,31 @@ assert 'Semantic error: non-exhaustive pattern: `_`' "
   when \"B\"
     puts(2)
   end"
+assert 'Semantic error: non-exhaustive pattern: `T { a: false, b: false }`' "
+  struct T { a: boolean, b: boolean }
+  case T { a: true, b: false }
+  when T { a: true, b: true }
+    puts(1)
+  when T { a: true, b: false }
+    puts(2)
+  when T { a: false, b: true }
+    puts(3)
+  end"
 # binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
 case (10, 20, 30)
 when (x, x, z)
   puts(x + x + z)
 end"
+assert 'identifier `x` is bound more than once in the same pattern' "
+struct S { a: int64, b: int64 }
+case S { a: 10, b: 20 }
+when S { a: x, b: x}
+  puts(x + x + z)
+end"
 assert 'cannot find variable `_` in scope' "
 _ = 1
-puts(_)
-"
+puts(_)"
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
@@ -130,6 +177,13 @@ def foo(t: (int64,))
   t
 end
 foo(100)"
+assert 'Semantic error: expected type `A`, found `struct B { a: int64 }`' "
+struct A { a: int64 }
+struct B { a: int64 }
+def foo(t: A)
+  t
+end
+foo(B { a: 100 })"
 assert 'Semantic error: expected type `(int64, int64)`, found `(int64, int64, int64)`' "
 def foo(t: (int64, int64))
   case t
@@ -150,3 +204,8 @@ assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3)
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "
 x = (1, 2, 3)
 x.3"
+# struct
+assert 'Semantic error: no field `b` on type `struct A { a: int64 }`' "
+struct A { a: int64 }
+a = A { a: 100 }
+a.b"

@@ -347,6 +347,24 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 ty,
             });
         }
+        syntax::ExprKind::FieldAccess(operand, name) => {
+            analyze_expr(tcx, operand, vars, functions, named_types, errors);
+
+            // index boundary check
+            let ty = operand.expect_ty();
+            if let Type::Struct(struct_ty) = ty {
+                if let Some((_, fty)) = struct_ty.get_field(name) {
+                    // apply type
+                    unify_expr_type(fty, expr, errors);
+                    return;
+                }
+            }
+
+            errors.push(SemanticError::FieldNotFound {
+                name: name.to_string(),
+                ty,
+            });
+        }
         syntax::ExprKind::Call(name, args) => {
             if let Some(fun) = functions
                 .iter()
@@ -500,7 +518,7 @@ fn analyze_let_pattern<'pcx: 'tcx, 'tcx>(
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match pat.kind() {
-        PatternKind::Variable(_)
+        PatternKind::Var(_)
         | PatternKind::Wildcard
         | PatternKind::Integer(_)
         | PatternKind::Boolean(_)
@@ -594,7 +612,7 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
                 }
             }
         }
-        PatternKind::Variable(name) => {
+        PatternKind::Var(name) => {
             if vars.get(name).is_some() {
                 errors.push(SemanticError::AlreadyBoundInPattern { name: name.clone() });
                 return;
@@ -639,6 +657,6 @@ fn pattern_to_type<'pcx: 'tcx, 'tcx>(
 
             tcx.struct_ty(struct_pat.name(), field_types)
         }
-        PatternKind::Variable(_) | PatternKind::Wildcard => tcx.undetermined(),
+        PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }
 }

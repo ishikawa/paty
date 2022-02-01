@@ -14,8 +14,8 @@ pub enum ParseError<'t> {
     NotParsed,
     #[error("expected {expected}, but was {actual}")]
     UnexpectedToken { expected: String, actual: &'t Token },
-    #[error("expected pattern, but was expr")]
-    UnrecognizedPattern,
+    #[error("expected pattern, but was expr: {src}")]
+    UnrecognizedPattern { src: String },
     #[error("premature end of file")]
     PrematureEnd,
 }
@@ -130,6 +130,8 @@ pub enum ExprKind<'pcx, 'tcx> {
 
     // tuple.0, tuple.1, ...
     IndexAccess(&'pcx Expr<'pcx, 'tcx>, usize),
+    // struct.a, struct.b, ...
+    FieldAccess(&'pcx Expr<'pcx, 'tcx>, String),
     Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
     Let {
         pattern: &'pcx Pattern<'pcx, 'tcx>,
@@ -439,7 +441,7 @@ pub enum PatternKind<'pcx, 'tcx> {
     Range { lo: i64, hi: i64, end: RangeEnd },
     Tuple(Vec<&'pcx Pattern<'pcx, 'tcx>>),
     Struct(StructPattern<'pcx, 'tcx>),
-    Variable(String),
+    Var(String),
     Wildcard,
 }
 
@@ -476,7 +478,7 @@ impl fmt::Display for PatternKind<'_, '_> {
                 write!(f, ")")
             }
             PatternKind::Struct(struct_pat) => struct_pat.fmt(f),
-            PatternKind::Variable(name) => write!(f, "{}", name),
+            PatternKind::Var(name) => write!(f, "{}", name),
             PatternKind::Wildcard => write!(f, "_"),
         }
     }
@@ -774,9 +776,15 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             return Err(ParseError::NotParsed);
         };
 
-        self.expect_token(it, TokenKind::Operator(':'))?;
-
-        let value = self.expr(it)?;
+        // If a field value is omitted, it will be interpreted as an omitted variable
+        // binding with the same name of the field.
+        let value = if self.match_token(it, TokenKind::Operator(':')) {
+            it.next();
+            self.expr(it)?
+        } else {
+            let kind = ExprKind::Var(name.to_string());
+            self.expr_arena.alloc(Expr::new(kind))
+        };
 
         let mut field = ValueField::new(&name, value);
         field.data_mut().append_comments_from_token(name_token);
@@ -804,7 +812,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             it.next();
             self.pattern(it)?
         } else {
-            let kind = PatternKind::Variable(name.to_string());
+            let kind = PatternKind::Var(name.to_string());
             self.pat_arena.alloc(Pattern::new(kind))
         };
 
@@ -1020,6 +1028,17 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
                 PatternKind::Tuple(ps)
             }
+            ExprKind::Struct(struct_value) => {
+                let mut fields = vec![];
+
+                for field in struct_value.fields() {
+                    let field_pat = self.expr_to_pattern(field.value())?;
+                    fields.push(PatternField::new(field.name(), field_pat));
+                }
+
+                let struct_pat = StructPattern::new(struct_value.name(), fields);
+                PatternKind::Struct(struct_pat)
+            }
             ExprKind::Minus(_)
             | ExprKind::Add(_, _)
             | ExprKind::Sub(_, _)
@@ -1034,13 +1053,17 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             | ExprKind::And(_, _)
             | ExprKind::Or(_, _)
             | ExprKind::IndexAccess(_, _)
+            | ExprKind::FieldAccess(_, _)
             | ExprKind::Call(_, _)
             | ExprKind::Let { .. }
             | ExprKind::Fn(_)
             | ExprKind::StructDef(_)
             | ExprKind::Case { .. }
-            | ExprKind::Puts(_)
-            | ExprKind::Struct(_) => return Err(ParseError::UnrecognizedPattern),
+            | ExprKind::Puts(_) => {
+                return Err(ParseError::UnrecognizedPattern {
+                    src: format!("{:?}", expr),
+                })
+            }
         };
 
         Ok(self.pat_arena.alloc(Pattern::new(kind)))
@@ -1050,7 +1073,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         if name == "_" {
             PatternKind::Wildcard
         } else {
-            PatternKind::Variable(name.to_string())
+            PatternKind::Var(name.to_string())
         }
     }
 
@@ -1223,6 +1246,9 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 it.next();
                 let index = n.parse().unwrap();
                 lhs = self.alloc_expr(ExprKind::IndexAccess(lhs, index), token);
+            } else if let TokenKind::Identifier(name) = t.kind() {
+                it.next();
+                lhs = self.alloc_expr(ExprKind::FieldAccess(lhs, name.to_string()), token);
             } else {
                 return Err(ParseError::UnexpectedToken {
                     expected: "index".to_string(),

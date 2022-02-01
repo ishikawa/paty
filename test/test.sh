@@ -268,6 +268,17 @@ when D { bar: false }
 when D { foo: foo, baz }
   puts(baz, foo)
 end'
+assert 'Year 2022' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: true, foo: 2022, baz: "Year" }
+D { bar: _ } = d
+D { foo } = d
+D { baz } = d
+puts(baz, foo)'
+assert 'Year 2022' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: true, foo: 2022, baz: "Year" }
+puts(d.baz, d.foo)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
