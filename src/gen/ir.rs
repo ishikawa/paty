@@ -17,9 +17,35 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
     }
 
     pub fn add_decl_type(&mut self, ty: &'tcx Type<'tcx>) {
-        if !self.decl_types.contains(&ty) {
-            self.decl_types.push(ty);
+        if self.decl_types.contains(&ty) {
+            return;
         }
+
+        // To follow forward declaration rule, add field types first.
+        match ty {
+            Type::Tuple(fs) => {
+                for fty in fs.iter() {
+                    self.add_decl_type(fty);
+                }
+            }
+            Type::Struct(struct_ty) => {
+                for (_, fty) in struct_ty.fields() {
+                    self.add_decl_type(fty);
+                }
+            }
+            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
+                // no declaration
+                return;
+            }
+            Type::Named(named_ty) => {
+                // no declaration
+                self.add_decl_type(named_ty.expect_ty());
+                return;
+            }
+            Type::Undetermined => unreachable!("untyped code"),
+        };
+
+        self.decl_types.push(ty);
     }
 
     pub fn decl_types(&self) -> impl Iterator<Item = &Type<'tcx>> {
@@ -249,7 +275,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     }
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
-        self.ty
+        self.ty.bottom_ty()
     }
 }
 
@@ -282,9 +308,14 @@ pub enum ExprKind<'a, 'tcx> {
     Bool(bool),
     Str(String),
     Tuple(Vec<&'a Expr<'a, 'tcx>>),
-    TupleField {
+    StructValue(String, Vec<(String, &'a Expr<'a, 'tcx>)>),
+    IndexAccess {
         operand: &'a Expr<'a, 'tcx>,
         index: usize,
+    },
+    FieldAccess {
+        operand: &'a Expr<'a, 'tcx>,
+        name: String,
     },
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(Var<'tcx>),
@@ -442,6 +473,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             syntax::ExprKind::Tuple(sub_exprs) => {
                 // Add tuple type to declaration types, because we have to
                 // declare tuple type as a struct type in C.
+                // However, the Zero-sized struct should not have a definition.
                 let tuple_ty = expr.expect_ty();
                 program.add_decl_type(tuple_ty);
 
@@ -454,6 +486,17 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 let kind = ExprKind::Tuple(values);
                 self.push_expr_kind(kind, tuple_ty, stmts)
+            }
+            syntax::ExprKind::Struct(struct_value) => {
+                let mut fields = vec![];
+
+                for field in struct_value.fields() {
+                    let value = self._build(field.value(), program, stmts);
+                    fields.push((field.name().to_string(), inc_used(value)));
+                }
+
+                let kind = ExprKind::StructValue(struct_value.name().to_string(), fields);
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Minus(a) => {
                 let a = self._build(a, program, stmts);
@@ -549,11 +592,20 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Var(Var::new(name, expr.expect_ty()));
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
-            syntax::ExprKind::TupleField(operand, index) => {
+            syntax::ExprKind::IndexAccess(operand, index) => {
                 let operand = self._build(operand, program, stmts);
-                let kind = ExprKind::TupleField {
+                let kind = ExprKind::IndexAccess {
                     operand: inc_used(operand),
                     index: *index,
+                };
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::FieldAccess(operand, name) => {
+                let operand = self._build(operand, program, stmts);
+                let kind = ExprKind::FieldAccess {
+                    operand: inc_used(operand),
+                    name: name.to_string(),
                 };
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
@@ -596,8 +648,8 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             syntax::ExprKind::Let { pattern, rhs, then } => {
                 let init = self._build(rhs, program, stmts);
-
                 self._build_let_pattern(pattern, init, stmts);
+
                 self._build(then, program, stmts)
             }
             syntax::ExprKind::Fn(syntax_fun) => {
@@ -615,12 +667,12 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                     // Assign parameter names to be able to referenced later.
                     let param = match pat.kind() {
-                        PatternKind::Variable(name) => Parameter::Var(Var::new(name, ty)),
+                        PatternKind::Var(name) => Parameter::Var(Var::new(name, ty)),
                         PatternKind::Wildcard => {
                             // ignore pattern but we have to define a parameter.
                             Parameter::TmpVar(self.next_temp_var(ty))
                         }
-                        PatternKind::Tuple(_) => {
+                        PatternKind::Tuple(_) | PatternKind::Struct(_) => {
                             // Create a temporary parameter name to be able to referenced in the body.
                             // Simultaneously, we build deconstruct assignment expressions.
                             let t = self.next_temp_var(ty);
@@ -659,6 +711,10 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 // restore
                 self.tmp_var_index = saved_tmp_var_index;
                 self._build(syntax_fun.then(), program, stmts)
+            }
+            syntax::ExprKind::StructDef(struct_def) => {
+                program.add_decl_type(struct_def.ty());
+                self._build(struct_def.then(), program, stmts)
             }
             syntax::ExprKind::Case {
                 head,
@@ -723,7 +779,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) {
         match pattern.kind() {
-            PatternKind::Variable(name) => {
+            PatternKind::Var(name) => {
                 let stmt = Stmt::VarDef {
                     name: name.to_string(),
                     init: inc_used(init),
@@ -735,13 +791,26 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             PatternKind::Tuple(fs) => {
                 for (i, sub_pat) in fs.iter().enumerate() {
-                    let kind = ExprKind::TupleField {
+                    let kind = ExprKind::IndexAccess {
                         operand: inc_used(init),
                         index: i,
                     };
                     let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
 
                     self._build_let_pattern(sub_pat, field, stmts)
+                }
+            }
+            PatternKind::Struct(struct_pat) => {
+                for pat_field in struct_pat.fields() {
+                    let kind = ExprKind::FieldAccess {
+                        operand: inc_used(init),
+                        name: pat_field.name().to_string(),
+                    };
+                    let field = self
+                        .expr_arena
+                        .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+
+                    self._build_let_pattern(pat_field.pattern(), field, stmts)
                 }
             }
             PatternKind::Integer(_)
@@ -769,7 +838,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 specs.push(FormatSpec::Str("("));
                 while let Some((i, sub_ty)) = it.next() {
-                    let kind = ExprKind::TupleField {
+                    let kind = ExprKind::IndexAccess {
                         operand: inc_used(arg),
                         index: i,
                     };
@@ -783,6 +852,39 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 }
                 specs.push(FormatSpec::Str(")"));
             }
+            Type::Struct(struct_ty) => {
+                let mut it = struct_ty.fields().peekable();
+                let empty = it.peek().is_none();
+
+                specs.push(FormatSpec::Value(self.const_string(struct_ty.name())));
+                specs.push(FormatSpec::Str(" {"));
+                if !empty {
+                    specs.push(FormatSpec::Str(" "));
+                }
+
+                while let Some((name, fty)) = it.next() {
+                    specs.push(FormatSpec::Value(self.const_string(name)));
+                    specs.push(FormatSpec::Str(": "));
+
+                    let kind = ExprKind::FieldAccess {
+                        operand: inc_used(arg),
+                        name: name.to_string(),
+                    };
+
+                    let ir_expr = self.push_expr_kind(kind, fty, stmts);
+                    self._printf_format(ir_expr, program, stmts, specs);
+
+                    if it.peek().is_some() {
+                        specs.push(FormatSpec::Str(", "));
+                    }
+                }
+
+                if !empty {
+                    specs.push(FormatSpec::Str(" "));
+                }
+                specs.push(FormatSpec::Str("}"));
+            }
+            Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
     }
@@ -794,6 +896,11 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
+        // zero-sized type is always matched with a value.
+        if pat.expect_ty().is_zero_sized() {
+            return None;
+        }
+
         match pat.kind() {
             PatternKind::Integer(n) => {
                 let value = self.int64(*n);
@@ -848,10 +955,11 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             PatternKind::Tuple(sub_pats) => {
                 if sub_pats.is_empty() {
-                    // Empty tuple is always matched with an empty tuple.
-                    None
+                    unreachable!(
+                        "Empty tuple must be zero-sized type. It should be handled above."
+                    );
                 } else {
-                    let kind = ExprKind::TupleField {
+                    let kind = ExprKind::IndexAccess {
                         operand: inc_used(t_expr),
                         index: 0,
                     };
@@ -862,7 +970,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     let mut condition = self._build_pattern(operand, sub_pats[0], stmts);
 
                     for (i, pat) in sub_pats.iter().enumerate().skip(1) {
-                        let kind = ExprKind::TupleField {
+                        let kind = ExprKind::IndexAccess {
                             operand: inc_used(t_expr),
                             index: i,
                         };
@@ -884,7 +992,50 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     condition
                 }
             }
-            PatternKind::Variable(name) => {
+            PatternKind::Struct(struct_pat) => {
+                if struct_pat.fields().len() == 0 {
+                    unreachable!(
+                        "Empty struct must be zero-sized type. It should be handled above."
+                    );
+                } else {
+                    let first_field = struct_pat.fields().next().unwrap();
+                    let kind = ExprKind::FieldAccess {
+                        operand: inc_used(t_expr),
+                        name: first_field.name().to_string(),
+                    };
+                    let operand = self
+                        .expr_arena
+                        .alloc(Expr::new(kind, first_field.pattern().expect_ty()));
+
+                    let mut condition = self._build_pattern(operand, first_field.pattern(), stmts);
+
+                    for pat_field in struct_pat.fields().skip(1) {
+                        let kind = ExprKind::FieldAccess {
+                            operand: inc_used(t_expr),
+                            name: pat_field.name().to_string(),
+                        };
+                        let operand = self
+                            .expr_arena
+                            .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+                        let sub_condition =
+                            self._build_pattern(operand, pat_field.pattern(), stmts);
+
+                        if let Some(cond) = condition {
+                            if let Some(sub_cond) = sub_condition {
+                                let kind = ExprKind::And(cond, sub_cond);
+                                condition = Some(
+                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
+                                );
+                            }
+                        } else {
+                            condition = sub_condition;
+                        }
+                    }
+
+                    condition
+                }
+            }
+            PatternKind::Var(name) => {
                 stmts.push(Stmt::VarDef {
                     name: name.clone(),
                     init: inc_used(t_expr),
@@ -996,11 +1147,21 @@ impl<'a, 'tcx> Optimizer {
                     }
                 }
             }
+            ExprKind::Tuple(fs) => {
+                for value in fs {
+                    self.optimize_expr(value);
+                }
+            }
+            ExprKind::StructValue(_, fs) => {
+                for (_, value) in fs {
+                    self.optimize_expr(value);
+                }
+            }
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
-            | ExprKind::Tuple(_)
-            | ExprKind::TupleField { .. }
+            | ExprKind::IndexAccess { .. }
+            | ExprKind::FieldAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => {}
         }

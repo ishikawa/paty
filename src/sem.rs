@@ -5,7 +5,7 @@ use crate::{
     syntax,
     ty::{Type, TypeContext},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 mod error;
 mod usefulness;
@@ -88,8 +88,17 @@ pub fn analyze<'pcx: 'tcx, 'tcx>(
 ) -> Result<SemAST<'pcx, 'tcx>, Vec<SemanticError<'tcx>>> {
     let mut errors = vec![];
     let mut scope = Scope::new();
+    let mut named_types = HashMap::new();
 
-    analyze_expr(tcx, expr, &mut scope, &mut Vec::new(), &mut errors);
+    collect_types(tcx, expr, &mut named_types, &mut errors);
+    analyze_expr(
+        tcx,
+        expr,
+        &mut scope,
+        &mut Vec::new(),
+        &mut named_types,
+        &mut errors,
+    );
     if errors.is_empty() {
         Ok(SemAST::new(expr))
     } else {
@@ -136,11 +145,73 @@ fn check_type<'tcx>(
     }
 }
 
+fn resolve_type<'tcx>(
+    tcx: TypeContext<'tcx>,
+    ty: &'tcx Type<'tcx>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match ty {
+        Type::Tuple(fs) => {
+            for fty in fs {
+                resolve_type(tcx, fty, named_types, errors);
+            }
+        }
+        Type::Struct(struct_ty) => {
+            for (_, fty) in struct_ty.fields() {
+                resolve_type(tcx, fty, named_types, errors);
+            }
+        }
+        Type::Named(named_ty) => {
+            if named_ty.ty().is_none() {
+                if let Some(ty) = named_types.get(named_ty.name()) {
+                    named_ty.assign_ty(ty);
+                } else {
+                    errors.push(SemanticError::UndefinedNamedType {
+                        name: named_ty.name().to_string(),
+                    })
+                }
+            }
+        }
+        Type::Int64 | Type::Boolean | Type::String | Type::Undetermined | Type::NativeInt => {}
+    }
+}
+
+/// Collect named types before analyze program.
+fn collect_types<'pcx: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match expr.kind() {
+        syntax::ExprKind::Let { then, .. } => {
+            collect_types(tcx, then, named_types, errors);
+        }
+        syntax::ExprKind::Fn(syntax_fn) => {
+            collect_types(tcx, syntax_fn.then(), named_types, errors);
+        }
+        syntax::ExprKind::StructDef(struct_def) => {
+            if named_types.contains_key(struct_def.name()) {
+                errors.push(SemanticError::DuplicateNamedType {
+                    name: struct_def.name().to_string(),
+                });
+            } else {
+                named_types.insert(struct_def.name().to_string(), struct_def.ty());
+            }
+
+            collect_types(tcx, struct_def.then(), named_types, errors);
+        }
+        _ => {}
+    }
+}
+
 fn analyze_expr<'pcx: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     expr: &'pcx syntax::Expr<'pcx, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
     functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match expr.kind() {
@@ -157,14 +228,64 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             let mut value_types = vec![];
 
             for value in values {
-                analyze_expr(tcx, value, vars, functions, errors);
+                analyze_expr(tcx, value, vars, functions, named_types, errors);
                 value_types.push(value.ty().unwrap());
             }
 
             unify_expr_type(tcx.tuple(&value_types), expr, errors);
         }
+        syntax::ExprKind::Struct(struct_value) => {
+            // Assign named struct type to struct value
+            let ty = if let Some(ty) = named_types.get(struct_value.name()) {
+                ty
+            } else {
+                errors.push(SemanticError::UndefinedNamedType {
+                    name: struct_value.name().to_string(),
+                });
+                return;
+            };
+
+            let struct_ty = if let Type::Struct(struct_ty) = ty {
+                struct_ty
+            } else {
+                errors.push(SemanticError::MismatchedType {
+                    expected: tcx.named_struct(struct_value.name()),
+                    actual: ty,
+                });
+                return;
+            };
+
+            unify_expr_type(ty, expr, errors);
+
+            // Analyze fields
+            let mut defined_fields = HashSet::new();
+
+            for field in struct_value.fields() {
+                if defined_fields.contains(field.name()) {
+                    errors.push(SemanticError::DuplicateStructField {
+                        name: field.name().to_string(),
+                        struct_name: struct_value.name().to_string(),
+                    });
+                    continue;
+                }
+                defined_fields.insert(field.name());
+
+                let field_ty = if let Some((_, fty)) = struct_ty.get_field(field.name()) {
+                    fty
+                } else {
+                    errors.push(SemanticError::UndefinedStructField {
+                        name: field.name().to_string(),
+                        struct_name: struct_value.name().to_string(),
+                    });
+                    return;
+                };
+
+                analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
+                unify_expr_type(field_ty, field.value(), errors);
+            }
+        }
         syntax::ExprKind::Minus(a) => {
-            analyze_expr(tcx, a, vars, functions, errors);
+            analyze_expr(tcx, a, vars, functions, named_types, errors);
 
             unify_expr_type(tcx.int64(), a, errors);
             unify_expr_type(tcx.int64(), expr, errors);
@@ -173,8 +294,8 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
         | syntax::ExprKind::Sub(a, b)
         | syntax::ExprKind::Mul(a, b)
         | syntax::ExprKind::Div(a, b) => {
-            analyze_expr(tcx, a, vars, functions, errors);
-            analyze_expr(tcx, b, vars, functions, errors);
+            analyze_expr(tcx, a, vars, functions, named_types, errors);
+            analyze_expr(tcx, b, vars, functions, named_types, errors);
 
             unify_expr_type(tcx.int64(), a, errors);
             unify_expr_type(tcx.int64(), b, errors);
@@ -186,16 +307,16 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
         | syntax::ExprKind::Ge(a, b)
         | syntax::ExprKind::Eq(a, b)
         | syntax::ExprKind::Ne(a, b) => {
-            analyze_expr(tcx, a, vars, functions, errors);
-            analyze_expr(tcx, b, vars, functions, errors);
+            analyze_expr(tcx, a, vars, functions, named_types, errors);
+            analyze_expr(tcx, b, vars, functions, named_types, errors);
 
             unify_expr_type(tcx.int64(), a, errors);
             unify_expr_type(tcx.int64(), b, errors);
             unify_expr_type(tcx.boolean(), expr, errors);
         }
         syntax::ExprKind::And(a, b) | syntax::ExprKind::Or(a, b) => {
-            analyze_expr(tcx, a, vars, functions, errors);
-            analyze_expr(tcx, b, vars, functions, errors);
+            analyze_expr(tcx, a, vars, functions, named_types, errors);
+            analyze_expr(tcx, b, vars, functions, named_types, errors);
 
             unify_expr_type(tcx.boolean(), a, errors);
             unify_expr_type(tcx.boolean(), b, errors);
@@ -208,11 +329,11 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
         }
-        syntax::ExprKind::TupleField(operand, index) => {
-            analyze_expr(tcx, operand, vars, functions, errors);
+        syntax::ExprKind::IndexAccess(operand, index) => {
+            analyze_expr(tcx, operand, vars, functions, named_types, errors);
 
             // index boundary check
-            let ty = operand.ty().unwrap();
+            let ty = operand.expect_ty();
             if let Type::Tuple(fs) = ty {
                 if *index < fs.len() {
                     // apply type
@@ -223,6 +344,24 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
 
             errors.push(SemanticError::FieldNotFound {
                 name: index.to_string(),
+                ty,
+            });
+        }
+        syntax::ExprKind::FieldAccess(operand, name) => {
+            analyze_expr(tcx, operand, vars, functions, named_types, errors);
+
+            // index boundary check
+            let ty = operand.expect_ty();
+            if let Type::Struct(struct_ty) = ty {
+                if let Some((_, fty)) = struct_ty.get_field(name) {
+                    // apply type
+                    unify_expr_type(fty, expr, errors);
+                    return;
+                }
+            }
+
+            errors.push(SemanticError::FieldNotFound {
+                name: name.to_string(),
                 ty,
             });
         }
@@ -243,7 +382,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                     });
                 } else {
                     for (i, arg) in args.iter().enumerate() {
-                        analyze_expr(tcx, arg, vars, functions, errors);
+                        analyze_expr(tcx, arg, vars, functions, named_types, errors);
                         unify_expr_type(params[i].ty(), arg, errors);
                     }
                 }
@@ -259,14 +398,22 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
         }
         syntax::ExprKind::Puts(args) => {
             for arg in args {
-                analyze_expr(tcx, arg, vars, functions, errors);
+                analyze_expr(tcx, arg, vars, functions, named_types, errors);
             }
             unify_expr_type(tcx.int64(), expr, errors);
         }
         syntax::ExprKind::Let { pattern, rhs, then } => {
-            analyze_expr(tcx, rhs, vars, functions, errors);
-            analyze_let_pattern(tcx, pattern, rhs.expect_ty(), vars, functions, errors);
-            analyze_expr(tcx, then, vars, functions, errors);
+            analyze_expr(tcx, rhs, vars, functions, named_types, errors);
+            analyze_let_pattern(
+                tcx,
+                pattern,
+                rhs.expect_ty(),
+                vars,
+                functions,
+                named_types,
+                errors,
+            );
+            analyze_expr(tcx, then, vars, functions, named_types, errors);
         }
         syntax::ExprKind::Fn(fun) => {
             // Function definition creates a new scope without a parent scope.
@@ -275,29 +422,35 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
             functions.push(fun);
             {
                 for param in fun.params() {
+                    resolve_type(tcx, param.ty(), named_types, errors);
                     analyze_let_pattern(
                         tcx,
                         param.pattern(),
                         param.ty(),
                         &mut scope,
                         functions,
+                        named_types,
                         errors,
                     );
                 }
 
                 let body = fun.body();
 
-                analyze_expr(tcx, body, &mut scope, functions, errors);
-                analyze_expr(tcx, fun.then(), vars, functions, errors);
+                analyze_expr(tcx, body, &mut scope, functions, named_types, errors);
+                analyze_expr(tcx, fun.then(), vars, functions, named_types, errors);
             }
             functions.pop();
+        }
+        syntax::ExprKind::StructDef(struct_def) => {
+            resolve_type(tcx, struct_def.ty(), named_types, errors);
+            analyze_expr(tcx, struct_def.then(), vars, functions, named_types, errors);
         }
         syntax::ExprKind::Case {
             head,
             arms,
             else_body,
         } => {
-            analyze_expr(tcx, head, vars, functions, errors);
+            analyze_expr(tcx, head, vars, functions, named_types, errors);
 
             let head_ty = head
                 .ty()
@@ -311,8 +464,16 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 //if !unify_pat_type(dbg!(head_ty), arm.pattern(), errors) {
                 //    return;
                 //}
-                analyze_pattern(tcx, arm.pattern(), head_ty, &mut scope, functions, errors);
-                analyze_expr(tcx, arm.body(), &mut scope, functions, errors);
+                analyze_pattern(
+                    tcx,
+                    arm.pattern(),
+                    head_ty,
+                    &mut scope,
+                    functions,
+                    named_types,
+                    errors,
+                );
+                analyze_expr(tcx, arm.body(), &mut scope, functions, named_types, errors);
 
                 if let Some(expected) = expr_ty {
                     unify_expr_type(expected, arm.body(), errors);
@@ -323,7 +484,7 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
 
             if let Some(else_body) = else_body {
                 let mut scope = Scope::from_parent(vars);
-                analyze_expr(tcx, else_body, &mut scope, functions, errors);
+                analyze_expr(tcx, else_body, &mut scope, functions, named_types, errors);
 
                 if let Some(expected) = expr_ty {
                     unify_expr_type(expected, else_body, errors);
@@ -353,21 +514,23 @@ fn analyze_let_pattern<'pcx: 'tcx, 'tcx>(
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
     functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match pat.kind() {
-        PatternKind::Variable(_)
+        PatternKind::Var(_)
         | PatternKind::Wildcard
         | PatternKind::Integer(_)
         | PatternKind::Boolean(_)
         | PatternKind::String(_)
-        | PatternKind::Tuple(_) => {}
+        | PatternKind::Tuple(_)
+        | PatternKind::Struct(_) => {}
         PatternKind::Range { .. } => {
             unreachable!("Unsupported let pattern: `{}`", pat.kind());
         }
     }
 
-    analyze_pattern(tcx, pat, expected_ty, vars, functions, errors);
+    analyze_pattern(tcx, pat, expected_ty, vars, functions, named_types, errors);
 }
 
 fn analyze_pattern<'pcx: 'tcx, 'tcx>(
@@ -376,6 +539,7 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
     functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     // Infer the type of pattern from its values.
@@ -411,12 +575,44 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
             };
 
             for (sub_pat, sub_ty) in patterns.iter().zip(sub_types.iter()) {
-                analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, errors);
+                analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, named_types, errors);
             }
 
             unify_pat_type(tcx.tuple(sub_types), pat, errors);
         }
-        PatternKind::Variable(name) => {
+        PatternKind::Struct(struct_pat) => {
+            let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
+                struct_ty
+            } else {
+                errors.push(SemanticError::MismatchedType {
+                    expected: expected_ty,
+                    actual: pattern_to_type(tcx, pat),
+                });
+                return;
+            };
+
+            if unify_pat_type(expected_ty, pat, errors) {
+                for field in struct_pat.fields() {
+                    if let Some((_, fty)) = struct_ty.get_field(field.name()) {
+                        analyze_pattern(
+                            tcx,
+                            field.pattern(),
+                            fty,
+                            vars,
+                            functions,
+                            named_types,
+                            errors,
+                        );
+                    } else {
+                        errors.push(SemanticError::UndefinedStructField {
+                            name: field.name().to_string(),
+                            struct_name: struct_ty.name().to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        PatternKind::Var(name) => {
             if vars.get(name).is_some() {
                 errors.push(SemanticError::AlreadyBoundInPattern { name: name.clone() });
                 return;
@@ -453,6 +649,14 @@ fn pattern_to_type<'pcx: 'tcx, 'tcx>(
 
             tcx.tuple(&sub_types)
         }
-        PatternKind::Variable(_) | PatternKind::Wildcard => tcx.undetermined(),
+        PatternKind::Struct(struct_pat) => {
+            let field_types: Vec<_> = struct_pat
+                .fields()
+                .map(|f| (f.name().to_string(), pattern_to_type(tcx, f.pattern())))
+                .collect();
+
+            tcx.struct_ty(struct_pat.name(), field_types)
+        }
+        PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }
 }

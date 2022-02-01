@@ -218,6 +218,81 @@ when ("hello", true, 0..=15)
 else
   puts(3)
 end'
+# zero-sized struct/tuple
+assert "()" "
+a = ()
+puts(a)"
+assert "A {}" "
+struct A {}
+a = A {}
+puts(a)"
+assert '((), E {})' '
+struct E {}
+def foo(t: (), s: E)
+  (t, s)
+end
+puts(foo((), E {}))'
+assert 'WeAreZst { one: Zst {}, two: Zst {} }
+(Zst {})' '
+struct Zst {}
+struct WeAreZst {
+  one: Zst,
+  two: Zst,
+}
+def printZst()
+  puts(WeAreZst { one: Zst {}, two: Zst {} })
+end
+_ = printZst()
+puts((Zst {},))'
+# struct
+assert "C { b: B { a: 50 }, c: (A {}, B { a: 60 }) }" '
+struct A {}
+struct B { a: int64 }
+struct C { b: B, c: (A, B), }
+c = C { b: B { a: 50 }, c: (A {}, B { a: 60 })}
+puts(c)'
+assert "C { b: B { a: 88 }, c: (A {}, B { a: 99 }) }" '
+struct C { b: B, c: (A, B), }
+struct B { a: int64 }
+struct A {}
+a = A {}
+b = B { a: 88 }
+c = C { b: b, c: (A {}, B { a: 33*3 })}
+puts(c)'
+assert 'Year 2022' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: true, foo: 2022, baz: "Year" }
+D { bar: x, foo: y, baz: z} = d
+case D { bar: x, foo: y, baz: z}
+when D { bar: false }
+  puts(false)
+when D { foo: foo, baz }
+  puts(baz, foo)
+end'
+assert 'Year 2022' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: true, foo: 2022, baz: "Year" }
+D { bar: _ } = d
+D { foo } = d
+D { baz } = d
+puts(baz, foo)'
+assert 'Year 2022' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: true, foo: 2022, baz: "Year" }
+puts(d.baz, d.foo)'
+assert '3' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: false, foo: 1000, baz: "Hello" }
+case d
+when D { bar: true }
+  puts(1)
+when D { foo: 999 }
+  puts(2)
+when D { baz: "Hello" }
+  puts(3)
+else
+  puts(4)
+end'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

@@ -89,6 +89,7 @@ pub enum TokenKind {
     Operator(char), // 1 char
     // Keywords
     Def,
+    Struct,
     Case,
     When,
     Else,
@@ -118,6 +119,7 @@ impl fmt::Display for TokenKind {
             Self::And => write!(f, "&&"),
             Self::Or => write!(f, "||"),
             Self::Def => write!(f, "def"),
+            Self::Struct => write!(f, "struct"),
             Self::Case => write!(f, "case"),
             Self::When => write!(f, "when"),
             Self::Else => write!(f, "else"),
@@ -144,7 +146,7 @@ fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .map(|s| TokenKind::Integer(format!("-{}", s)));
     let integer = pos_integer.or(neg_integer);
 
-    let operator1 = one_of("+-*/=(),<>:.").map(TokenKind::Operator);
+    let operator1 = one_of("+-*/=(){},<>:.").map(TokenKind::Operator);
     let operator2 = choice((
         just("..=").to(TokenKind::RangeIncluded),
         just("..<").to(TokenKind::RangeExcluded),
@@ -158,6 +160,7 @@ fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
 
     let identifier = choice((
         text::keyword("def").to(TokenKind::Def),
+        text::keyword("struct").to(TokenKind::Struct),
         text::keyword("case").to(TokenKind::Case),
         text::keyword("when").to(TokenKind::When),
         text::keyword("else").to(TokenKind::Else),

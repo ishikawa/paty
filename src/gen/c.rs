@@ -1,6 +1,4 @@
 //! C code generator
-use std::collections::HashSet;
-
 use super::ir::{Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar};
 use crate::ty::Type;
 
@@ -18,6 +16,7 @@ impl<'a, 'tcx> Emitter {
         Self {}
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub fn emit(&mut self, program: &'a Program<'a, 'tcx>) -> String {
         let mut code = [
             "#include <stdio.h>",
@@ -30,10 +29,8 @@ impl<'a, 'tcx> Emitter {
         .join("\n");
 
         // Emit declaration types
-        let mut emitted_types = HashSet::new();
-
         for ty in program.decl_types() {
-            self.emit_decl_type(ty, &mut emitted_types, &mut code);
+            self.emit_decl_type(ty, &mut code);
         }
 
         for fun in program.functions() {
@@ -44,49 +41,58 @@ impl<'a, 'tcx> Emitter {
         code
     }
 
-    fn emit_decl_type<'t>(
-        &mut self,
-        ty: &'t Type<'tcx>,
-        emitted_types: &mut HashSet<&'t Type<'tcx>>,
-        code: &mut String,
-    ) {
-        if emitted_types.contains(ty) {
+    #[allow(clippy::mutable_key_type)]
+    fn emit_decl_type<'t>(&mut self, ty: &'t Type<'tcx>, code: &mut String) {
+        // Zero-size data should not has declaration.
+        if ty.is_zero_sized() {
             return;
         }
 
+        // Emit C struct.
+        // Note that C structure have to contain at least one member.
         match ty {
             Type::Tuple(fs) => {
-                // Emit field types first for forward declaration.
-                for fty in fs.iter() {
-                    self.emit_decl_type(fty, emitted_types, code);
-                }
-
-                // Emit C struct
                 code.push_str(&c_type(ty));
                 code.push_str(" {\n");
+
                 for (i, fty) in fs.iter().enumerate() {
-                    code.push_str(&c_type(fty));
-                    code.push(' ');
-                    code.push_str(&format!("_{};\n", i));
+                    if !fty.is_zero_sized() {
+                        code.push_str(&c_type(fty));
+                        code.push(' ');
+                        code.push_str(&format!("_{};\n", i));
+                    }
                 }
-                code.push_str("};");
+
+                code.push_str("};\n\n");
+            }
+            Type::Struct(struct_ty) => {
+                code.push_str(&c_type(ty));
+                code.push_str(" {\n");
+                for (name, fty) in struct_ty.fields() {
+                    if !fty.is_zero_sized() {
+                        code.push_str(&c_type(fty));
+                        code.push(' ');
+                        code.push_str(&format!("{};\n", name));
+                    }
+                }
+                code.push_str("};\n\n");
             }
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
                 // no emit
-                return;
+            }
+            Type::Named(named_ty) => {
+                unreachable!("untyped code for named type `{}`", named_ty.name())
             }
             Type::Undetermined => unreachable!("untyped code"),
         };
-
-        code.push('\n');
-        code.push('\n');
-        emitted_types.insert(ty);
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
         if fun.is_entry_point {
             // 'main' must return 'int'
             code.push_str(&c_type(&Type::NativeInt));
+        } else if fun.retty.is_zero_sized() {
+            code.push_str("void");
         } else {
             code.push_str(&c_type(fun.retty));
         }
@@ -95,6 +101,10 @@ impl<'a, 'tcx> Emitter {
         code.push_str(&fun.name);
         code.push('(');
         for (i, param) in fun.params.iter().enumerate() {
+            if param.ty().is_zero_sized() {
+                continue;
+            }
+
             code.push_str(&c_type(param.ty()));
             code.push(' ');
             match param {
@@ -128,7 +138,7 @@ impl<'a, 'tcx> Emitter {
     fn emit_stmt(&mut self, stmt: &Stmt<'a, 'tcx>, code: &mut String) {
         match stmt {
             Stmt::TmpVarDef { var, init, pruned } => {
-                if !pruned.get() {
+                if !pruned.get() && !init.ty().is_zero_sized() {
                     // If a temporary variable is not referenced from anywhere,
                     // we don't emit an assignment statement.
                     if var.used.get() > 0 {
@@ -146,16 +156,21 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             Stmt::VarDef { name, init } => {
-                code.push_str(&c_type(init.ty()));
-                code.push(' ');
-                code.push_str(name);
-                code.push_str(" = ");
-                self.emit_expr(init, code);
-                code.push_str(";\n");
+                if !init.ty().is_zero_sized() {
+                    code.push_str(&c_type(init.ty()));
+                    code.push(' ');
+                    code.push_str(name);
+                    code.push_str(" = ");
+                    self.emit_expr(init, code);
+                    code.push_str(";\n");
+                }
             }
             Stmt::Ret(expr) => {
-                code.push_str("return ");
-                self.emit_expr(expr, code);
+                code.push_str("return");
+                if !expr.ty().is_zero_sized() {
+                    code.push(' ');
+                    self.emit_expr(expr, code);
+                }
                 code.push_str(";\n");
             }
             Stmt::Phi { var, value, pruned } => {
@@ -329,17 +344,21 @@ impl<'a, 'tcx> Emitter {
                                 Type::NativeInt => {
                                     code.push_str("%d");
                                 }
-                                Type::Tuple(_) => {
+                                Type::Tuple(_) | Type::Struct(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
+                                }
+                                Type::Named(name) => {
+                                    unreachable!("untyped for the type named: {}", name)
                                 }
                                 Type::Undetermined => unreachable!("untyped code"),
                             }
                         }
                     }
                 }
-                code.push_str("\", ");
+                code.push('"');
 
                 // arguments
+                let mut is_first_arg = true;
                 let mut it = specs
                     .iter()
                     .filter(|spec| matches!(spec, FormatSpec::Value(_)))
@@ -347,6 +366,11 @@ impl<'a, 'tcx> Emitter {
 
                 while let Some(spec) = it.next() {
                     if let FormatSpec::Value(value) = spec {
+                        if is_first_arg {
+                            code.push_str(", ");
+                            is_first_arg = false;
+                        }
+
                         match value.ty() {
                             Type::Int64 | Type::String | Type::NativeInt => {
                                 self.emit_expr(value, code);
@@ -358,8 +382,11 @@ impl<'a, 'tcx> Emitter {
                                 code.push_str(" ? \"true\" : \"false\"");
                                 code.push(')');
                             }
-                            Type::Tuple(_) => {
+                            Type::Tuple(_) | Type::Struct(_) => {
                                 unreachable!("compound value can't be printed: {:?}", value);
+                            }
+                            Type::Named(name) => {
+                                unreachable!("untyped for the type named: {}", name)
                             }
                             Type::Undetermined => unreachable!("untyped code"),
                         }
@@ -409,6 +436,10 @@ impl<'a, 'tcx> Emitter {
                 let mut peekable = values.iter().enumerate().peekable();
 
                 while let Some((i, value)) = peekable.next() {
+                    if value.ty().is_zero_sized() {
+                        continue;
+                    }
+
                     code.push_str(&format!("._{} = ", i));
                     self.emit_expr(value, code);
 
@@ -419,9 +450,39 @@ impl<'a, 'tcx> Emitter {
 
                 code.push('}');
             }
-            ExprKind::TupleField { operand, index } => {
+            ExprKind::StructValue(_, fs) => {
+                // Specify struct type explicitly.
+                code.push('(');
+                code.push_str(&c_type(expr.ty()));
+                code.push(')');
+
+                // Initialize tuple struct with designated initializers.
+                code.push('{');
+
+                let mut peekable = fs.iter().peekable();
+
+                while let Some((name, value)) = peekable.next() {
+                    if value.ty().is_zero_sized() {
+                        continue;
+                    }
+
+                    code.push_str(&format!(".{} = ", name));
+                    self.emit_expr(value, code);
+
+                    if peekable.peek().is_some() {
+                        code.push_str(", ");
+                    }
+                }
+
+                code.push('}');
+            }
+            ExprKind::IndexAccess { operand, index } => {
                 self.emit_expr(operand, code);
                 code.push_str(&format!("._{}", index));
+            }
+            ExprKind::FieldAccess { operand, name } => {
+                self.emit_expr(operand, code);
+                code.push_str(&format!(".{}", name));
             }
             ExprKind::TmpVar(t) => {
                 if let Some(expr) = t.immediate.get() {
@@ -452,26 +513,20 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Call { .. } => true,
             ExprKind::Printf(_) => true,
             ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| self.has_side_effect(sub_expr)),
+            ExprKind::StructValue(_, fs) => fs
+                .iter()
+                .any(|(_, sub_expr)| self.has_side_effect(sub_expr)),
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
-            | ExprKind::TupleField { .. }
+            | ExprKind::IndexAccess { .. }
+            | ExprKind::FieldAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => false,
         }
     }
 }
 
-/*
-fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
-    if let ExprKind::Value(Value::TmpVar(t)) = expr.kind() {
-        if let Some(expr) = t.immediate.get() {
-            return expr;
-        }
-    }
-    expr
-}
-*/
 fn tmp_var(t: &TmpVar) -> String {
     format!("t{}", t.index)
 }
@@ -482,11 +537,12 @@ fn c_type(ty: &Type) -> String {
         Type::Boolean => "bool".to_string(),
         Type::String => "const char *".to_string(),
         Type::NativeInt => "int".to_string(),
-        Type::Tuple(_) => {
+        Type::Tuple(_) | Type::Struct(_) => {
             let mut buffer = String::new();
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
         }
+        Type::Named(named_ty) => c_type(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
     }
 }
@@ -510,6 +566,14 @@ fn c_type(ty: &Type) -> String {
 /// +-----+---------------------------+----------+
 /// ```
 ///
+/// ## Struct type
+///
+/// ```ignore
+/// +-----+-------+
+/// | "S" | name  |
+/// +-----+-------+
+/// ```
+///
 /// ## Other types
 ///
 /// | Type           | Format |
@@ -530,6 +594,13 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
             for fty in fs {
                 encode_ty(fty, buffer);
             }
+        }
+        Type::Struct(struct_ty) => {
+            buffer.push('S');
+            buffer.push_str(struct_ty.name());
+        }
+        Type::Named(named_ty) => {
+            encode_ty(named_ty.expect_ty(), buffer);
         }
         Type::Undetermined => unreachable!("untyped code"),
     }
