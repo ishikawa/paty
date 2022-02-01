@@ -262,7 +262,8 @@ puts(c)'
 assert 'Year 2022' '
 struct D { foo: int64, bar: boolean, baz: string }
 d = D { bar: true, foo: 2022, baz: "Year" }
-case d
+D { bar: x, foo: y, baz: z} = d
+case D { bar: x, foo: y, baz: z}
 when D { bar: false }
   puts(false)
 when D { foo: foo, baz }
