@@ -799,11 +799,16 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             return Err(ParseError::NotParsed);
         };
 
-        self.expect_token(it, TokenKind::Operator(':'))?;
+        // Variable pattern in field value can be omitted.
+        let value_pat = if self.match_token(it, TokenKind::Operator(':')) {
+            it.next();
+            self.pattern(it)?
+        } else {
+            let kind = PatternKind::Variable(name.to_string());
+            self.pat_arena.alloc(Pattern::new(kind))
+        };
 
-        let pat = self.pattern(it)?;
-
-        let mut field = PatternField::new(&name, pat);
+        let mut field = PatternField::new(&name, value_pat);
         field.data_mut().append_comments_from_token(name_token);
 
         Ok(field)

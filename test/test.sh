@@ -265,7 +265,7 @@ d = D { bar: true, foo: 2022, baz: "Year" }
 case d
 when D { bar: false }
   puts(false)
-when D { foo: foo, baz: baz }
+when D { foo: foo, baz }
   puts(baz, foo)
 end'
 # examples
