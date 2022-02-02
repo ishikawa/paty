@@ -376,11 +376,17 @@ impl<'a, 'tcx> Emitter {
                                 self.emit_expr(value, code);
                             }
                             Type::Boolean => {
-                                // "true" / "false"
-                                code.push('(');
-                                self.emit_expr(value, code);
-                                code.push_str(" ? \"true\" : \"false\"");
-                                code.push(')');
+                                match immediate(value).kind() {
+                                    ExprKind::Bool(true) => code.push_str("\"true\""),
+                                    ExprKind::Bool(false) => code.push_str("\"false\""),
+                                    _ => {
+                                        // "true" / "false"
+                                        code.push('(');
+                                        self.emit_expr(value, code);
+                                        code.push_str(" ? \"true\" : \"false\"");
+                                        code.push(')');
+                                    }
+                                }
                             }
                             Type::Tuple(_) | Type::Struct(_) => {
                                 unreachable!("compound value can't be printed: {:?}", value);
@@ -525,6 +531,15 @@ impl<'a, 'tcx> Emitter {
             | ExprKind::Var(_) => false,
         }
     }
+}
+
+fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
+    if let ExprKind::TmpVar(t) = expr.kind() {
+        if let Some(expr) = t.immediate.get() {
+            return expr;
+        }
+    }
+    expr
 }
 
 fn tmp_var(t: &TmpVar) -> String {
