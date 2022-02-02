@@ -1,6 +1,6 @@
+use crate::syntax;
 use crate::syntax::PatternKind;
 use crate::ty::{Type, TypeContext};
-use crate::{sem, syntax};
 use std::cell::Cell;
 use std::fmt;
 use typed_arena::Arena;
@@ -338,7 +338,7 @@ pub struct Builder<'a, 'tcx> {
     tmp_var_index: usize,
 }
 
-impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
+impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     pub fn new(
         tcx: TypeContext<'tcx>,
         expr_arena: &'a Arena<Expr<'a, 'tcx>>,
@@ -352,12 +352,21 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    pub fn build(&mut self, ast: &sem::SemAST<'pcx, 'tcx>) -> Program<'a, 'tcx> {
+    pub fn build(&mut self, ast: &'nd [syntax::TopLevel<'nd, 'tcx>]) -> Program<'a, 'tcx> {
         let mut program = Program::new();
         let mut stmts = vec![];
 
         // Build top level statements and function definitions.
-        self._build(ast.expr(), &mut program, &mut stmts);
+        for top_level in ast {
+            match top_level {
+                syntax::TopLevel::Declaration(decl) => {
+                    self._build_decl(decl, &mut program, &mut stmts);
+                }
+                syntax::TopLevel::Stmt(stmt) => {
+                    self._build_stmt(stmt, &mut program, &mut stmts);
+                }
+            }
+        }
 
         // Add `return 0` statement for the entry point function if needed.
         if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
@@ -451,208 +460,14 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
         self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
-    fn _build(
+    fn _build_decl(
         &mut self,
-        expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+        decl: &syntax::Declaration<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-    ) -> &'a Expr<'a, 'tcx> {
-        match expr.kind() {
-            syntax::ExprKind::Integer(n) => {
-                let kind = ExprKind::Int64(*n);
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Boolean(b) => {
-                let kind = ExprKind::Bool(*b);
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::String(s) => {
-                let expr = self.const_string(s);
-                self.push_expr(expr, stmts)
-            }
-            syntax::ExprKind::Tuple(sub_exprs) => {
-                // Add tuple type to declaration types, because we have to
-                // declare tuple type as a struct type in C.
-                // However, the Zero-sized struct should not have a definition.
-                let tuple_ty = expr.expect_ty();
-                program.add_decl_type(tuple_ty);
-
-                let mut values = vec![];
-
-                for sub in sub_exprs {
-                    let value = self._build(sub, program, stmts);
-                    values.push(inc_used(value));
-                }
-
-                let kind = ExprKind::Tuple(values);
-                self.push_expr_kind(kind, tuple_ty, stmts)
-            }
-            syntax::ExprKind::Struct(struct_value) => {
-                let mut fields = vec![];
-
-                for field in struct_value.fields() {
-                    let value = self._build(field.value(), program, stmts);
-                    fields.push((field.name().to_string(), inc_used(value)));
-                }
-
-                let kind = ExprKind::StructValue(struct_value.name().to_string(), fields);
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Minus(a) => {
-                let a = self._build(a, program, stmts);
-                let kind = ExprKind::Minus(inc_used(a));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Add(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Add(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Sub(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Sub(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Mul(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Mul(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Div(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Div(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Eq(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Eq(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Ne(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Ne(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Lt(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Lt(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Gt(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Gt(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Le(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Le(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Ge(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Ge(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::And(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::And(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Or(a, b) => {
-                let a = self._build(a, program, stmts);
-                let b = self._build(b, program, stmts);
-                let kind = ExprKind::Or(inc_used(a), inc_used(b));
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Var(name) => {
-                let kind = ExprKind::Var(Var::new(name, expr.expect_ty()));
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::IndexAccess(operand, index) => {
-                let operand = self._build(operand, program, stmts);
-                let kind = ExprKind::IndexAccess {
-                    operand: inc_used(operand),
-                    index: *index,
-                };
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::FieldAccess(operand, name) => {
-                let operand = self._build(operand, program, stmts);
-                let kind = ExprKind::FieldAccess {
-                    operand: inc_used(operand),
-                    name: name.to_string(),
-                };
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Call(name, args) => {
-                let kind = ExprKind::Call {
-                    name: name.clone(),
-                    args: args
-                        .iter()
-                        .map(|a| {
-                            let a = self._build(a, program, stmts);
-                            inc_used(a)
-                        })
-                        .collect(),
-                };
-
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Puts(args) => {
-                // Generates `printf(...)` code for `puts(...)`.
-                let mut format_specs = vec![];
-
-                // Build format specifiers
-                let mut it = args.iter().peekable();
-
-                while let Some(arg) = it.next() {
-                    let a = self._build(arg, program, stmts);
-                    self._printf_format(a, program, stmts, &mut format_specs);
-
-                    // separated by a space
-                    if it.peek().is_some() {
-                        format_specs.push(FormatSpec::Str(" "));
-                    }
-                }
-                format_specs.push(FormatSpec::Str("\n"));
-
-                // Build arguments
-                let kind = ExprKind::Printf(format_specs);
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Let { pattern, rhs, then } => {
-                let init = self._build(rhs, program, stmts);
-                self._build_let_pattern(pattern, init, stmts);
-
-                self._build(then, program, stmts)
-            }
-            syntax::ExprKind::Fn(syntax_fun) => {
+        _stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) {
+        match decl.kind() {
+            syntax::DeclarationKind::Function(syntax_fun) => {
                 // save and reset temp var index
                 let saved_tmp_var_index = self.tmp_var_index;
                 self.tmp_var_index = 0;
@@ -694,10 +509,23 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     params.push(param);
                 }
 
-                let ret = self._build(syntax_fun.body(), program, &mut body_stmts);
-                body_stmts.push(Stmt::Ret(inc_used(ret)));
+                // return
+                let mut ret = None;
+                for stmt in syntax_fun.body() {
+                    ret = self._build_stmt(stmt, program, &mut body_stmts);
+                }
+                if let Some(ret) = ret {
+                    body_stmts.push(Stmt::Ret(inc_used(ret)));
+                }
 
-                let retty = syntax_fun.body().ty().unwrap();
+                // Return type of the function
+                let mut retty = self.tcx.unit();
+
+                if let Some(stmt) = syntax_fun.body().last() {
+                    if let syntax::StmtKind::Expr(e) = stmt.kind() {
+                        retty = e.expect_ty()
+                    }
+                }
 
                 let fun = Function {
                     name: syntax_fun.name().to_string(),
@@ -710,11 +538,227 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 // restore
                 self.tmp_var_index = saved_tmp_var_index;
-                self._build(syntax_fun.then(), program, stmts)
             }
-            syntax::ExprKind::StructDef(struct_def) => {
+            syntax::DeclarationKind::Struct(struct_def) => {
                 program.add_decl_type(struct_def.ty());
-                self._build(struct_def.then(), program, stmts)
+            }
+        }
+    }
+
+    fn _build_stmt(
+        &mut self,
+        stmt: &syntax::Stmt<'nd, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) -> Option<&'a Expr<'a, 'tcx>> {
+        match stmt.kind() {
+            syntax::StmtKind::Let { pattern, rhs } => {
+                let init = self._build_expr(rhs, program, stmts);
+                self._build_let_pattern(pattern, init, stmts);
+
+                None
+            }
+            syntax::StmtKind::Expr(expr) => {
+                let value = self._build_expr(expr, program, stmts);
+                Some(value)
+            }
+        }
+    }
+
+    fn _build_expr(
+        &mut self,
+        expr: &'nd syntax::Expr<'nd, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
+        match expr.kind() {
+            syntax::ExprKind::Integer(n) => {
+                let kind = ExprKind::Int64(*n);
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Boolean(b) => {
+                let kind = ExprKind::Bool(*b);
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::String(s) => {
+                let expr = self.const_string(s);
+                self.push_expr(expr, stmts)
+            }
+            syntax::ExprKind::Tuple(sub_exprs) => {
+                // Add tuple type to declaration types, because we have to
+                // declare tuple type as a struct type in C.
+                // However, the Zero-sized struct should not have a definition.
+                let tuple_ty = expr.expect_ty();
+                program.add_decl_type(tuple_ty);
+
+                let mut values = vec![];
+
+                for sub in sub_exprs {
+                    let value = self._build_expr(sub, program, stmts);
+                    values.push(inc_used(value));
+                }
+
+                let kind = ExprKind::Tuple(values);
+                self.push_expr_kind(kind, tuple_ty, stmts)
+            }
+            syntax::ExprKind::Struct(struct_value) => {
+                let mut fields = vec![];
+
+                for field in struct_value.fields() {
+                    let value = self._build_expr(field.value(), program, stmts);
+                    fields.push((field.name().to_string(), inc_used(value)));
+                }
+
+                let kind = ExprKind::StructValue(struct_value.name().to_string(), fields);
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Minus(a) => {
+                let a = self._build_expr(a, program, stmts);
+                let kind = ExprKind::Minus(inc_used(a));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Add(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Add(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Sub(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Sub(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Mul(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Mul(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Div(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Div(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Eq(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Eq(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Ne(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Ne(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Lt(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Lt(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Gt(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Gt(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Le(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Le(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Ge(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Ge(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::And(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::And(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Or(a, b) => {
+                let a = self._build_expr(a, program, stmts);
+                let b = self._build_expr(b, program, stmts);
+                let kind = ExprKind::Or(inc_used(a), inc_used(b));
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Var(name) => {
+                let kind = ExprKind::Var(Var::new(name, expr.expect_ty()));
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::IndexAccess(operand, index) => {
+                let operand = self._build_expr(operand, program, stmts);
+                let kind = ExprKind::IndexAccess {
+                    operand: inc_used(operand),
+                    index: *index,
+                };
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::FieldAccess(operand, name) => {
+                let operand = self._build_expr(operand, program, stmts);
+                let kind = ExprKind::FieldAccess {
+                    operand: inc_used(operand),
+                    name: name.to_string(),
+                };
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Call(name, args) => {
+                let kind = ExprKind::Call {
+                    name: name.clone(),
+                    args: args
+                        .iter()
+                        .map(|a| {
+                            let a = self._build_expr(a, program, stmts);
+                            inc_used(a)
+                        })
+                        .collect(),
+                };
+
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+            }
+            syntax::ExprKind::Puts(args) => {
+                // Generates `printf(...)` code for `puts(...)`.
+                let mut format_specs = vec![];
+
+                // Build format specifiers
+                let mut it = args.iter().peekable();
+
+                while let Some(arg) = it.next() {
+                    let a = self._build_expr(arg, program, stmts);
+                    self._printf_format(a, program, stmts, &mut format_specs);
+
+                    // separated by a space
+                    if it.peek().is_some() {
+                        format_specs.push(FormatSpec::Str(" "));
+                    }
+                }
+                format_specs.push(FormatSpec::Str("\n"));
+
+                // Build arguments
+                let kind = ExprKind::Printf(format_specs);
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Case {
                 head,
@@ -722,7 +766,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 else_body,
             } => {
                 let t = self.next_temp_var(expr.ty().unwrap());
-                let t_head = self._build(head, program, stmts);
+                let t_head = self._build_expr(head, program, stmts);
 
                 // Construct "if-else" statement from each branches.
                 let mut branches = arms
@@ -732,7 +776,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         let mut branch_stmts = vec![];
                         let condition =
                             self._build_pattern(t_head, arm.pattern(), &mut branch_stmts);
-                        let ret = self._build(arm.body(), program, &mut branch_stmts);
+                        let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
 
                         branch_stmts.push(Stmt::Phi {
                             var: t,
@@ -749,7 +793,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
-                    let ret = self._build(else_body, program, &mut branch_stmts);
+                    let ret = self._build_expr(else_body, program, &mut branch_stmts);
                     branch_stmts.push(Stmt::Phi {
                         var: t,
                         value: inc_used(ret),
@@ -774,7 +818,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
     fn _build_let_pattern(
         &mut self,
-        pattern: &'pcx syntax::Pattern<'pcx, 'tcx>,
+        pattern: &'nd syntax::Pattern<'nd, 'tcx>,
         init: &'a Expr<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) {
@@ -893,7 +937,7 @@ impl<'a, 'pcx: 'tcx, 'tcx> Builder<'a, 'tcx> {
     fn _build_pattern(
         &mut self,
         t_expr: &'a Expr<'a, 'tcx>,
-        pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+        pat: &'nd syntax::Pattern<'nd, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
         // zero-sized type is always matched with a value.

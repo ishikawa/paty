@@ -54,15 +54,94 @@ impl NodeData {
 }
 
 #[derive(Debug)]
-pub struct Expr<'pcx, 'tcx> {
-    kind: ExprKind<'pcx, 'tcx>,
+pub enum TopLevel<'nd, 'tcx> {
+    Declaration(Declaration<'nd, 'tcx>),
+    Stmt(Stmt<'nd, 'tcx>),
+}
+
+#[derive(Debug)]
+pub struct Declaration<'nd, 'tcx> {
+    kind: DeclarationKind<'nd, 'tcx>,
+    data: NodeData,
+}
+
+impl<'nd, 'tcx> Declaration<'nd, 'tcx> {
+    pub fn new(kind: DeclarationKind<'nd, 'tcx>) -> Self {
+        Self {
+            kind,
+            data: NodeData::new(),
+        }
+    }
+
+    pub fn kind(&self) -> &DeclarationKind<'nd, 'tcx> {
+        &self.kind
+    }
+}
+
+impl<'nd, 'tcx> Node for Declaration<'nd, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
+    }
+}
+
+#[derive(Debug)]
+pub enum DeclarationKind<'nd, 'tcx> {
+    Function(Function<'nd, 'tcx>),
+    Struct(StructDeclaration<'tcx>),
+}
+
+#[derive(Debug)]
+pub struct Stmt<'nd, 'tcx> {
+    kind: StmtKind<'nd, 'tcx>,
+    data: NodeData,
+}
+
+impl<'nd, 'tcx> Stmt<'nd, 'tcx> {
+    pub fn new(kind: StmtKind<'nd, 'tcx>) -> Self {
+        Self {
+            kind,
+            data: NodeData::new(),
+        }
+    }
+
+    pub fn kind(&self) -> &StmtKind<'nd, 'tcx> {
+        &self.kind
+    }
+}
+
+impl<'nd, 'tcx> Node for Stmt<'nd, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
+    }
+}
+
+#[derive(Debug)]
+pub enum StmtKind<'nd, 'tcx> {
+    Let {
+        pattern: &'nd Pattern<'nd, 'tcx>,
+        rhs: &'nd Expr<'nd, 'tcx>,
+    },
+    Expr(&'nd Expr<'nd, 'tcx>),
+}
+
+#[derive(Debug)]
+pub struct Expr<'nd, 'tcx> {
+    kind: ExprKind<'nd, 'tcx>,
     // The type of expression is determined in later phase.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
     data: NodeData,
 }
 
-impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
-    pub fn new(kind: ExprKind<'pcx, 'tcx>) -> Self {
+impl<'nd, 'tcx> Expr<'nd, 'tcx> {
+    pub fn new(kind: ExprKind<'nd, 'tcx>) -> Self {
         Self {
             kind,
             ty: Cell::new(None),
@@ -70,7 +149,7 @@ impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
         }
     }
 
-    pub fn kind(&self) -> &ExprKind<'pcx, 'tcx> {
+    pub fn kind(&self) -> &ExprKind<'nd, 'tcx> {
         &self.kind
     }
 
@@ -92,7 +171,7 @@ impl<'pcx, 'tcx> Expr<'pcx, 'tcx> {
     }
 }
 
-impl<'pcx, 'tcx> Node for Expr<'pcx, 'tcx> {
+impl<'nd, 'tcx> Node for Expr<'nd, 'tcx> {
     fn data(&self) -> &NodeData {
         &self.data
     }
@@ -103,89 +182,78 @@ impl<'pcx, 'tcx> Node for Expr<'pcx, 'tcx> {
 }
 
 #[derive(Debug)]
-pub enum ExprKind<'pcx, 'tcx> {
+pub enum ExprKind<'nd, 'tcx> {
     Integer(i64),
     Boolean(bool),
     String(String),
     Var(String),
-    Tuple(Vec<&'pcx Expr<'pcx, 'tcx>>),
-    Struct(StructValue<'pcx, 'tcx>),
+    Tuple(Vec<&'nd Expr<'nd, 'tcx>>),
+    Struct(StructValue<'nd, 'tcx>),
 
     // unary operators
-    Minus(&'pcx Expr<'pcx, 'tcx>),
+    Minus(&'nd Expr<'nd, 'tcx>),
 
     // binary operators
-    Add(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Sub(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Mul(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Div(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Eq(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Ne(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Le(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Ge(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Lt(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Gt(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    And(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
-    Or(&'pcx Expr<'pcx, 'tcx>, &'pcx Expr<'pcx, 'tcx>),
+    Add(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Sub(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Mul(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Div(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Eq(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Ne(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Le(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Ge(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Lt(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Gt(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    And(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
+    Or(&'nd Expr<'nd, 'tcx>, &'nd Expr<'nd, 'tcx>),
 
     // tuple.0, tuple.1, ...
-    IndexAccess(&'pcx Expr<'pcx, 'tcx>, usize),
+    IndexAccess(&'nd Expr<'nd, 'tcx>, usize),
     // struct.a, struct.b, ...
-    FieldAccess(&'pcx Expr<'pcx, 'tcx>, String),
-    Call(String, Vec<&'pcx Expr<'pcx, 'tcx>>),
-    Let {
-        pattern: &'pcx Pattern<'pcx, 'tcx>,
-        rhs: &'pcx Expr<'pcx, 'tcx>,
-        then: &'pcx Expr<'pcx, 'tcx>,
-    },
-    Fn(Function<'pcx, 'tcx>),
-    StructDef(StructDef<'pcx, 'tcx>),
+    FieldAccess(&'nd Expr<'nd, 'tcx>, String),
+
+    Call(String, Vec<&'nd Expr<'nd, 'tcx>>),
     Case {
-        head: &'pcx Expr<'pcx, 'tcx>,
-        arms: Vec<CaseArm<'pcx, 'tcx>>,
-        else_body: Option<&'pcx Expr<'pcx, 'tcx>>,
+        head: &'nd Expr<'nd, 'tcx>,
+        arms: Vec<CaseArm<'nd, 'tcx>>,
+        else_body: Option<&'nd Expr<'nd, 'tcx>>,
     },
 
     // Built-in functions
-    Puts(Vec<&'pcx Expr<'pcx, 'tcx>>),
+    Puts(Vec<&'nd Expr<'nd, 'tcx>>),
 }
 
 #[derive(Debug)]
-pub struct Function<'pcx, 'tcx> {
+pub struct Function<'nd, 'tcx> {
     name: String,
-    params: Vec<Parameter<'pcx, 'tcx>>,
-    body: &'pcx Expr<'pcx, 'tcx>,
-    then: &'pcx Expr<'pcx, 'tcx>,
+    params: Vec<Parameter<'nd, 'tcx>>,
+    body: Vec<Stmt<'nd, 'tcx>>,
 }
 
-impl<'pcx, 'tcx> Function<'pcx, 'tcx> {
+impl<'nd, 'tcx> Function<'nd, 'tcx> {
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn params(&self) -> &[Parameter<'pcx, 'tcx>] {
+    pub fn params(&self) -> &[Parameter<'nd, 'tcx>] {
         &self.params
     }
 
-    pub fn body(&self) -> &Expr<'pcx, 'tcx> {
-        self.body
-    }
-
-    pub fn then(&self) -> &Expr<'pcx, 'tcx> {
-        self.then
+    pub fn body(&self) -> &[Stmt<'nd, 'tcx>] {
+        &self.body
     }
 }
 
 /// Formal parameter for a function
 #[derive(Debug)]
-pub struct Parameter<'pcx, 'tcx> {
-    pattern: &'pcx Pattern<'pcx, 'tcx>,
+pub struct Parameter<'nd, 'tcx> {
+    pattern: &'nd Pattern<'nd, 'tcx>,
     ty: &'tcx Type<'tcx>,
     data: NodeData,
 }
 
-impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
-    pub fn new(pattern: &'pcx Pattern<'pcx, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
+impl<'nd, 'tcx> Parameter<'nd, 'tcx> {
+    pub fn new(pattern: &'nd Pattern<'nd, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             pattern,
             ty,
@@ -193,7 +261,7 @@ impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
         }
     }
 
-    pub fn pattern(&self) -> &'pcx Pattern<'pcx, 'tcx> {
+    pub fn pattern(&self) -> &'nd Pattern<'nd, 'tcx> {
         self.pattern
     }
 
@@ -202,7 +270,7 @@ impl<'pcx, 'tcx> Parameter<'pcx, 'tcx> {
     }
 }
 
-impl<'pcx, 'tcx> Node for Parameter<'pcx, 'tcx> {
+impl<'nd, 'tcx> Node for Parameter<'nd, 'tcx> {
     fn data(&self) -> &NodeData {
         &self.data
     }
@@ -213,25 +281,18 @@ impl<'pcx, 'tcx> Node for Parameter<'pcx, 'tcx> {
 }
 
 #[derive(Debug)]
-pub struct StructDef<'pcx, 'tcx> {
+pub struct StructDeclaration<'tcx> {
     name: String,
     fields: Vec<StructFieldDef<'tcx>>,
     ty: &'tcx Type<'tcx>,
-    then: &'pcx Expr<'pcx, 'tcx>,
 }
 
-impl<'pcx, 'tcx> StructDef<'pcx, 'tcx> {
-    pub fn new(
-        name: &str,
-        fields: Vec<StructFieldDef<'tcx>>,
-        ty: &'tcx Type<'tcx>,
-        then: &'pcx Expr<'pcx, 'tcx>,
-    ) -> Self {
+impl<'tcx> StructDeclaration<'tcx> {
+    pub fn new(name: &str, fields: Vec<StructFieldDef<'tcx>>, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             name: name.to_string(),
             fields,
             ty,
-            then,
         }
     }
 
@@ -249,10 +310,6 @@ impl<'pcx, 'tcx> StructDef<'pcx, 'tcx> {
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
-    }
-
-    pub fn then(&self) -> &Expr<'pcx, 'tcx> {
-        self.then
     }
 }
 
@@ -292,13 +349,13 @@ impl<'tcx> Node for StructFieldDef<'tcx> {
 }
 
 #[derive(Debug)]
-pub struct StructValue<'pcx, 'tcx> {
+pub struct StructValue<'nd, 'tcx> {
     name: String,
-    fields: Vec<ValueField<'pcx, 'tcx>>,
+    fields: Vec<ValueField<'nd, 'tcx>>,
 }
 
-impl<'pcx, 'tcx> StructValue<'pcx, 'tcx> {
-    pub fn new(name: &str, fields: Vec<ValueField<'pcx, 'tcx>>) -> Self {
+impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
+    pub fn new(name: &str, fields: Vec<ValueField<'nd, 'tcx>>) -> Self {
         Self {
             name: name.to_string(),
             fields,
@@ -309,20 +366,20 @@ impl<'pcx, 'tcx> StructValue<'pcx, 'tcx> {
         &self.name
     }
 
-    pub fn fields(&self) -> &[ValueField<'pcx, 'tcx>] {
+    pub fn fields(&self) -> &[ValueField<'nd, 'tcx>] {
         &self.fields
     }
 }
 
 #[derive(Debug)]
-pub struct ValueField<'pcx, 'tcx> {
+pub struct ValueField<'nd, 'tcx> {
     name: String,
-    value: &'pcx Expr<'pcx, 'tcx>,
+    value: &'nd Expr<'nd, 'tcx>,
     data: NodeData,
 }
 
-impl<'pcx, 'tcx> ValueField<'pcx, 'tcx> {
-    pub fn new(name: &str, value: &'pcx Expr<'pcx, 'tcx>) -> Self {
+impl<'nd, 'tcx> ValueField<'nd, 'tcx> {
+    pub fn new(name: &str, value: &'nd Expr<'nd, 'tcx>) -> Self {
         Self {
             name: name.to_string(),
             value,
@@ -334,12 +391,12 @@ impl<'pcx, 'tcx> ValueField<'pcx, 'tcx> {
         &self.name
     }
 
-    pub fn value(&self) -> &'pcx Expr<'pcx, 'tcx> {
+    pub fn value(&self) -> &'nd Expr<'nd, 'tcx> {
         self.value
     }
 }
 
-impl<'pcx, 'tcx> Node for ValueField<'pcx, 'tcx> {
+impl<'nd, 'tcx> Node for ValueField<'nd, 'tcx> {
     fn data(&self) -> &NodeData {
         &self.data
     }
@@ -350,14 +407,14 @@ impl<'pcx, 'tcx> Node for ValueField<'pcx, 'tcx> {
 }
 
 #[derive(Debug)]
-pub struct CaseArm<'pcx, 'tcx> {
-    pattern: &'pcx Pattern<'pcx, 'tcx>,
-    body: &'pcx Expr<'pcx, 'tcx>,
+pub struct CaseArm<'nd, 'tcx> {
+    pattern: &'nd Pattern<'nd, 'tcx>,
+    body: &'nd Expr<'nd, 'tcx>,
     data: NodeData,
 }
 
-impl<'pcx, 'tcx> CaseArm<'pcx, 'tcx> {
-    pub fn new(pattern: &'pcx Pattern<'pcx, 'tcx>, body: &'pcx Expr<'pcx, 'tcx>) -> Self {
+impl<'nd, 'tcx> CaseArm<'nd, 'tcx> {
+    pub fn new(pattern: &'nd Pattern<'nd, 'tcx>, body: &'nd Expr<'nd, 'tcx>) -> Self {
         Self {
             pattern,
             body,
@@ -365,16 +422,16 @@ impl<'pcx, 'tcx> CaseArm<'pcx, 'tcx> {
         }
     }
 
-    pub fn pattern(&self) -> &'pcx Pattern<'pcx, 'tcx> {
+    pub fn pattern(&self) -> &'nd Pattern<'nd, 'tcx> {
         self.pattern
     }
 
-    pub fn body(&self) -> &'pcx Expr<'pcx, 'tcx> {
+    pub fn body(&self) -> &'nd Expr<'nd, 'tcx> {
         self.body
     }
 }
 
-impl<'pcx, 'tcx> Node for CaseArm<'pcx, 'tcx> {
+impl<'nd, 'tcx> Node for CaseArm<'nd, 'tcx> {
     fn data(&self) -> &NodeData {
         &self.data
     }
@@ -385,15 +442,15 @@ impl<'pcx, 'tcx> Node for CaseArm<'pcx, 'tcx> {
 }
 
 #[derive(Debug)]
-pub struct Pattern<'pcx, 'tcx> {
-    kind: PatternKind<'pcx, 'tcx>,
+pub struct Pattern<'nd, 'tcx> {
+    kind: PatternKind<'nd, 'tcx>,
     // The type of expression is determined in later phase.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
     data: NodeData,
 }
 
-impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
-    pub fn new(kind: PatternKind<'pcx, 'tcx>) -> Self {
+impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
+    pub fn new(kind: PatternKind<'nd, 'tcx>) -> Self {
         Self {
             kind,
             ty: Cell::new(None),
@@ -401,7 +458,7 @@ impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
         }
     }
 
-    pub fn kind(&self) -> &PatternKind<'pcx, 'tcx> {
+    pub fn kind(&self) -> &PatternKind<'nd, 'tcx> {
         &self.kind
     }
 
@@ -423,7 +480,7 @@ impl<'pcx, 'tcx> Pattern<'pcx, 'tcx> {
     }
 }
 
-impl<'pcx, 'tcx> Node for Pattern<'pcx, 'tcx> {
+impl<'nd, 'tcx> Node for Pattern<'nd, 'tcx> {
     fn data(&self) -> &NodeData {
         &self.data
     }
@@ -434,13 +491,13 @@ impl<'pcx, 'tcx> Node for Pattern<'pcx, 'tcx> {
 }
 
 #[derive(Debug)]
-pub enum PatternKind<'pcx, 'tcx> {
+pub enum PatternKind<'nd, 'tcx> {
     Integer(i64),
     Boolean(bool),
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
-    Tuple(Vec<&'pcx Pattern<'pcx, 'tcx>>),
-    Struct(StructPattern<'pcx, 'tcx>),
+    Tuple(Vec<&'nd Pattern<'nd, 'tcx>>),
+    Struct(StructPattern<'nd, 'tcx>),
     Var(String),
     Wildcard,
 }
@@ -485,13 +542,13 @@ impl fmt::Display for PatternKind<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct StructPattern<'pcx, 'tcx> {
+pub struct StructPattern<'nd, 'tcx> {
     name: String,
-    fields: Vec<PatternField<'pcx, 'tcx>>,
+    fields: Vec<PatternField<'nd, 'tcx>>,
 }
 
-impl<'pcx, 'tcx> StructPattern<'pcx, 'tcx> {
-    pub fn new(name: &str, fields: Vec<PatternField<'pcx, 'tcx>>) -> Self {
+impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
+    pub fn new(name: &str, fields: Vec<PatternField<'nd, 'tcx>>) -> Self {
         Self {
             name: name.to_string(),
             fields,
@@ -502,7 +559,7 @@ impl<'pcx, 'tcx> StructPattern<'pcx, 'tcx> {
         &self.name
     }
 
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternField<'pcx, 'tcx>> {
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternField<'nd, 'tcx>> {
         self.fields.iter()
     }
 }
@@ -532,14 +589,14 @@ impl fmt::Display for StructPattern<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct PatternField<'pcx, 'tcx> {
+pub struct PatternField<'nd, 'tcx> {
     name: String,
-    pattern: &'pcx Pattern<'pcx, 'tcx>,
+    pattern: &'nd Pattern<'nd, 'tcx>,
     data: NodeData,
 }
 
-impl<'pcx, 'tcx> PatternField<'pcx, 'tcx> {
-    pub fn new(name: &str, pattern: &'pcx Pattern<'pcx, 'tcx>) -> Self {
+impl<'nd, 'tcx> PatternField<'nd, 'tcx> {
+    pub fn new(name: &str, pattern: &'nd Pattern<'nd, 'tcx>) -> Self {
         Self {
             name: name.to_string(),
             pattern,
@@ -551,12 +608,12 @@ impl<'pcx, 'tcx> PatternField<'pcx, 'tcx> {
         &self.name
     }
 
-    pub fn pattern(&self) -> &'pcx Pattern<'pcx, 'tcx> {
+    pub fn pattern(&self) -> &'nd Pattern<'nd, 'tcx> {
         self.pattern
     }
 }
 
-impl<'pcx, 'tcx> Node for PatternField<'pcx, 'tcx> {
+impl<'nd, 'tcx> Node for PatternField<'nd, 'tcx> {
     fn data(&self) -> &NodeData {
         &self.data
     }
@@ -566,22 +623,22 @@ impl<'pcx, 'tcx> Node for PatternField<'pcx, 'tcx> {
     }
 }
 
-pub struct Parser<'pcx, 'tcx> {
+pub struct Parser<'nd, 'tcx> {
     pub tcx: TypeContext<'tcx>,
-    pub expr_arena: &'pcx Arena<Expr<'pcx, 'tcx>>,
-    pub pat_arena: &'pcx Arena<Pattern<'pcx, 'tcx>>,
+    pub expr_arena: &'nd Arena<Expr<'nd, 'tcx>>,
+    pub pat_arena: &'nd Arena<Pattern<'nd, 'tcx>>,
 }
 
-pub type ParseResult<'t, 'pcx, 'tcx> = Result<&'pcx Expr<'pcx, 'tcx>, ParseError<'t>>;
+pub type ParseResult<'t, 'nd, 'tcx> = Result<&'nd Expr<'nd, 'tcx>, ParseError<'t>>;
 
 type TokenIterator<'t> = Peekable<slice::Iter<'t, Token>>;
 
 #[allow(dead_code)]
-impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
+impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
     pub fn new(
         tcx: TypeContext<'tcx>,
-        expr_arena: &'pcx Arena<Expr<'pcx, 'tcx>>,
-        pat_arena: &'pcx Arena<Pattern<'pcx, 'tcx>>,
+        expr_arena: &'nd Arena<Expr<'nd, 'tcx>>,
+        pat_arena: &'nd Arena<Pattern<'nd, 'tcx>>,
     ) -> Self {
         Self {
             tcx,
@@ -590,9 +647,15 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         }
     }
 
-    pub fn parse(&self, tokens: &'t [Token]) -> ParseResult<'t, 'pcx, 'tcx> {
+    pub fn parse(&self, tokens: &'t [Token]) -> Result<Vec<TopLevel<'nd, 'tcx>>, ParseError<'t>> {
         let mut it = tokens.iter().peekable();
-        let expr = self.decl(&mut it)?;
+        let mut body = vec![];
+
+        while it.peek().is_some() {
+            if let Some(top_level) = self.lookahead(self.top_level(&mut it))? {
+                body.push(top_level);
+            }
+        }
 
         if let Some(token) = it.peek() {
             Err(ParseError::UnexpectedToken {
@@ -600,19 +663,48 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
                 actual: token,
             })
         } else {
-            Ok(expr)
+            Ok(body)
         }
     }
 
     // --- Parser
 
-    // declarations
-    fn decl(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
-        if let Some(r#fn) = self.lookahead(self.function_definition(it))? {
+    fn top_level(&self, it: &mut TokenIterator<'t>) -> Result<TopLevel<'nd, 'tcx>, ParseError<'t>> {
+        if let Some(decl) = self.lookahead(self.decl(it))? {
+            Ok(TopLevel::Declaration(decl))
+        } else if let Some(stmt) = self.lookahead(self.stmt(it))? {
+            Ok(TopLevel::Stmt(stmt))
+        } else {
+            Err(ParseError::NotParsed)
+        }
+    }
+
+    fn decl(&self, it: &mut TokenIterator<'t>) -> Result<Declaration<'nd, 'tcx>, ParseError<'t>> {
+        if let Some(r#fn) = self.lookahead(self.function_decl(it))? {
             Ok(r#fn)
-        } else if let Some(r#struct) = self.lookahead(self.struct_definition(it))? {
+        } else if let Some(r#struct) = self.lookahead(self.struct_decl(it))? {
             Ok(r#struct)
-        } else if let Some(expr) = self.lookahead(self.expr(it))? {
+        } else {
+            Err(ParseError::NotParsed)
+        }
+    }
+
+    fn stmts(&self, it: &mut TokenIterator<'t>) -> Result<Vec<Stmt<'nd, 'tcx>>, ParseError<'t>> {
+        let mut body = vec![];
+
+        while let Some(stmt) = self.lookahead(self.stmt(it))? {
+            body.push(stmt);
+        }
+
+        if body.is_empty() {
+            Err(ParseError::NotParsed)
+        } else {
+            Ok(body)
+        }
+    }
+
+    fn stmt(&self, it: &mut TokenIterator<'t>) -> Result<Stmt<'nd, 'tcx>, ParseError<'t>> {
+        if let Some(expr) = self.lookahead(self.expr(it))? {
             // To make this LL(1) parser able to parse `assignment` grammar which is LL(2):
             //
             //     assignment -> pattern ASSIGN expr | expr
@@ -623,27 +715,29 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             //
             // And then, construct an assignment node if the left hand of an assignment is
             // a pattern.
-            if self.match_token(it, TokenKind::Operator('=')) {
+            let stmt = if self.match_token(it, TokenKind::Operator('=')) {
                 // convert Expr to Pattern
                 let pattern = self.expr_to_pattern(expr)?;
                 it.next();
 
                 let rhs = self.expr(it)?;
-                let then = self.decl(it)?;
-
-                let mut r#let = Expr::new(ExprKind::Let { pattern, rhs, then });
+                let mut r#let = Stmt::new(StmtKind::Let { pattern, rhs });
 
                 r#let.data_mut().append_comments_from_node(expr);
-                return Ok(self.expr_arena.alloc(r#let));
-            }
-
-            Ok(expr)
+                r#let
+            } else {
+                Stmt::new(StmtKind::Expr(expr))
+            };
+            Ok(stmt)
         } else {
             Err(ParseError::NotParsed)
         }
     }
 
-    fn function_definition(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn function_decl(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<Declaration<'nd, 'tcx>, ParseError<'t>> {
         let def_token = self.try_token(it, TokenKind::Def)?;
 
         let name_token = self.peek_token(it)?;
@@ -659,28 +753,22 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
         let params = self.parse_elements(it, ('(', ')'), Self::function_parameter)?;
 
-        let body = self.expr(it)?;
+        let body = self.stmts(it)?;
 
         self.expect_token(it, TokenKind::End)?;
 
-        let then = self.decl(it)?;
+        let r#fn = Function { name, params, body };
+        let mut decl = Declaration::new(DeclarationKind::Function(r#fn));
 
-        let r#fn = self.alloc_expr(
-            ExprKind::Fn(Function {
-                name,
-                params,
-                body,
-                then,
-            }),
-            def_token,
-        );
-        Ok(r#fn)
+        decl.data_mut().append_comments_from_token(def_token);
+
+        Ok(decl)
     }
 
     fn function_parameter(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<Parameter<'pcx, 'tcx>, ParseError<'t>> {
+    ) -> Result<Parameter<'nd, 'tcx>, ParseError<'t>> {
         let pat = self.pattern(it)?;
 
         let ty = if self.match_token(it, TokenKind::Operator(':')) {
@@ -698,7 +786,10 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(param)
     }
 
-    fn struct_definition(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn struct_decl(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<Declaration<'nd, 'tcx>, ParseError<'t>> {
         let struct_token = self.try_token(it, TokenKind::Struct)?;
 
         let name_token = self.peek_token(it)?;
@@ -714,8 +805,6 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
         let fields = self.parse_elements(it, ('{', '}'), Self::struct_field_definition)?;
 
-        let then = self.decl(it)?;
-
         // Build struct type
         let fs: Vec<StructTyField> = fields
             .iter()
@@ -724,16 +813,12 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         let struct_ty = StructTy::new(&name, fs);
         let ty = self.tcx.type_arena.alloc(Type::Struct(struct_ty));
 
-        let r#struct = self.alloc_expr(
-            ExprKind::StructDef(StructDef {
-                name,
-                fields,
-                ty,
-                then,
-            }),
-            struct_token,
-        );
-        Ok(r#struct)
+        let r#struct = StructDeclaration { name, fields, ty };
+        let mut decl = Declaration::new(DeclarationKind::Struct(r#struct));
+
+        decl.data_mut().append_comments_from_token(struct_token);
+
+        Ok(decl)
     }
 
     fn struct_field_definition(
@@ -764,7 +849,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn value_field(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<ValueField<'pcx, 'tcx>, ParseError<'t>> {
+    ) -> Result<ValueField<'nd, 'tcx>, ParseError<'t>> {
         let (name_token, name) = if let Some(t) = it.peek() {
             if let TokenKind::Identifier(name) = t.kind() {
                 let t = it.next().unwrap();
@@ -795,7 +880,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn pattern_field(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<PatternField<'pcx, 'tcx>, ParseError<'t>> {
+    ) -> Result<PatternField<'nd, 'tcx>, ParseError<'t>> {
         let (name_token, name) = if let Some(t) = it.peek() {
             if let TokenKind::Identifier(name) = t.kind() {
                 let t = it.next().unwrap();
@@ -884,7 +969,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     // expressions
 
-    fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         if let Some(expr) = self.lookahead(self.case(it))? {
             Ok(expr)
         } else {
@@ -896,7 +981,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     fn pattern(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<&'pcx Pattern<'pcx, 'tcx>, ParseError<'t>> {
+    ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
         let token = self.peek_token(it)?;
         let pat = match token.kind() {
             TokenKind::Integer(n) => {
@@ -1011,8 +1096,8 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
 
     fn expr_to_pattern(
         &self,
-        expr: &'pcx Expr<'pcx, 'tcx>,
-    ) -> Result<&'pcx Pattern<'pcx, 'tcx>, ParseError<'t>> {
+        expr: &'nd Expr<'nd, 'tcx>,
+    ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
         let kind = match expr.kind() {
             ExprKind::Var(name) => self.variable_name_to_pattern(name),
             ExprKind::Integer(n) => PatternKind::Integer(*n),
@@ -1055,9 +1140,6 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
             | ExprKind::IndexAccess(_, _)
             | ExprKind::FieldAccess(_, _)
             | ExprKind::Call(_, _)
-            | ExprKind::Let { .. }
-            | ExprKind::Fn(_)
-            | ExprKind::StructDef(_)
             | ExprKind::Case { .. }
             | ExprKind::Puts(_) => {
                 return Err(ParseError::UnrecognizedPattern {
@@ -1069,7 +1151,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(self.pat_arena.alloc(Pattern::new(kind)))
     }
 
-    fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'pcx, 'tcx> {
+    fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'nd, 'tcx> {
         if name == "_" {
             PatternKind::Wildcard
         } else {
@@ -1077,7 +1159,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         }
     }
 
-    fn case_arm(&self, it: &mut TokenIterator<'t>) -> Result<CaseArm<'pcx, 'tcx>, ParseError<'t>> {
+    fn case_arm(&self, it: &mut TokenIterator<'t>) -> Result<CaseArm<'nd, 'tcx>, ParseError<'t>> {
         let when_token = self.try_token(it, TokenKind::When)?;
 
         let pattern = self.pattern(it)?;
@@ -1088,7 +1170,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(arm)
     }
 
-    fn case(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn case(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         let case_token = self.try_token(it, TokenKind::Case)?;
         let head = self.expr(it)?;
 
@@ -1117,7 +1199,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     // logical operators
-    fn logical_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn logical_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         let lhs = self.eq_op(it)?;
 
         if let Some(token) = it.peek() {
@@ -1139,7 +1221,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     // equality operators
-    fn eq_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn eq_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         let lhs = self.comp_op(it)?;
 
         if let Some(token) = it.peek() {
@@ -1161,7 +1243,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
     }
 
     // comparison operators
-    fn comp_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn comp_op(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         let lhs = self.bin_op1(it)?;
 
         if let Some(token) = it.peek() {
@@ -1184,7 +1266,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(lhs)
     }
 
-    fn bin_op1(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn bin_op1(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         let mut lhs = self.bin_op2(it)?;
 
         while let Some(token) = it.peek() {
@@ -1204,7 +1286,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(lhs)
     }
 
-    fn bin_op2(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn bin_op2(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         let mut lhs = self.unary(it)?;
 
         while let Some(token) = it.peek() {
@@ -1224,7 +1306,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(lhs)
     }
 
-    fn unary(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn unary(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         if self.match_token(it, TokenKind::Operator('-')) {
             let token = it.next().unwrap();
             let expr = self.access(it)?;
@@ -1235,7 +1317,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         }
     }
 
-    fn access(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn access(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         let mut lhs = self.atom(it)?;
 
         while self.match_token(it, TokenKind::Operator('.')) {
@@ -1260,7 +1342,7 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         Ok(lhs)
     }
 
-    fn atom(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'pcx, 'tcx> {
+    fn atom(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
         let token = self.peek_token(it)?;
         let kind = match token.kind() {
             TokenKind::Integer(n) => {
@@ -1430,14 +1512,14 @@ impl<'t, 'pcx, 'tcx> Parser<'pcx, 'tcx> {
         }
     }
 
-    fn alloc_expr(&self, kind: ExprKind<'pcx, 'tcx>, token: &Token) -> &'pcx Expr<'pcx, 'tcx> {
+    fn alloc_expr(&self, kind: ExprKind<'nd, 'tcx>, token: &Token) -> &'nd Expr<'nd, 'tcx> {
         let mut expr = Expr::new(kind);
         expr.data_mut().append_comments_from_token(token);
 
         self.expr_arena.alloc(expr)
     }
 
-    fn alloc_pat(&self, kind: PatternKind<'pcx, 'tcx>, token: &Token) -> &'pcx Pattern<'pcx, 'tcx> {
+    fn alloc_pat(&self, kind: PatternKind<'nd, 'tcx>, token: &Token) -> &'nd Pattern<'nd, 'tcx> {
         let mut pat = Pattern::new(kind);
         pat.data_mut().append_comments_from_token(token);
 

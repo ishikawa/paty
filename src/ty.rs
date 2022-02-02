@@ -41,13 +41,20 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::Struct(struct_ty))
     }
 
+    pub fn unit(&self) -> &'tcx Type<'tcx> {
+        self.tuple_n(0)
+    }
+
     /// Returns a tuple type whose element type is unknown but has N elements.
     pub fn tuple_n(&self, n: usize) -> &'tcx Type<'tcx> {
         let mut value_types = vec![];
-        let undetermined = &*self.type_arena.alloc(Type::Undetermined);
 
-        for _ in 0..n {
-            value_types.push(undetermined);
+        if n > 0 {
+            let undetermined = &*self.type_arena.alloc(Type::Undetermined);
+
+            for _ in 0..n {
+                value_types.push(undetermined);
+            }
         }
 
         self.tuple(&value_types)

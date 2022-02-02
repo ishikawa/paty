@@ -41,35 +41,32 @@ fn main() {
     let ast_pat_arena = Arena::new();
     let parser = syntax::Parser::new(tcx, &ast_expr_arena, &ast_pat_arena);
 
-    let expr = match parser.parse(&tokens) {
+    let body = match parser.parse(&tokens) {
         Err(err) => {
             eprintln!("Parse error: {}", err);
             std::process::exit(exitcode::DATAERR);
         }
-        Ok(expr) => expr,
+        Ok(body) => body,
     };
-    //println!("ast = {:?}", expr);
+    //println!("ast = {:?}", body);
 
-    let ast = match sem::analyze(tcx, expr) {
-        Err(errors) => {
-            assert!(!errors.is_empty());
+    if let Err(errors) = sem::analyze(tcx, &body) {
+        assert!(!errors.is_empty());
 
-            for err in errors {
-                eprintln!("Semantic error: {}", err);
-            }
-
-            std::process::exit(exitcode::DATAERR);
+        for err in errors {
+            eprintln!("Semantic error: {}", err);
         }
-        Ok(ast) => ast,
-    };
-    //eprintln!("ast = {:?}", ast);
+
+        std::process::exit(exitcode::DATAERR);
+    }
+    //eprintln!("ast = {:?}", body);
 
     {
         let ir_expr_arena = Arena::new();
         let tmp_var_arena = Arena::new();
 
         let mut builder = gen::ir::Builder::new(tcx, &ir_expr_arena, &tmp_var_arena);
-        let program = builder.build(&ast);
+        let program = builder.build(&body);
         //eprintln!("---\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
