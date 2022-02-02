@@ -74,12 +74,49 @@ pub fn analyze<'nd: 'tcx, 'tcx>(
     let mut errors = vec![];
     let mut scope = Scope::new();
     let mut named_types = HashMap::new();
-    let mut functions = vec![];
+    let mut functions: Vec<&'nd syntax::Function<'nd, 'tcx>> = vec![];
 
-    // Collect named types before analyze program.
+    // 1. Collect named types before analyze program.
     for top_level in body {
         if let syntax::TopLevel::Declaration(decl) = top_level {
-            collect_decl(tcx, decl, &mut functions, &mut named_types, &mut errors);
+            if let syntax::DeclarationKind::Struct(struct_decl) = decl.kind() {
+                if named_types.contains_key(struct_decl.name()) {
+                    errors.push(SemanticError::DuplicateNamedType {
+                        name: struct_decl.name().to_string(),
+                    });
+                } else {
+                    named_types.insert(struct_decl.name().to_string(), struct_decl.ty());
+                }
+            }
+        }
+    }
+
+    // 2. For all struct declarations, resolve field types.
+    for top_level in body {
+        if let syntax::TopLevel::Declaration(decl) = top_level {
+            if let syntax::DeclarationKind::Struct(struct_decl) = decl.kind() {
+                resolve_type(tcx, struct_decl.ty(), &named_types, &mut errors);
+            }
+        }
+    }
+
+    // 3. For all function declarations, resolve parameter type and collection declarations.
+    for top_level in body {
+        if let syntax::TopLevel::Declaration(decl) = top_level {
+            if let syntax::DeclarationKind::Function(fun) = decl.kind() {
+                // Resolved parameter types before using it as key.
+                for p in fun.params() {
+                    resolve_type(tcx, p.ty(), &named_types, &mut errors);
+                }
+
+                let sig = fun.signature();
+
+                if functions.iter().any(|f| f.signature() == sig) {
+                    errors.push(SemanticError::DuplicateFunction { signature: sig });
+                } else {
+                    functions.push(fun);
+                }
+            }
         }
     }
 
@@ -157,7 +194,7 @@ fn check_type<'tcx>(
 fn resolve_type<'tcx>(
     tcx: TypeContext<'tcx>,
     ty: &'tcx Type<'tcx>,
-    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match ty {
@@ -186,30 +223,6 @@ fn resolve_type<'tcx>(
     }
 }
 
-fn collect_decl<'nd: 'tcx, 'tcx>(
-    _tcx: TypeContext<'tcx>,
-    decl: &'nd syntax::Declaration<'nd, 'tcx>,
-    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
-    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
-) {
-    match decl.kind() {
-        syntax::DeclarationKind::Function(fun) => {
-            // TODO: check duplication
-            functions.push(fun);
-        }
-        syntax::DeclarationKind::Struct(struct_decl) => {
-            if named_types.contains_key(struct_decl.name()) {
-                errors.push(SemanticError::DuplicateNamedType {
-                    name: struct_decl.name().to_string(),
-                });
-            } else {
-                named_types.insert(struct_decl.name().to_string(), struct_decl.ty());
-            }
-        }
-    }
-}
-
 fn analyze_decl<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     decl: &'nd syntax::Declaration<'nd, 'tcx>,
@@ -218,34 +231,25 @@ fn analyze_decl<'nd: 'tcx, 'tcx>(
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
-    match decl.kind() {
-        syntax::DeclarationKind::Function(fun) => {
-            // Function definition creates a new scope without a parent scope.
-            let mut scope = Scope::new();
+    if let syntax::DeclarationKind::Function(fun) = decl.kind() {
+        // Function definition creates a new scope without a parent scope.
+        let mut scope = Scope::new();
 
-            functions.push(fun);
-            {
-                for param in fun.params() {
-                    resolve_type(tcx, param.ty(), named_types, errors);
-                    analyze_let_pattern(
-                        tcx,
-                        param.pattern(),
-                        param.ty(),
-                        &mut scope,
-                        functions,
-                        named_types,
-                        errors,
-                    );
-                }
-
-                for stmt in fun.body() {
-                    analyze_stmt(tcx, stmt, &mut scope, functions, named_types, errors);
-                }
-            }
-            functions.pop();
+        for param in fun.params() {
+            //resolve_type(tcx, param.ty(), named_types, errors);
+            analyze_let_pattern(
+                tcx,
+                param.pattern(),
+                param.ty(),
+                &mut scope,
+                functions,
+                named_types,
+                errors,
+            );
         }
-        syntax::DeclarationKind::Struct(struct_decl) => {
-            resolve_type(tcx, struct_decl.ty(), named_types, errors);
+
+        for stmt in fun.body() {
+            analyze_stmt(tcx, stmt, &mut scope, functions, named_types, errors);
         }
     }
 }
@@ -462,17 +466,8 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 //
                 // The return type is undefined if the function is called before
                 // defined (recursive function).
-                if let Some(stmt) = fun.body().last() {
-                    if let syntax::StmtKind::Expr(e) = stmt.kind() {
-                        if let Some(retty) = e.ty() {
-                            unify_expr_type(retty, expr, errors);
-                        }
-                    } else {
-                        unify_expr_type(tcx.unit(), expr, errors);
-                    }
-                } else {
-                    unify_expr_type(tcx.unit(), expr, errors);
-                }
+                let retty = fun.retty().unwrap_or_else(|| tcx.unit());
+                unify_expr_type(retty, expr, errors);
             } else {
                 errors.push(SemanticError::UndefinedFunction { name: name.clone() });
             }

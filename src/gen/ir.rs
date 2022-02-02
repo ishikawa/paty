@@ -519,13 +519,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 }
 
                 // Return type of the function
-                let mut retty = self.tcx.unit();
-
-                if let Some(stmt) = syntax_fun.body().last() {
-                    if let syntax::StmtKind::Expr(e) = stmt.kind() {
-                        retty = e.expect_ty()
-                    }
-                }
+                let retty = syntax_fun.retty().unwrap_or_else(|| self.tcx.unit());
 
                 let fun = Function {
                     name: syntax_fun.name().to_string(),

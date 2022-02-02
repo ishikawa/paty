@@ -1,5 +1,5 @@
 use crate::syntax::{RangeEnd, Token, TokenKind};
-use crate::ty::{NamedTy, StructTy, StructTyField, Type, TypeContext};
+use crate::ty::{FunctionSignature, NamedTy, StructTy, StructTyField, Type, TypeContext};
 use std::cell::Cell;
 use std::fmt;
 use std::iter::Peekable;
@@ -241,6 +241,20 @@ impl<'nd, 'tcx> Function<'nd, 'tcx> {
 
     pub fn body(&self) -> &[Stmt<'nd, 'tcx>] {
         &self.body
+    }
+
+    pub fn retty(&self) -> Option<&'tcx Type<'tcx>> {
+        if let Some(stmt) = self.body.last() {
+            if let StmtKind::Expr(e) = stmt.kind() {
+                return e.ty();
+            }
+        }
+        None
+    }
+
+    pub fn signature(&self) -> FunctionSignature<'tcx> {
+        let params = self.params().iter().map(|p| p.ty()).collect();
+        FunctionSignature::new(self.name.clone(), params)
     }
 }
 
