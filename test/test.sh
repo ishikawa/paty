@@ -156,6 +156,21 @@ end
 x = foo(33)
 puts(x)
 puts(x + 34)'
+assert "30
+true
+hello" '
+def foo(n: int64)
+  puts(n)
+end
+def foo(b: boolean)
+  puts(b)
+end
+def foo(s: string)
+  puts(s)
+end
+foo(30)
+foo(true)
+foo("hello")'
 # boolean
 assert 'true' "
   n = 5
