@@ -54,6 +54,47 @@ impl NodeData {
 }
 
 #[derive(Debug)]
+pub enum TopLevel<'nd, 'tcx> {
+    Declaration(Declaration<'nd, 'tcx>),
+    Stmt(Stmt<'nd, 'tcx>),
+}
+
+#[derive(Debug)]
+pub struct Declaration<'nd, 'tcx> {
+    kind: DeclarationKind<'nd, 'tcx>,
+    data: NodeData,
+}
+
+impl<'nd, 'tcx> Declaration<'nd, 'tcx> {
+    pub fn new(kind: DeclarationKind<'nd, 'tcx>) -> Self {
+        Self {
+            kind,
+            data: NodeData::new(),
+        }
+    }
+
+    pub fn kind(&self) -> &DeclarationKind<'nd, 'tcx> {
+        &self.kind
+    }
+}
+
+impl<'nd, 'tcx> Node for Declaration<'nd, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
+    }
+}
+
+#[derive(Debug)]
+pub enum DeclarationKind<'nd, 'tcx> {
+    Function(Function<'nd, 'tcx>),
+    Struct(StructDeclaration<'tcx>),
+}
+
+#[derive(Debug)]
 pub struct Stmt<'nd, 'tcx> {
     kind: StmtKind<'nd, 'tcx>,
     data: NodeData,
@@ -89,7 +130,6 @@ pub enum StmtKind<'nd, 'tcx> {
         rhs: &'nd Expr<'nd, 'tcx>,
     },
     Expr(&'nd Expr<'nd, 'tcx>),
-    Block(Vec<Stmt<'nd, 'tcx>>),
 }
 
 #[derive(Debug)]
@@ -171,14 +211,8 @@ pub enum ExprKind<'nd, 'tcx> {
     IndexAccess(&'nd Expr<'nd, 'tcx>, usize),
     // struct.a, struct.b, ...
     FieldAccess(&'nd Expr<'nd, 'tcx>, String),
+
     Call(String, Vec<&'nd Expr<'nd, 'tcx>>),
-    Let {
-        pattern: &'nd Pattern<'nd, 'tcx>,
-        rhs: &'nd Expr<'nd, 'tcx>,
-        then: &'nd Expr<'nd, 'tcx>,
-    },
-    Fn(Function<'nd, 'tcx>),
-    StructDef(StructDef<'nd, 'tcx>),
     Case {
         head: &'nd Expr<'nd, 'tcx>,
         arms: Vec<CaseArm<'nd, 'tcx>>,
@@ -193,8 +227,7 @@ pub enum ExprKind<'nd, 'tcx> {
 pub struct Function<'nd, 'tcx> {
     name: String,
     params: Vec<Parameter<'nd, 'tcx>>,
-    body: &'nd Expr<'nd, 'tcx>,
-    then: &'nd Expr<'nd, 'tcx>,
+    body: Vec<Stmt<'nd, 'tcx>>,
 }
 
 impl<'nd, 'tcx> Function<'nd, 'tcx> {
@@ -206,12 +239,8 @@ impl<'nd, 'tcx> Function<'nd, 'tcx> {
         &self.params
     }
 
-    pub fn body(&self) -> &Expr<'nd, 'tcx> {
-        self.body
-    }
-
-    pub fn then(&self) -> &Expr<'nd, 'tcx> {
-        self.then
+    pub fn body(&self) -> &[Stmt<'nd, 'tcx>] {
+        &self.body
     }
 }
 
@@ -252,25 +281,18 @@ impl<'nd, 'tcx> Node for Parameter<'nd, 'tcx> {
 }
 
 #[derive(Debug)]
-pub struct StructDef<'nd, 'tcx> {
+pub struct StructDeclaration<'tcx> {
     name: String,
     fields: Vec<StructFieldDef<'tcx>>,
     ty: &'tcx Type<'tcx>,
-    then: &'nd Expr<'nd, 'tcx>,
 }
 
-impl<'nd, 'tcx> StructDef<'nd, 'tcx> {
-    pub fn new(
-        name: &str,
-        fields: Vec<StructFieldDef<'tcx>>,
-        ty: &'tcx Type<'tcx>,
-        then: &'nd Expr<'nd, 'tcx>,
-    ) -> Self {
+impl<'tcx> StructDeclaration<'tcx> {
+    pub fn new(name: &str, fields: Vec<StructFieldDef<'tcx>>, ty: &'tcx Type<'tcx>) -> Self {
         Self {
             name: name.to_string(),
             fields,
             ty,
-            then,
         }
     }
 
@@ -288,10 +310,6 @@ impl<'nd, 'tcx> StructDef<'nd, 'tcx> {
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
-    }
-
-    pub fn then(&self) -> &Expr<'nd, 'tcx> {
-        self.then
     }
 }
 
@@ -629,9 +647,15 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         }
     }
 
-    pub fn parse(&self, tokens: &'t [Token]) -> ParseResult<'t, 'nd, 'tcx> {
+    pub fn parse(&self, tokens: &'t [Token]) -> Result<Vec<TopLevel<'nd, 'tcx>>, ParseError<'t>> {
         let mut it = tokens.iter().peekable();
-        let expr = self.decl(&mut it)?;
+        let mut body = vec![];
+
+        while it.peek().is_some() {
+            if let Some(top_level) = self.lookahead(self.top_level(&mut it))? {
+                body.push(top_level);
+            }
+        }
 
         if let Some(token) = it.peek() {
             Err(ParseError::UnexpectedToken {
@@ -639,19 +663,48 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 actual: token,
             })
         } else {
-            Ok(expr)
+            Ok(body)
         }
     }
 
     // --- Parser
 
-    // declarations
-    fn decl(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
-        if let Some(r#fn) = self.lookahead(self.function_definition(it))? {
+    fn top_level(&self, it: &mut TokenIterator<'t>) -> Result<TopLevel<'nd, 'tcx>, ParseError<'t>> {
+        if let Some(decl) = self.lookahead(self.decl(it))? {
+            Ok(TopLevel::Declaration(decl))
+        } else if let Some(stmt) = self.lookahead(self.stmt(it))? {
+            Ok(TopLevel::Stmt(stmt))
+        } else {
+            Err(ParseError::NotParsed)
+        }
+    }
+
+    fn decl(&self, it: &mut TokenIterator<'t>) -> Result<Declaration<'nd, 'tcx>, ParseError<'t>> {
+        if let Some(r#fn) = self.lookahead(self.function_decl(it))? {
             Ok(r#fn)
-        } else if let Some(r#struct) = self.lookahead(self.struct_definition(it))? {
+        } else if let Some(r#struct) = self.lookahead(self.struct_decl(it))? {
             Ok(r#struct)
-        } else if let Some(expr) = self.lookahead(self.expr(it))? {
+        } else {
+            Err(ParseError::NotParsed)
+        }
+    }
+
+    fn stmts(&self, it: &mut TokenIterator<'t>) -> Result<Vec<Stmt<'nd, 'tcx>>, ParseError<'t>> {
+        let mut body = vec![];
+
+        while let Some(stmt) = self.lookahead(self.stmt(it))? {
+            body.push(stmt);
+        }
+
+        if body.is_empty() {
+            Err(ParseError::NotParsed)
+        } else {
+            Ok(body)
+        }
+    }
+
+    fn stmt(&self, it: &mut TokenIterator<'t>) -> Result<Stmt<'nd, 'tcx>, ParseError<'t>> {
+        if let Some(expr) = self.lookahead(self.expr(it))? {
             // To make this LL(1) parser able to parse `assignment` grammar which is LL(2):
             //
             //     assignment -> pattern ASSIGN expr | expr
@@ -662,27 +715,29 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             //
             // And then, construct an assignment node if the left hand of an assignment is
             // a pattern.
-            if self.match_token(it, TokenKind::Operator('=')) {
+            let stmt = if self.match_token(it, TokenKind::Operator('=')) {
                 // convert Expr to Pattern
                 let pattern = self.expr_to_pattern(expr)?;
                 it.next();
 
                 let rhs = self.expr(it)?;
-                let then = self.decl(it)?;
-
-                let mut r#let = Expr::new(ExprKind::Let { pattern, rhs, then });
+                let mut r#let = Stmt::new(StmtKind::Let { pattern, rhs });
 
                 r#let.data_mut().append_comments_from_node(expr);
-                return Ok(self.expr_arena.alloc(r#let));
-            }
-
-            Ok(expr)
+                r#let
+            } else {
+                Stmt::new(StmtKind::Expr(expr))
+            };
+            Ok(stmt)
         } else {
             Err(ParseError::NotParsed)
         }
     }
 
-    fn function_definition(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
+    fn function_decl(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<Declaration<'nd, 'tcx>, ParseError<'t>> {
         let def_token = self.try_token(it, TokenKind::Def)?;
 
         let name_token = self.peek_token(it)?;
@@ -698,22 +753,16 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         let params = self.parse_elements(it, ('(', ')'), Self::function_parameter)?;
 
-        let body = self.expr(it)?;
+        let body = self.stmts(it)?;
 
         self.expect_token(it, TokenKind::End)?;
 
-        let then = self.decl(it)?;
+        let r#fn = Function { name, params, body };
+        let mut decl = Declaration::new(DeclarationKind::Function(r#fn));
 
-        let r#fn = self.alloc_expr(
-            ExprKind::Fn(Function {
-                name,
-                params,
-                body,
-                then,
-            }),
-            def_token,
-        );
-        Ok(r#fn)
+        decl.data_mut().append_comments_from_token(def_token);
+
+        Ok(decl)
     }
 
     fn function_parameter(
@@ -737,7 +786,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         Ok(param)
     }
 
-    fn struct_definition(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {
+    fn struct_decl(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<Declaration<'nd, 'tcx>, ParseError<'t>> {
         let struct_token = self.try_token(it, TokenKind::Struct)?;
 
         let name_token = self.peek_token(it)?;
@@ -753,8 +805,6 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         let fields = self.parse_elements(it, ('{', '}'), Self::struct_field_definition)?;
 
-        let then = self.decl(it)?;
-
         // Build struct type
         let fs: Vec<StructTyField> = fields
             .iter()
@@ -763,16 +813,12 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         let struct_ty = StructTy::new(&name, fs);
         let ty = self.tcx.type_arena.alloc(Type::Struct(struct_ty));
 
-        let r#struct = self.alloc_expr(
-            ExprKind::StructDef(StructDef {
-                name,
-                fields,
-                ty,
-                then,
-            }),
-            struct_token,
-        );
-        Ok(r#struct)
+        let r#struct = StructDeclaration { name, fields, ty };
+        let mut decl = Declaration::new(DeclarationKind::Struct(r#struct));
+
+        decl.data_mut().append_comments_from_token(struct_token);
+
+        Ok(decl)
     }
 
     fn struct_field_definition(
@@ -1094,9 +1140,6 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             | ExprKind::IndexAccess(_, _)
             | ExprKind::FieldAccess(_, _)
             | ExprKind::Call(_, _)
-            | ExprKind::Let { .. }
-            | ExprKind::Fn(_)
-            | ExprKind::StructDef(_)
             | ExprKind::Case { .. }
             | ExprKind::Puts(_) => {
                 return Err(ParseError::UnrecognizedPattern {

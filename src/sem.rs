@@ -11,21 +11,6 @@ mod error;
 mod usefulness;
 
 #[derive(Debug)]
-pub struct SemAST<'pcx, 'tcx> {
-    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
-}
-
-impl<'pcx, 'tcx> SemAST<'pcx, 'tcx> {
-    pub fn new(expr: &'pcx syntax::Expr<'pcx, 'tcx>) -> Self {
-        Self { expr }
-    }
-
-    pub fn expr(&self) -> &'pcx syntax::Expr<'pcx, 'tcx> {
-        self.expr
-    }
-}
-
-#[derive(Debug)]
 struct Binding<'tcx> {
     name: String,
     ty: &'tcx Type<'tcx>,
@@ -82,33 +67,57 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
 }
 
 // Analyze an AST and returns error if any.
-pub fn analyze<'pcx: 'tcx, 'tcx>(
+pub fn analyze<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
-    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
-) -> Result<SemAST<'pcx, 'tcx>, Vec<SemanticError<'tcx>>> {
+    body: &'nd [syntax::TopLevel<'nd, 'tcx>],
+) -> Result<(), Vec<SemanticError<'tcx>>> {
     let mut errors = vec![];
     let mut scope = Scope::new();
     let mut named_types = HashMap::new();
+    let mut functions = vec![];
 
-    collect_types(tcx, expr, &mut named_types, &mut errors);
-    analyze_expr(
-        tcx,
-        expr,
-        &mut scope,
-        &mut Vec::new(),
-        &mut named_types,
-        &mut errors,
-    );
+    // Collect named types before analyze program.
+    for top_level in body {
+        if let syntax::TopLevel::Declaration(decl) = top_level {
+            collect_decl(tcx, decl, &mut functions, &mut named_types, &mut errors);
+        }
+    }
+
+    for top_level in body {
+        match top_level {
+            syntax::TopLevel::Declaration(decl) => {
+                analyze_decl(
+                    tcx,
+                    decl,
+                    &mut scope,
+                    &mut functions,
+                    &mut named_types,
+                    &mut errors,
+                );
+            }
+            syntax::TopLevel::Stmt(stmt) => {
+                analyze_stmt(
+                    tcx,
+                    stmt,
+                    &mut scope,
+                    &mut functions,
+                    &mut named_types,
+                    &mut errors,
+                );
+            }
+        }
+    }
+
     if errors.is_empty() {
-        Ok(SemAST::new(expr))
+        Ok(())
     } else {
         Err(errors)
     }
 }
 
-fn unify_expr_type<'pcx: 'tcx, 'tcx>(
+fn unify_expr_type<'nd: 'tcx, 'tcx>(
     expected: &'tcx Type<'tcx>,
-    expr: &syntax::Expr<'pcx, 'tcx>,
+    expr: &syntax::Expr<'nd, 'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
     if let Some(actual) = expr.ty() {
@@ -119,9 +128,9 @@ fn unify_expr_type<'pcx: 'tcx, 'tcx>(
     }
 }
 
-fn unify_pat_type<'pcx: 'tcx, 'tcx>(
+fn unify_pat_type<'nd: 'tcx, 'tcx>(
     expected: &'tcx Type<'tcx>,
-    pat: &syntax::Pattern<'pcx, 'tcx>,
+    pat: &syntax::Pattern<'nd, 'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
     if let Some(actual) = pat.ty() {
@@ -177,40 +186,102 @@ fn resolve_type<'tcx>(
     }
 }
 
-/// Collect named types before analyze program.
-fn collect_types<'pcx: 'tcx, 'tcx>(
-    tcx: TypeContext<'tcx>,
-    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+fn collect_decl<'nd: 'tcx, 'tcx>(
+    _tcx: TypeContext<'tcx>,
+    decl: &'nd syntax::Declaration<'nd, 'tcx>,
+    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
-    match expr.kind() {
-        syntax::ExprKind::Let { then, .. } => {
-            collect_types(tcx, then, named_types, errors);
+    match decl.kind() {
+        syntax::DeclarationKind::Function(fun) => {
+            // TODO: check duplication
+            functions.push(fun);
         }
-        syntax::ExprKind::Fn(syntax_fn) => {
-            collect_types(tcx, syntax_fn.then(), named_types, errors);
-        }
-        syntax::ExprKind::StructDef(struct_def) => {
-            if named_types.contains_key(struct_def.name()) {
+        syntax::DeclarationKind::Struct(struct_decl) => {
+            if named_types.contains_key(struct_decl.name()) {
                 errors.push(SemanticError::DuplicateNamedType {
-                    name: struct_def.name().to_string(),
+                    name: struct_decl.name().to_string(),
                 });
             } else {
-                named_types.insert(struct_def.name().to_string(), struct_def.ty());
+                named_types.insert(struct_decl.name().to_string(), struct_decl.ty());
             }
-
-            collect_types(tcx, struct_def.then(), named_types, errors);
         }
-        _ => {}
     }
 }
 
-fn analyze_expr<'pcx: 'tcx, 'tcx>(
+fn analyze_decl<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
-    expr: &'pcx syntax::Expr<'pcx, 'tcx>,
+    decl: &'nd syntax::Declaration<'nd, 'tcx>,
+    _vars: &mut Scope<'_, 'tcx>,
+    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match decl.kind() {
+        syntax::DeclarationKind::Function(fun) => {
+            // Function definition creates a new scope without a parent scope.
+            let mut scope = Scope::new();
+
+            functions.push(fun);
+            {
+                for param in fun.params() {
+                    resolve_type(tcx, param.ty(), named_types, errors);
+                    analyze_let_pattern(
+                        tcx,
+                        param.pattern(),
+                        param.ty(),
+                        &mut scope,
+                        functions,
+                        named_types,
+                        errors,
+                    );
+                }
+
+                for stmt in fun.body() {
+                    analyze_stmt(tcx, stmt, &mut scope, functions, named_types, errors);
+                }
+            }
+            functions.pop();
+        }
+        syntax::DeclarationKind::Struct(struct_decl) => {
+            resolve_type(tcx, struct_decl.ty(), named_types, errors);
+        }
+    }
+}
+
+fn analyze_stmt<'nd: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    stmt: &syntax::Stmt<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match stmt.kind() {
+        syntax::StmtKind::Let { pattern, rhs } => {
+            analyze_expr(tcx, rhs, vars, functions, named_types, errors);
+            analyze_let_pattern(
+                tcx,
+                pattern,
+                rhs.expect_ty(),
+                vars,
+                functions,
+                named_types,
+                errors,
+            );
+        }
+        syntax::StmtKind::Expr(expr) => {
+            analyze_expr(tcx, expr, vars, functions, named_types, errors);
+        }
+    }
+}
+
+fn analyze_expr<'nd: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    expr: &'nd syntax::Expr<'nd, 'tcx>,
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -387,10 +458,20 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                     }
                 }
 
+                // Infer return type of the called function from its last expression.
+                //
                 // The return type is undefined if the function is called before
                 // defined (recursive function).
-                if let Some(retty) = fun.body().ty() {
-                    unify_expr_type(retty, expr, errors);
+                if let Some(stmt) = fun.body().last() {
+                    if let syntax::StmtKind::Expr(e) = stmt.kind() {
+                        if let Some(retty) = e.ty() {
+                            unify_expr_type(retty, expr, errors);
+                        }
+                    } else {
+                        unify_expr_type(tcx.unit(), expr, errors);
+                    }
+                } else {
+                    unify_expr_type(tcx.unit(), expr, errors);
                 }
             } else {
                 errors.push(SemanticError::UndefinedFunction { name: name.clone() });
@@ -401,49 +482,6 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
                 analyze_expr(tcx, arg, vars, functions, named_types, errors);
             }
             unify_expr_type(tcx.int64(), expr, errors);
-        }
-        syntax::ExprKind::Let { pattern, rhs, then } => {
-            analyze_expr(tcx, rhs, vars, functions, named_types, errors);
-            analyze_let_pattern(
-                tcx,
-                pattern,
-                rhs.expect_ty(),
-                vars,
-                functions,
-                named_types,
-                errors,
-            );
-            analyze_expr(tcx, then, vars, functions, named_types, errors);
-        }
-        syntax::ExprKind::Fn(fun) => {
-            // Function definition creates a new scope without a parent scope.
-            let mut scope = Scope::new();
-
-            functions.push(fun);
-            {
-                for param in fun.params() {
-                    resolve_type(tcx, param.ty(), named_types, errors);
-                    analyze_let_pattern(
-                        tcx,
-                        param.pattern(),
-                        param.ty(),
-                        &mut scope,
-                        functions,
-                        named_types,
-                        errors,
-                    );
-                }
-
-                let body = fun.body();
-
-                analyze_expr(tcx, body, &mut scope, functions, named_types, errors);
-                analyze_expr(tcx, fun.then(), vars, functions, named_types, errors);
-            }
-            functions.pop();
-        }
-        syntax::ExprKind::StructDef(struct_def) => {
-            resolve_type(tcx, struct_def.ty(), named_types, errors);
-            analyze_expr(tcx, struct_def.then(), vars, functions, named_types, errors);
         }
         syntax::ExprKind::Case {
             head,
@@ -508,12 +546,12 @@ fn analyze_expr<'pcx: 'tcx, 'tcx>(
     }
 }
 
-fn analyze_let_pattern<'pcx: 'tcx, 'tcx>(
+fn analyze_let_pattern<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
-    pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+    pat: &'nd syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -533,12 +571,12 @@ fn analyze_let_pattern<'pcx: 'tcx, 'tcx>(
     analyze_pattern(tcx, pat, expected_ty, vars, functions, named_types, errors);
 }
 
-fn analyze_pattern<'pcx: 'tcx, 'tcx>(
+fn analyze_pattern<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
-    pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+    pat: &'nd syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'pcx syntax::Function<'pcx, 'tcx>>,
+    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -631,9 +669,9 @@ fn analyze_pattern<'pcx: 'tcx, 'tcx>(
     unify_pat_type(expected_ty, pat, errors);
 }
 
-fn pattern_to_type<'pcx: 'tcx, 'tcx>(
+fn pattern_to_type<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
-    pat: &'pcx syntax::Pattern<'pcx, 'tcx>,
+    pat: &'nd syntax::Pattern<'nd, 'tcx>,
 ) -> &'tcx Type<'tcx> {
     // Infer the type of pattern from its values.
     match pat.kind() {

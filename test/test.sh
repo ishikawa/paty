@@ -146,6 +146,16 @@ case (10, 20, 30)
 when (x, y, z)
   puts(x + y + z)
 end"
+assert '33
+66
+100' '
+def foo(n)
+  puts(n)
+  n * 2
+end
+x = foo(33)
+puts(x)
+puts(x + 34)'
 # boolean
 assert 'true' "
   n = 5
