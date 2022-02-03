@@ -212,7 +212,7 @@ pub enum ExprKind<'nd, 'tcx> {
     // struct.a, struct.b, ...
     FieldAccess(&'nd Expr<'nd, 'tcx>, String),
 
-    Call(String, Vec<&'nd Expr<'nd, 'tcx>>),
+    Call(CallExpr<'nd, 'tcx>),
     Case {
         head: &'nd Expr<'nd, 'tcx>,
         arms: Vec<CaseArm<'nd, 'tcx>>,
@@ -221,6 +221,40 @@ pub enum ExprKind<'nd, 'tcx> {
 
     // Built-in functions
     Puts(Vec<&'nd Expr<'nd, 'tcx>>),
+}
+
+#[derive(Debug)]
+pub struct CallExpr<'nd, 'tcx> {
+    name: String,
+    args: Vec<&'nd Expr<'nd, 'tcx>>,
+    /// Resolved overloaded function.
+    function: Cell<Option<&'nd Function<'nd, 'tcx>>>,
+}
+
+impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
+    pub fn new(name: String, args: Vec<&'nd Expr<'nd, 'tcx>>) -> Self {
+        Self {
+            name,
+            args,
+            function: Cell::new(None),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn arguments(&self) -> &[&'nd Expr<'nd, 'tcx>] {
+        &self.args
+    }
+
+    pub fn function(&self) -> Option<&'nd Function<'nd, 'tcx>> {
+        self.function.get()
+    }
+
+    pub fn assign_function(&self, fun: &'nd Function<'nd, 'tcx>) {
+        self.function.set(Some(fun));
+    }
 }
 
 #[derive(Debug)]
@@ -1153,7 +1187,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             | ExprKind::Or(_, _)
             | ExprKind::IndexAccess(_, _)
             | ExprKind::FieldAccess(_, _)
-            | ExprKind::Call(_, _)
+            | ExprKind::Call(_)
             | ExprKind::Case { .. }
             | ExprKind::Puts(_) => {
                 return Err(ParseError::UnrecognizedPattern {
@@ -1371,7 +1405,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 // call/struct/var
                 if self.match_token(it, TokenKind::Operator('(')) {
                     let args = self.parse_elements(it, ('(', ')'), Self::expr)?;
-                    ExprKind::Call(name.clone(), args)
+                    ExprKind::Call(CallExpr::new(name.clone(), args))
                 } else if self.match_token(it, TokenKind::Operator('{')) {
                     let fields = self.parse_elements(it, ('{', '}'), Self::value_field)?;
                     let struct_value = StructValue::new(name, fields);

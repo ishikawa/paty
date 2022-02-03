@@ -718,10 +718,11 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
-            syntax::ExprKind::Call(name, args) => {
+            syntax::ExprKind::Call(call_expr) => {
                 let kind = ExprKind::Call {
-                    name: name.clone(),
-                    args: args
+                    name: call_expr.name().to_string(),
+                    args: call_expr
+                        .arguments()
                         .iter()
                         .map(|a| {
                             let a = self._build_expr(a, program, stmts);

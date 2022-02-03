@@ -440,7 +440,10 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 ty,
             });
         }
-        syntax::ExprKind::Call(name, args) => {
+        syntax::ExprKind::Call(call_expr) => {
+            let name = call_expr.name();
+            let args = call_expr.arguments();
+
             // At this point, the type of the argument is unknown.
             // First of all, determine the type of the argument if it is self-explanatory.
             for arg in args {
@@ -457,7 +460,9 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 .filter(|f| f.name() == name)
                 .collect::<Vec<_>>();
             if name_matched.is_empty() {
-                errors.push(SemanticError::UndefinedFunction { name: name.clone() });
+                errors.push(SemanticError::UndefinedFunction {
+                    name: name.to_string(),
+                });
                 return;
             }
 
@@ -468,7 +473,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             if n_args_matched.is_empty() {
                 assert!(!name_matched.is_empty());
                 errors.push(SemanticError::WrongNumberOfArguments {
-                    name: name.clone(),
+                    name: name.to_string(),
                     expected: name_matched[0].params().len(),
                     actual: args.len(),
                 });
@@ -522,6 +527,9 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             // defined (recursive function).
             let retty = fun.retty().unwrap_or_else(|| tcx.unit());
             unify_expr_type(retty, expr, errors);
+
+            // Save
+            call_expr.assign_function(fun);
         }
         syntax::ExprKind::Puts(args) => {
             for arg in args {
