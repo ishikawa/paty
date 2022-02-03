@@ -285,7 +285,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     expr: &'nd syntax::Expr<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    functions: &[&'nd syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -441,36 +441,87 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             });
         }
         syntax::ExprKind::Call(name, args) => {
-            if let Some(fun) = functions
-                .iter()
-                .rev()
-                .find(|fun| fun.name() == name)
-                .copied()
-            {
-                let params = fun.params();
-
-                if params.len() != args.len() {
-                    errors.push(SemanticError::WrongNumberOfArguments {
-                        name: name.clone(),
-                        expected: params.len(),
-                        actual: args.len(),
-                    });
-                } else {
-                    for (i, arg) in args.iter().enumerate() {
-                        analyze_expr(tcx, arg, vars, functions, named_types, errors);
-                        unify_expr_type(params[i].ty(), arg, errors);
-                    }
-                }
-
-                // Infer return type of the called function from its last expression.
-                //
-                // The return type is undefined if the function is called before
-                // defined (recursive function).
-                let retty = fun.retty().unwrap_or_else(|| tcx.unit());
-                unify_expr_type(retty, expr, errors);
-            } else {
-                errors.push(SemanticError::UndefinedFunction { name: name.clone() });
+            // At this point, the type of the argument is unknown.
+            // First of all, determine the type of the argument if it is self-explanatory.
+            for arg in args {
+                analyze_expr(tcx, arg, vars, functions, named_types, errors);
             }
+
+            // Select the predefined function with the closest function signature based
+            // on the function name and known argument types.
+            // 1. function name
+            // 2. The number of arguments
+            // 3. Type of each parameter
+            let name_matched = functions
+                .iter()
+                .filter(|f| f.name() == name)
+                .collect::<Vec<_>>();
+            if name_matched.is_empty() {
+                errors.push(SemanticError::UndefinedFunction { name: name.clone() });
+                return;
+            }
+
+            let n_args_matched = name_matched
+                .iter()
+                .filter(|f| f.params().len() == args.len())
+                .collect::<Vec<_>>();
+            if n_args_matched.is_empty() {
+                assert!(!name_matched.is_empty());
+                errors.push(SemanticError::WrongNumberOfArguments {
+                    name: name.clone(),
+                    expected: name_matched[0].params().len(),
+                    actual: args.len(),
+                });
+                return;
+            }
+
+            let mut ranked = n_args_matched
+                .iter()
+                .map(|f| {
+                    let mut rank = 0;
+
+                    for (i, arg) in args.iter().enumerate() {
+                        if let Some(arg_ty) = arg.ty() {
+                            if arg_ty == f.params()[i].ty() {
+                                rank += 1;
+                            }
+                        }
+                    }
+
+                    (rank, f)
+                })
+                .collect::<Vec<_>>();
+            ranked.sort_by(|a, b| b.0.cmp(&a.0));
+            assert!(!ranked.is_empty());
+
+            if ranked.len() > 1 && ranked[0].0 == ranked[1].0 {
+                let description = format!(
+                    "{} and {}",
+                    ranked[0].1.signature(),
+                    ranked[1].1.signature()
+                );
+
+                errors.push(SemanticError::MultipleCandidateFunctions { description });
+                return;
+            }
+
+            // Resolved overloaded function.
+            let fun = ranked[0].1;
+            let params = fun.params();
+
+            assert!(fun.params().len() == args.len());
+
+            for (i, arg) in args.iter().enumerate() {
+                analyze_expr(tcx, arg, vars, functions, named_types, errors);
+                unify_expr_type(params[i].ty(), arg, errors);
+            }
+
+            // Infer return type of the called function from its last expression.
+            //
+            // The return type is undefined if the function is called before
+            // defined (recursive function).
+            let retty = fun.retty().unwrap_or_else(|| tcx.unit());
+            unify_expr_type(retty, expr, errors);
         }
         syntax::ExprKind::Puts(args) => {
             for arg in args {
@@ -571,7 +622,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    functions: &[&'nd syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {

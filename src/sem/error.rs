@@ -25,6 +25,8 @@ pub enum SemanticError<'tcx> {
         expected: usize,
         actual: usize,
     },
+    #[error("multiple candidate functions in overload resolution: {description}")]
+    MultipleCandidateFunctions { description: String },
     // Type errors
     #[error("expected type `{expected}`, found `{actual}`")]
     MismatchedType {
