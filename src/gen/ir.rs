@@ -1,6 +1,6 @@
 use crate::syntax;
 use crate::syntax::PatternKind;
-use crate::ty::{Type, TypeContext};
+use crate::ty::{FunctionSignature, Type, TypeContext};
 use std::cell::Cell;
 use std::fmt;
 use typed_arena::Arena;
@@ -70,6 +70,7 @@ impl fmt::Display for Program<'_, '_> {
 pub struct Function<'a, 'tcx> {
     pub name: String,
     pub params: Vec<Parameter<'a, 'tcx>>,
+    pub signature: FunctionSignature<'tcx>,
     pub body: Vec<Stmt<'a, 'tcx>>,
     pub retty: &'tcx Type<'tcx>,
     /// Whether this function is `main` or not.
@@ -279,6 +280,14 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum CallingConvention<'tcx> {
+    /// C lang
+    C,
+    /// This lang
+    Std(FunctionSignature<'tcx>),
+}
+
 #[derive(Debug)]
 pub enum ExprKind<'a, 'tcx> {
     Minus(&'a Expr<'a, 'tcx>),
@@ -297,6 +306,7 @@ pub enum ExprKind<'a, 'tcx> {
     Or(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     Call {
         name: String,
+        cc: CallingConvention<'tcx>,
         args: Vec<&'a Expr<'a, 'tcx>>,
     },
 
@@ -373,9 +383,11 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             stmts.push(Stmt::Ret(self.native_int(0)))
         }
 
+        let signature = FunctionSignature::new("main".to_string(), vec![]);
         let main = Function {
             name: "main".to_string(),
             params: vec![],
+            signature,
             body: stmts,
             retty: self.tcx.native_int(),
             is_entry_point: true,
@@ -524,6 +536,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let fun = Function {
                     name: syntax_fun.name().to_string(),
                     params,
+                    signature: syntax_fun.signature(),
                     body: body_stmts,
                     retty,
                     is_entry_point: false,
@@ -719,8 +732,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Call(call_expr) => {
+                let sig = call_expr.function().unwrap().signature();
                 let kind = ExprKind::Call {
                     name: call_expr.name().to_string(),
+                    cc: CallingConvention::Std(sig),
                     args: call_expr
                         .arguments()
                         .iter()
@@ -963,6 +978,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let value = self.const_string(s);
                 let kind = ExprKind::Call {
                     name: "strcmp".to_string(),
+                    cc: CallingConvention::C,
                     args: vec![inc_used(t_expr), value],
                 };
                 let strcmp = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));

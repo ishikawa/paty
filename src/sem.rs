@@ -1,6 +1,6 @@
 //! Semantic analysis
 use self::error::SemanticError;
-use crate::syntax::PatternKind;
+use crate::syntax::{PatternKind, StmtKind};
 use crate::{
     syntax,
     ty::{Type, TypeContext},
@@ -522,11 +522,20 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             }
 
             // Infer return type of the called function from its last expression.
-            //
-            // The return type is undefined if the function is called before
-            // defined (recursive function).
-            let retty = fun.retty().unwrap_or_else(|| tcx.unit());
-            unify_expr_type(retty, expr, errors);
+            if let Some(stmt) = fun.body().last() {
+                if let StmtKind::Expr(e) = stmt.kind() {
+                    if let Some(retty) = e.ty() {
+                        unify_expr_type(retty, expr, errors);
+                    } else {
+                        // The return type is undefined if the function is called before
+                        // defined (recursive function). In that case, we skip unification here.
+                    }
+                } else {
+                    unify_expr_type(tcx.unit(), expr, errors);
+                }
+            } else {
+                unify_expr_type(tcx.unit(), expr, errors);
+            }
 
             // Save
             call_expr.assign_function(fun);
