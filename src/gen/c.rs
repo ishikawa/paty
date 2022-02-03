@@ -30,11 +30,17 @@ impl<'a, 'tcx> Emitter {
         ]
         .join("\n");
 
-        // Emit declaration types
+        // Emit declarations
         for ty in program.decl_types() {
             self.emit_decl_type(ty, &mut code);
         }
 
+        for fun in program.functions() {
+            self.emit_function_declaration(fun, &mut code);
+        }
+        code.push('\n');
+
+        // Emit functions
         for fun in program.functions() {
             self.emit_function(fun, &mut code);
             code.push('\n');
@@ -87,6 +93,41 @@ impl<'a, 'tcx> Emitter {
             }
             Type::Undetermined => unreachable!("untyped code"),
         };
+    }
+
+    fn emit_function_declaration(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
+        // main function
+        if fun.is_entry_point {
+            return;
+        }
+
+        if fun.retty.is_zero_sized() {
+            code.push_str("void");
+        } else {
+            code.push_str(&c_type(fun.retty));
+        }
+        code.push(' ');
+        let mangled_name = mangle_name(&fun.signature);
+        code.push_str(&mangled_name);
+        code.push('(');
+        for (i, param) in fun.params.iter().enumerate() {
+            if param.ty().is_zero_sized() {
+                continue;
+            }
+
+            code.push_str(&c_type(param.ty()));
+            code.push(' ');
+            match param {
+                Parameter::TmpVar(t) => code.push_str(&tmp_var(t)),
+                Parameter::Var(v) => code.push_str(v.name()),
+            };
+
+            if i != (fun.params.len() - 1) {
+                code.push_str(", ");
+            }
+        }
+        code.push_str(")");
+        code.push_str(";\n");
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {

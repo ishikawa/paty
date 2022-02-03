@@ -732,6 +732,19 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Call(call_expr) => {
+                // The type of call expression can be not yet inferred due to
+                // forward declaration.
+                let expr_ty = if let Some(syntax_fun) = call_expr.function() {
+                    syntax_fun.retty().unwrap_or_else(|| self.tcx.unit())
+                } else if let Some(expr_ty) = expr.ty() {
+                    expr_ty
+                } else {
+                    unreachable!(
+                        "Semantic analyzer couldn't assign type for call expression: {:?}",
+                        call_expr
+                    );
+                };
+
                 let sig = call_expr.function().unwrap().signature();
                 let kind = ExprKind::Call {
                     name: call_expr.name().to_string(),
@@ -746,7 +759,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .collect(),
                 };
 
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+                self.push_expr_kind(kind, expr_ty, stmts)
             }
             syntax::ExprKind::Puts(args) => {
                 // Generates `printf(...)` code for `puts(...)`.

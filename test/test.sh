@@ -156,6 +156,7 @@ end
 x = foo(33)
 puts(x)
 puts(x + 34)'
+# function overloading
 assert "30
 true
 hello" '
@@ -171,6 +172,20 @@ end
 foo(30)
 foo(true)
 foo("hello")'
+assert '100 baz!' '
+def baz(n: int64, t: (boolean, string))
+  puts(baz(n), baz(t))
+end
+def baz(n: int64)
+  n * 10
+end
+def baz(t: (boolean, string))
+  case t
+  when (_, s)
+    s
+  end
+end
+baz(10, (true, "baz!"))'
 # boolean
 assert 'true' "
   n = 5
