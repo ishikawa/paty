@@ -337,7 +337,7 @@ impl<'tcx> SplitWildcard {
                 ));
                 vec![ctor]
             }
-            Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
+            Type::Tuple(_) | Type::Struct(_) | Type::AnonStruct(_) => vec![Constructor::Single],
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
             Type::NativeInt => unreachable!("Native C types are not supported."),

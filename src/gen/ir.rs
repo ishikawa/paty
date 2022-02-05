@@ -1,5 +1,5 @@
 use crate::syntax::{self, PatternKind};
-use crate::ty::{FunctionSignature, Type, TypeContext};
+use crate::ty::{FunctionSignature, Type, TypeContext, TypedField};
 use std::cell::Cell;
 use std::fmt;
 use typed_arena::Arena;
@@ -28,6 +28,11 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
                 }
             }
             Type::Struct(struct_ty) => {
+                for f in struct_ty.fields() {
+                    self.add_decl_type(f.ty());
+                }
+            }
+            Type::AnonStruct(struct_ty) => {
                 for f in struct_ty.fields() {
                     self.add_decl_type(f.ty());
                 }
@@ -939,40 +944,54 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Str(")"));
             }
             Type::Struct(struct_ty) => {
-                let mut it = struct_ty.fields().iter().peekable();
-                let empty = it.peek().is_none();
-
                 specs.push(FormatSpec::Value(self.const_string(struct_ty.name())));
-                specs.push(FormatSpec::Str(" {"));
-                if !empty {
-                    specs.push(FormatSpec::Str(" "));
-                }
-
-                while let Some(f) = it.next() {
-                    specs.push(FormatSpec::Value(self.const_string(f.name())));
-                    specs.push(FormatSpec::Str(": "));
-
-                    let kind = ExprKind::FieldAccess {
-                        operand: inc_used(arg),
-                        name: f.name().to_string(),
-                    };
-
-                    let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
-                    self._printf_format(ir_expr, program, stmts, specs);
-
-                    if it.peek().is_some() {
-                        specs.push(FormatSpec::Str(", "));
-                    }
-                }
-
-                if !empty {
-                    specs.push(FormatSpec::Str(" "));
-                }
-                specs.push(FormatSpec::Str("}"));
+                specs.push(FormatSpec::Str(" "));
+                self._printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
+            }
+            Type::AnonStruct(struct_ty) => {
+                self._printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
             }
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
+    }
+
+    fn _printf_format_typed_fields(
+        &mut self,
+        arg: &'a Expr<'a, 'tcx>,
+        fields: &[TypedField<'tcx>],
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        specs: &mut Vec<FormatSpec<'a, 'tcx>>,
+    ) {
+        let mut it = fields.iter().peekable();
+        let empty = it.peek().is_none();
+        specs.push(FormatSpec::Str("{"));
+        if !empty {
+            specs.push(FormatSpec::Str(" "));
+        }
+
+        while let Some(f) = it.next() {
+            specs.push(FormatSpec::Value(self.const_string(f.name())));
+            specs.push(FormatSpec::Str(": "));
+
+            let kind = ExprKind::FieldAccess {
+                operand: inc_used(arg),
+                name: f.name().to_string(),
+            };
+
+            let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
+            self._printf_format(ir_expr, program, stmts, specs);
+
+            if it.peek().is_some() {
+                specs.push(FormatSpec::Str(", "));
+            }
+        }
+
+        if !empty {
+            specs.push(FormatSpec::Str(" "));
+        }
+        specs.push(FormatSpec::Str("}"));
     }
 
     // Returns `None` for no condition.

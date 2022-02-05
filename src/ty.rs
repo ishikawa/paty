@@ -80,6 +80,8 @@ pub enum Type<'tcx> {
     Tuple(Vec<&'tcx Type<'tcx>>),
     /// struct
     Struct(StructTy<'tcx>),
+    /// anonymous struct
+    AnonStruct(AnonStructTy<'tcx>),
 
     /// Type is specified by name and should be resolved in the later phase
     Named(NamedTy<'tcx>),
@@ -111,6 +113,9 @@ impl<'tcx> Type<'tcx> {
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => false,
             Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
             Type::Struct(struct_ty) => struct_ty.fields().iter().all(|f| f.ty().is_zero_sized()),
+            Type::AnonStruct(struct_ty) => {
+                struct_ty.fields().iter().all(|f| f.ty().is_zero_sized())
+            }
             Type::Named(named_ty) => {
                 if let Some(ty) = named_ty.ty() {
                     ty.is_zero_sized()
@@ -155,6 +160,7 @@ impl Hash for Type<'_> {
         match self {
             Type::Tuple(fs) => fs.hash(state),
             Type::Struct(struct_ty) => struct_ty.hash(state),
+            Type::AnonStruct(struct_ty) => struct_ty.hash(state),
             Type::Named(named_ty) => {
                 if let Some(ty) = named_ty.ty() {
                     ty.hash(state)
@@ -190,6 +196,7 @@ impl fmt::Display for Type<'_> {
                 write!(f, ")")
             }
             Type::Struct(struct_ty) => struct_ty.fmt(f),
+            Type::AnonStruct(struct_ty) => struct_ty.fmt(f),
         }
     }
 }

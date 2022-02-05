@@ -209,6 +209,11 @@ fn resolve_type<'tcx>(
                 resolve_type(tcx, f.ty(), named_types, errors);
             }
         }
+        Type::AnonStruct(struct_ty) => {
+            for f in struct_ty.fields() {
+                resolve_type(tcx, f.ty(), named_types, errors);
+            }
+        }
         Type::Named(named_ty) => {
             if named_ty.ty().is_none() {
                 if let Some(ty) = named_types.get(named_ty.name()) {
