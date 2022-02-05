@@ -335,28 +335,33 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             // Analyze fields
             let mut defined_fields = HashSet::new();
 
-            for field in struct_value.fields() {
-                if defined_fields.contains(field.name()) {
-                    errors.push(SemanticError::DuplicateStructField {
-                        name: field.name().to_string(),
-                        struct_name: struct_value.name().to_string(),
-                    });
-                    continue;
+            for f in struct_value.fields() {
+                match f {
+                    syntax::ValueFieldOrSpread::ValueField(field) => {
+                        if defined_fields.contains(field.name()) {
+                            errors.push(SemanticError::DuplicateStructField {
+                                name: field.name().to_string(),
+                                struct_name: struct_value.name().to_string(),
+                            });
+                            continue;
+                        }
+                        defined_fields.insert(field.name());
+
+                        let field_ty = if let Some((_, fty)) = struct_ty.get_field(field.name()) {
+                            fty
+                        } else {
+                            errors.push(SemanticError::UndefinedStructField {
+                                name: field.name().to_string(),
+                                struct_ty: ty,
+                            });
+                            return;
+                        };
+
+                        analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
+                        unify_expr_type(field_ty, field.value(), errors);
+                    }
+                    syntax::ValueFieldOrSpread::Spread(_) => todo!(),
                 }
-                defined_fields.insert(field.name());
-
-                let field_ty = if let Some((_, fty)) = struct_ty.get_field(field.name()) {
-                    fty
-                } else {
-                    errors.push(SemanticError::UndefinedStructField {
-                        name: field.name().to_string(),
-                        struct_ty: ty,
-                    });
-                    return;
-                };
-
-                analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
-                unify_expr_type(field_ty, field.value(), errors);
             }
         }
         syntax::ExprKind::Minus(a) => {

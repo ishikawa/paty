@@ -61,7 +61,7 @@ pub enum SemanticError<'tcx> {
     #[error("no field `{name}` on type `{ty}`")]
     FieldNotFound { name: String, ty: &'tcx Type<'tcx> },
     // pattern match errors
-    #[error("uncovered fields `{names}` in struct pattern `{struct_ty}`")]
+    #[error("uncovered fields {names} in struct pattern `{struct_ty}`")]
     UncoveredStructFields {
         names: FormatSymbols,
         struct_ty: &'tcx Type<'tcx>,

@@ -181,6 +181,12 @@ impl<'nd, 'tcx> Node for Expr<'nd, 'tcx> {
     }
 }
 
+impl fmt::Display for Expr<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
 #[derive(Debug)]
 pub enum ExprKind<'nd, 'tcx> {
     Integer(i64),
@@ -223,6 +229,72 @@ pub enum ExprKind<'nd, 'tcx> {
     Puts(Vec<&'nd Expr<'nd, 'tcx>>),
 }
 
+impl fmt::Display for ExprKind<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExprKind::Integer(n) => n.fmt(f),
+            ExprKind::Boolean(b) => b.fmt(f),
+            ExprKind::String(s) => s.escape_default().fmt(f),
+            ExprKind::Var(name) => name.fmt(f),
+            ExprKind::Tuple(fs) => {
+                write!(f, "(")?;
+                let mut it = fs.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            ExprKind::Struct(value) => value.fmt(f),
+            ExprKind::Minus(operand) => write!(f, "-{}", operand),
+            ExprKind::Add(a, b) => write!(f, "{} + {}", a, b),
+            ExprKind::Sub(a, b) => write!(f, "{} - {}", a, b),
+            ExprKind::Mul(a, b) => write!(f, "{} * {}", a, b),
+            ExprKind::Div(a, b) => write!(f, "{} / {}", a, b),
+            ExprKind::Eq(a, b) => write!(f, "{} == {}", a, b),
+            ExprKind::Ne(a, b) => write!(f, "{} != {}", a, b),
+            ExprKind::Le(a, b) => write!(f, "{} <= {}", a, b),
+            ExprKind::Ge(a, b) => write!(f, "{} >= {}", a, b),
+            ExprKind::Lt(a, b) => write!(f, "{} < {}", a, b),
+            ExprKind::Gt(a, b) => write!(f, "{} > {}", a, b),
+            ExprKind::And(a, b) => write!(f, "{} && {}", a, b),
+            ExprKind::Or(a, b) => write!(f, "{} || {}", a, b),
+            ExprKind::IndexAccess(operand, i) => write!(f, "{}.{}", operand, i),
+            ExprKind::FieldAccess(operand, name) => write!(f, "{}.{}", operand, name),
+            ExprKind::Call(call_expr) => call_expr.fmt(f),
+            ExprKind::Case {
+                head,
+                arms,
+                else_body,
+            } => {
+                writeln!(f, "case {}", head)?;
+                for arm in arms {
+                    writeln!(f, "when {:?}", arm.pattern())?;
+                    writeln!(f, "  {}", arm.body())?;
+                }
+                if let Some(else_body) = else_body {
+                    writeln!(f, "else")?;
+                    writeln!(f, "  {}", else_body)?;
+                }
+                write!(f, "end")
+            }
+            ExprKind::Puts(args) => {
+                write!(f, "puts(")?;
+                let mut it = args.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CallExpr<'nd, 'tcx> {
     name: String,
@@ -254,6 +326,21 @@ impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
 
     pub fn assign_function(&self, fun: &'nd Function<'nd, 'tcx>) {
         self.function.set(Some(fun));
+    }
+}
+
+impl fmt::Display for CallExpr<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        write!(f, "(")?;
+        let mut it = self.args.iter().peekable();
+        while let Some(a) = it.next() {
+            write!(f, "{}", a)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")
     }
 }
 
@@ -399,11 +486,11 @@ impl<'tcx> Node for StructFieldDef<'tcx> {
 #[derive(Debug)]
 pub struct StructValue<'nd, 'tcx> {
     name: String,
-    fields: Vec<ValueField<'nd, 'tcx>>,
+    fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>,
 }
 
 impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
-    pub fn new(name: &str, fields: Vec<ValueField<'nd, 'tcx>>) -> Self {
+    pub fn new(name: &str, fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
         Self {
             name: name.to_string(),
             fields,
@@ -414,8 +501,72 @@ impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
         &self.name
     }
 
-    pub fn fields(&self) -> &[ValueField<'nd, 'tcx>] {
+    pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
         &self.fields
+    }
+}
+
+impl fmt::Display for StructValue<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "struct {} ", self.name())?;
+
+        let mut it = self.fields().iter().peekable();
+        let empty = it.peek().is_none();
+
+        write!(f, "{{")?;
+        if !empty {
+            write!(f, " ")?;
+        }
+        while let Some(field) = it.next() {
+            field.fmt(f)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        if !empty {
+            write!(f, " ")?;
+        }
+        write!(f, "}}")
+    }
+}
+
+#[derive(Debug)]
+pub struct SpreadExpr<'nd, 'tcx> {
+    operand: Option<&'nd Expr<'nd, 'tcx>>,
+}
+
+impl<'nd, 'tcx> SpreadExpr<'nd, 'tcx> {
+    pub fn new(operand: Option<&'nd Expr<'nd, 'tcx>>) -> Self {
+        Self { operand }
+    }
+
+    pub fn operand(&self) -> Option<&'nd Expr<'nd, 'tcx>> {
+        self.operand
+    }
+}
+
+impl fmt::Display for SpreadExpr<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "...")?;
+        if let Some(expr) = self.operand {
+            write!(f, "{}", expr)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum ValueFieldOrSpread<'nd, 'tcx> {
+    ValueField(ValueField<'nd, 'tcx>),
+    Spread(SpreadExpr<'nd, 'tcx>),
+}
+
+impl fmt::Display for ValueFieldOrSpread<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ValueFieldOrSpread::ValueField(field) => field.fmt(f),
+            ValueFieldOrSpread::Spread(spread) => spread.fmt(f),
+        }
     }
 }
 
@@ -441,6 +592,14 @@ impl<'nd, 'tcx> ValueField<'nd, 'tcx> {
 
     pub fn value(&self) -> &'nd Expr<'nd, 'tcx> {
         self.value
+    }
+}
+
+impl fmt::Display for ValueField<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.name.fmt(f)?;
+        write!(f, ": ")?;
+        write!(f, "{}", self.value)
     }
 }
 
@@ -954,32 +1113,43 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
     fn value_field(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<ValueField<'nd, 'tcx>, ParseError<'t>> {
-        let (name_token, name) = if let Some(t) = it.peek() {
-            if let TokenKind::Identifier(name) = t.kind() {
-                let t = it.next().unwrap();
-                (t, name.to_string())
-            } else {
-                return Err(ParseError::NotParsed);
-            }
+    ) -> Result<ValueFieldOrSpread<'nd, 'tcx>, ParseError<'t>> {
+        let start_token = if let Some(tok) = it.peek() {
+            tok
         } else {
             return Err(ParseError::NotParsed);
         };
 
-        // If a field value is omitted, it will be interpreted as an omitted variable
-        // binding with the same name of the field.
-        let value = if self.match_token(it, TokenKind::Operator(':')) {
-            it.next();
-            self.expr(it)?
-        } else {
-            let kind = ExprKind::Var(name.to_string());
-            self.expr_arena.alloc(Expr::new(kind))
-        };
+        match start_token.kind() {
+            TokenKind::Spread => {
+                it.next();
 
-        let mut field = ValueField::new(&name, value);
-        field.data_mut().append_comments_from_token(name_token);
+                // spread operator
+                let operand = self.lookahead(self.expr(it))?;
+                let spread = SpreadExpr::new(operand);
+                Ok(ValueFieldOrSpread::Spread(spread))
+            }
+            TokenKind::Identifier(name) => {
+                let name = name.to_string();
+                let t = it.next().unwrap();
 
-        Ok(field)
+                // If a field value is omitted, it will be interpreted as an omitted variable
+                // binding with the same name of the field.
+                let value = if self.match_token(it, TokenKind::Operator(':')) {
+                    it.next();
+                    self.expr(it)?
+                } else {
+                    let kind = ExprKind::Var(name.to_string());
+                    self.expr_arena.alloc(Expr::new(kind))
+                };
+
+                let mut field = ValueField::new(&name, value);
+                field.data_mut().append_comments_from_token(t);
+
+                Ok(ValueFieldOrSpread::ValueField(field))
+            }
+            _ => Err(ParseError::NotParsed),
+        }
     }
 
     fn pattern_field(
@@ -1239,11 +1409,30 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             ExprKind::Struct(struct_value) => {
                 let mut fields = vec![];
 
-                for field in struct_value.fields() {
-                    let field_pat = self.expr_to_pattern(field.value())?;
-                    let field = PatternField::new(field.name().to_string(), field_pat);
+                for f in struct_value.fields() {
+                    match f {
+                        ValueFieldOrSpread::ValueField(field) => {
+                            let field_pat = self.expr_to_pattern(field.value())?;
+                            let field = PatternField::new(field.name().to_string(), field_pat);
 
-                    fields.push(PatternFieldOrSpread::PatternField(field));
+                            fields.push(PatternFieldOrSpread::PatternField(field));
+                        }
+                        ValueFieldOrSpread::Spread(spread) => {
+                            let spread_pat = if let Some(expr) = spread.operand {
+                                if let ExprKind::Var(name) = expr.kind() {
+                                    SpreadPattern::new(Some(name.to_string()))
+                                } else {
+                                    return Err(ParseError::UnrecognizedPattern {
+                                        src: expr.to_string(),
+                                    });
+                                }
+                            } else {
+                                SpreadPattern::new(None)
+                            };
+
+                            fields.push(PatternFieldOrSpread::Spread(spread_pat));
+                        }
+                    }
                 }
 
                 let struct_pat = StructPattern::new(struct_value.name(), fields);
@@ -1268,7 +1457,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             | ExprKind::Case { .. }
             | ExprKind::Puts(_) => {
                 return Err(ParseError::UnrecognizedPattern {
-                    src: format!("{:?}", expr),
+                    src: expr.to_string(),
                 })
             }
         };

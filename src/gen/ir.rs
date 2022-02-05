@@ -610,9 +610,14 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             syntax::ExprKind::Struct(struct_value) => {
                 let mut fields = vec![];
 
-                for field in struct_value.fields() {
-                    let value = self._build_expr(field.value(), program, stmts);
-                    fields.push((field.name().to_string(), inc_used(value)));
+                for f in struct_value.fields() {
+                    match f {
+                        syntax::ValueFieldOrSpread::ValueField(field) => {
+                            let value = self._build_expr(field.value(), program, stmts);
+                            fields.push((field.name().to_string(), inc_used(value)));
+                        }
+                        syntax::ValueFieldOrSpread::Spread(_) => todo!(),
+                    }
                 }
 
                 let kind = ExprKind::StructValue(struct_value.name().to_string(), fields);

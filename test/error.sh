@@ -87,7 +87,7 @@ assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
   struct T { value: int64 }
   t = T { value: 123 }
   case t
-  when T {}
+  when T { ... }
     puts(t)
   when T { value: 0 }
     puts(t)
@@ -150,6 +150,15 @@ assert 'Semantic error: non-exhaustive pattern: `T { a: false, b: false }`' "
     puts(2)
   when T { a: false, b: true }
     puts(3)
+  end"
+# uncovered fields
+assert 'Semantic error: uncovered fields `value` in struct pattern `struct T { value: int64 }`' "
+  struct T { value: int64 }
+  case T { value: 123 }
+  when T {}
+    puts(0)
+  else
+    puts(1)
   end"
 # binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
