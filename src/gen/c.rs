@@ -126,8 +126,9 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(", ");
             }
         }
-        code.push_str(")");
-        code.push_str(";\n");
+        code.push(')');
+        code.push(';');
+        code.push('\n');
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
@@ -166,7 +167,8 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(", ");
             }
         }
-        code.push_str(")\n");
+        code.push(')');
+        code.push('\n');
 
         // body
         code.push_str("{\n");
