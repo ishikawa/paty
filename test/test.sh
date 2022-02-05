@@ -167,8 +167,7 @@ def foo(b: boolean)
   end
 end
 puts(foo(true))
-puts(foo(false))
-'
+puts(foo(false))'
 # function overloading
 assert "30
 true
