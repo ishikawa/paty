@@ -1,5 +1,5 @@
 use crate::syntax::{RangeEnd, Token, TokenKind};
-use crate::ty::{FunctionSignature, NamedTy, StructTy, StructTyField, Type, TypeContext};
+use crate::ty::{FunctionSignature, NamedTy, StructTy, Type, TypeContext, TypedField};
 use std::cell::Cell;
 use std::fmt;
 use std::iter::Peekable;
@@ -1070,11 +1070,11 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         let fields = self.parse_elements(it, ('{', '}'), Self::struct_field_definition)?;
 
         // Build struct type
-        let fs: Vec<StructTyField> = fields
+        let fs: Vec<TypedField<'_>> = fields
             .iter()
-            .map(|f| (f.name().to_string(), f.ty()))
+            .map(|f| TypedField::new(f.name().to_string(), f.ty()))
             .collect();
-        let struct_ty = StructTy::new(&name, fs);
+        let struct_ty = StructTy::new(name.to_string(), fs);
         let ty = self.tcx.type_arena.alloc(Type::Struct(struct_ty));
 
         let r#struct = StructDeclaration { name, fields, ty };

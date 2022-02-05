@@ -28,8 +28,8 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
                 }
             }
             Type::Struct(struct_ty) => {
-                for (_, fty) in struct_ty.fields() {
-                    self.add_decl_type(fty);
+                for f in struct_ty.fields() {
+                    self.add_decl_type(f.ty());
                 }
             }
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
@@ -939,7 +939,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Str(")"));
             }
             Type::Struct(struct_ty) => {
-                let mut it = struct_ty.fields().peekable();
+                let mut it = struct_ty.fields().iter().peekable();
                 let empty = it.peek().is_none();
 
                 specs.push(FormatSpec::Value(self.const_string(struct_ty.name())));
@@ -948,16 +948,16 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     specs.push(FormatSpec::Str(" "));
                 }
 
-                while let Some((name, fty)) = it.next() {
-                    specs.push(FormatSpec::Value(self.const_string(name)));
+                while let Some(f) = it.next() {
+                    specs.push(FormatSpec::Value(self.const_string(f.name())));
                     specs.push(FormatSpec::Str(": "));
 
                     let kind = ExprKind::FieldAccess {
                         operand: inc_used(arg),
-                        name: name.to_string(),
+                        name: f.name().to_string(),
                     };
 
-                    let ir_expr = self.push_expr_kind(kind, fty, stmts);
+                    let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
                     self._printf_format(ir_expr, program, stmts, specs);
 
                     if it.peek().is_some() {

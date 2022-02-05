@@ -810,7 +810,7 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
             Constructor::Single => match ty {
                 Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
                 Type::Struct(struct_ty) => {
-                    Fields::wildcards_from_tys(cx, struct_ty.fields().map(|(_, ty)| ty).copied())
+                    Fields::wildcards_from_tys(cx, struct_ty.fields().iter().map(|f| f.ty()))
                 }
                 _ => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
@@ -926,12 +926,12 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
                 let mut sub_pats = vec![];
 
-                for (fname, fty) in struct_ty.fields() {
-                    let sub_pat = if let Some(pat_field) = struct_pat.get_field(fname) {
+                for f in struct_ty.fields() {
+                    let sub_pat = if let Some(pat_field) = struct_pat.get_field(f.name()) {
                         DeconstructedPat::from_pat(cx, pat_field.pattern())
                     } else {
                         // omitted fields are handled by wildcard
-                        DeconstructedPat::wildcard(fty)
+                        DeconstructedPat::wildcard(f.ty())
                     };
 
                     sub_pats.push(sub_pat);
@@ -960,9 +960,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     let pat_fields: Vec<_> = fields
                         .iter()
                         .zip(struct_ty.fields())
-                        .map(|(pat, (fname, _))| {
-                            PatternField::new(fname.to_string(), pat.to_pat(cx))
-                        })
+                        .map(|(pat, f)| PatternField::new(f.name().to_string(), pat.to_pat(cx)))
                         .map(PatternFieldOrSpread::PatternField)
                         .collect();
 

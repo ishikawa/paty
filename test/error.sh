@@ -168,7 +168,6 @@ assert 'uncovered fields `a`, `b`' "
   else
     puts(2)
   end"
-# destructuring
 assert 'named field `value` is defined more than once' "
   struct T { value: int64 }
   case T { value: 123 }

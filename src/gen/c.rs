@@ -80,11 +80,11 @@ impl<'a, 'tcx> Emitter {
             Type::Struct(struct_ty) => {
                 code.push_str(&c_type(ty));
                 code.push_str(" {\n");
-                for (name, fty) in struct_ty.fields() {
-                    if !fty.is_zero_sized() {
-                        code.push_str(&c_type(fty));
+                for f in struct_ty.fields() {
+                    if !f.ty().is_zero_sized() {
+                        code.push_str(&c_type(f.ty()));
                         code.push(' ');
-                        code.push_str(&format!("{};\n", name));
+                        code.push_str(&format!("{};\n", f.name()));
                     }
                 }
                 code.push_str("};\n\n");
