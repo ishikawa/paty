@@ -964,7 +964,10 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                         .map(PatternFieldOrSpread::PatternField)
                         .collect();
 
-                    PatternKind::Struct(StructPattern::new(struct_ty.name(), pat_fields))
+                    PatternKind::Struct(StructPattern::new(
+                        struct_ty.name().to_string(),
+                        pat_fields,
+                    ))
                 }
                 _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
             },

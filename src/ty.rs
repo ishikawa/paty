@@ -263,6 +263,37 @@ impl fmt::Display for StructTyBody<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AnonStructTy<'tcx> {
+    body: StructTyBody<'tcx>,
+}
+
+impl<'tcx> AnonStructTy<'tcx> {
+    pub fn new(fields: Vec<TypedField<'tcx>>) -> Self {
+        // The order of fields must be sorted so that anonymous struct can be
+        // matched by structural.
+        let mut fs = fields;
+        fs.sort_by(|a, b| a.name().cmp(b.name()));
+
+        let body = StructTyBody::new(fs);
+        Self { body }
+    }
+
+    pub fn fields(&self) -> &[TypedField<'tcx>] {
+        self.body.fields()
+    }
+
+    pub fn get_field(&self, name: &str) -> Option<&TypedField<'tcx>> {
+        self.body.get_field(name)
+    }
+}
+
+impl fmt::Display for AnonStructTy<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.body)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StructTy<'tcx> {
     name: String,
     body: StructTyBody<'tcx>,

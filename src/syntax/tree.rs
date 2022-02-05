@@ -484,21 +484,13 @@ impl<'tcx> Node for StructFieldDef<'tcx> {
 }
 
 #[derive(Debug)]
-pub struct StructValue<'nd, 'tcx> {
-    name: String,
+pub struct StructValueBody<'nd, 'tcx> {
     fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>,
 }
 
-impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
-    pub fn new(name: &str, fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
-        Self {
-            name: name.to_string(),
-            fields,
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
+impl<'nd, 'tcx> StructValueBody<'nd, 'tcx> {
+    pub fn new(fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
+        Self { fields }
     }
 
     pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
@@ -506,10 +498,8 @@ impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
     }
 }
 
-impl fmt::Display for StructValue<'_, '_> {
+impl fmt::Display for StructValueBody<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "struct {} ", self.name())?;
-
         let mut it = self.fields().iter().peekable();
         let empty = it.peek().is_none();
 
@@ -527,6 +517,34 @@ impl fmt::Display for StructValue<'_, '_> {
             write!(f, " ")?;
         }
         write!(f, "}}")
+    }
+}
+
+#[derive(Debug)]
+pub struct StructValue<'nd, 'tcx> {
+    name: String,
+    body: StructValueBody<'nd, 'tcx>,
+}
+
+impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
+    pub fn new(name: String, fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
+        let body = StructValueBody::new(fields);
+        Self { name, body }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
+        self.body.fields()
+    }
+}
+
+impl fmt::Display for StructValue<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "struct {} ", self.name())?;
+        write!(f, "{}", self.body)
     }
 }
 
@@ -749,21 +767,13 @@ impl fmt::Display for PatternKind<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct StructPattern<'nd, 'tcx> {
-    name: String,
+pub struct StructPatternBody<'nd, 'tcx> {
     fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>,
 }
 
-impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
-    pub fn new(name: &str, fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
-        Self {
-            name: name.to_string(),
-            fields,
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
+impl<'nd, 'tcx> StructPatternBody<'nd, 'tcx> {
+    pub fn new(fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
+        Self { fields }
     }
 
     pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
@@ -782,10 +792,8 @@ impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
     }
 }
 
-impl fmt::Display for StructPattern<'_, '_> {
+impl fmt::Display for StructPatternBody<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ", self.name())?;
-
         let mut it = self.fields().peekable();
         let empty = it.peek().is_none();
         write!(f, "{{")?;
@@ -802,6 +810,38 @@ impl fmt::Display for StructPattern<'_, '_> {
             write!(f, " ")?;
         }
         write!(f, "}}")
+    }
+}
+
+#[derive(Debug)]
+pub struct StructPattern<'nd, 'tcx> {
+    name: String,
+    body: StructPatternBody<'nd, 'tcx>,
+}
+
+impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
+    pub fn new(name: String, fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
+        let body = StructPatternBody::new(fields);
+        Self { name, body }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
+        self.body.fields()
+    }
+
+    pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
+        self.body.get_field(name)
+    }
+}
+
+impl fmt::Display for StructPattern<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ", self.name())?;
+        write!(f, "{}", self.body)
     }
 }
 
@@ -1372,7 +1412,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 it.next();
                 if self.match_token(it, TokenKind::Operator('{')) {
                     let fields = self.parse_elements(it, ('{', '}'), Self::pattern_field)?;
-                    let struct_value = StructPattern::new(name, fields);
+                    let struct_value = StructPattern::new(name.to_string(), fields);
                     let kind = PatternKind::Struct(struct_value);
                     self.alloc_pat(kind, token)
                 } else {
@@ -1435,7 +1475,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                     }
                 }
 
-                let struct_pat = StructPattern::new(struct_value.name(), fields);
+                let struct_pat = StructPattern::new(struct_value.name().to_string(), fields);
                 PatternKind::Struct(struct_pat)
             }
             ExprKind::Minus(_)
@@ -1697,7 +1737,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                     ExprKind::Call(CallExpr::new(name.clone(), args))
                 } else if self.match_token(it, TokenKind::Operator('{')) {
                     let fields = self.parse_elements(it, ('{', '}'), Self::value_field)?;
-                    let struct_value = StructValue::new(name, fields);
+                    let struct_value = StructValue::new(name.to_string(), fields);
                     ExprKind::Struct(struct_value)
                 } else {
                     ExprKind::Var(name.clone())
