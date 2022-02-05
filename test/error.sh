@@ -151,11 +151,28 @@ assert 'Semantic error: non-exhaustive pattern: `T { a: false, b: false }`' "
   when T { a: false, b: true }
     puts(3)
   end"
-# uncovered fields
-assert 'Semantic error: uncovered fields `value` in struct pattern `struct T { value: int64 }`' "
+# destructuring
+assert 'uncovered fields `value`' "
   struct T { value: int64 }
   case T { value: 123 }
   when T {}
+    puts(0)
+  else
+    puts(1)
+  end"
+assert 'uncovered fields `a`, `b`' "
+  struct T { a: int64, b: int64 }
+  case T { a: 1, b: 2 }
+  when T {}
+    puts(0)
+  else
+    puts(2)
+  end"
+# destructuring
+assert 'named field `value` is defined more than once' "
+  struct T { value: int64 }
+  case T { value: 123 }
+  when T { value: a, value: b }
     puts(0)
   else
     puts(1)
