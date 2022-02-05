@@ -198,6 +198,16 @@ def baz(t: (boolean, string))
   end
 end
 baz(10, (true, "baz!"))'
+# uniform function call syntax
+assert 'hi' '"hi".puts()'
+assert '100 baz!' '
+def square(n)
+  n * n
+end
+def baz(n, message: string)
+  n.puts(message)
+end
+10.square().baz("baz!")'
 # boolean
 assert 'true' "
   n = 5
