@@ -828,6 +828,12 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         body: branch_stmts,
                     };
                     branches.push(branch);
+                } else if !branches.is_empty() {
+                    // No explicit `else` arm for this `case` expression. However,
+                    // the last arm of every `case` expression which was passed through usefulness check can
+                    // be `else` arm.
+                    let i = branches.len() - 1;
+                    branches[i].condition = None;
                 }
 
                 let stmt = Stmt::Cond { branches, var: t };
