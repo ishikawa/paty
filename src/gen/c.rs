@@ -1,6 +1,8 @@
 //! C code generator
-use super::ir::{Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar};
-use crate::ty::Type;
+use super::ir::{
+    CallingConvention, Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar,
+};
+use crate::ty::{FunctionSignature, Type};
 
 #[derive(Debug)]
 pub struct Emitter {}
@@ -28,11 +30,21 @@ impl<'a, 'tcx> Emitter {
         ]
         .join("\n");
 
-        // Emit declaration types
+        // Emit declarations
         for ty in program.decl_types() {
             self.emit_decl_type(ty, &mut code);
         }
 
+        for fun in program.functions() {
+            if !fun.is_entry_point {
+                self.emit_function_declaration(fun, &mut code);
+                code.push(';');
+                code.push('\n');
+            }
+        }
+        code.push('\n');
+
+        // Emit functions
         for fun in program.functions() {
             self.emit_function(fun, &mut code);
             code.push('\n');
@@ -87,7 +99,7 @@ impl<'a, 'tcx> Emitter {
         };
     }
 
-    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
+    fn emit_function_declaration(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
         if fun.is_entry_point {
             // 'main' must return 'int'
             code.push_str(&c_type(&Type::NativeInt));
@@ -98,7 +110,14 @@ impl<'a, 'tcx> Emitter {
         }
         code.push(' ');
 
-        code.push_str(&fun.name);
+        // `main` function is C function
+        if fun.is_entry_point {
+            code.push_str(&fun.name);
+        } else {
+            let mangled_name = mangle_name(&fun.signature);
+            code.push_str(&mangled_name);
+        }
+
         code.push('(');
         for (i, param) in fun.params.iter().enumerate() {
             if param.ty().is_zero_sized() {
@@ -116,7 +135,12 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(", ");
             }
         }
-        code.push_str(")\n");
+        code.push(')');
+    }
+
+    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
+        self.emit_function_declaration(fun, code);
+        code.push('\n');
 
         // body
         code.push_str("{\n");
@@ -306,8 +330,14 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(rhs, code);
                 code.push(')');
             }
-            ExprKind::Call { name, args } => {
-                code.push_str(&format!("{}(", name));
+            ExprKind::Call { name, args, cc } => {
+                if let CallingConvention::Std(signature) = cc {
+                    let mangled_name = mangle_name(signature);
+                    code.push_str(&format!("{}(", mangled_name));
+                } else {
+                    code.push_str(&format!("{}(", name));
+                }
+
                 for (i, arg) in args.iter().enumerate() {
                     self.emit_expr(arg, code);
 
@@ -619,4 +649,25 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
         }
         Type::Undetermined => unreachable!("untyped code"),
     }
+}
+
+/// Function name mangling scheme
+///
+/// +------+-------------------------------------------+------+-----------------------------+-------------+
+/// | "_Z" | digits (The length of the following name) | name | digits (The number of args) | (arg types) |
+/// +------+-------------------------------------------+------+-----------------------------+-------------+
+///
+fn mangle_name(signature: &FunctionSignature<'_>) -> String {
+    let mut name = format!(
+        "_Z{}{}{}",
+        signature.name().len(),
+        signature.name(),
+        signature.params().len()
+    );
+
+    for p in signature.params() {
+        encode_ty(p.bottom_ty(), &mut name);
+    }
+
+    name
 }

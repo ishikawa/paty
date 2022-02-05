@@ -298,3 +298,43 @@ impl fmt::Display for NamedTy<'_> {
         self.name.fmt(f)
     }
 }
+
+/// The signature of a function is a combination of the function name and
+/// the order of the types of the function's parameters. The type of the return
+/// value of the function is irrelevant to the signature.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FunctionSignature<'tcx> {
+    name: String,
+    params: Vec<&'tcx Type<'tcx>>,
+}
+
+impl<'tcx> FunctionSignature<'tcx> {
+    pub fn new(name: String, params: Vec<&'tcx Type<'tcx>>) -> Self {
+        Self { name, params }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn params(&self) -> &[&'tcx Type<'tcx>] {
+        &self.params
+    }
+}
+
+impl fmt::Display for FunctionSignature<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.name.fmt(f)?;
+        write!(f, "(")?;
+
+        let mut it = self.params.iter().peekable();
+
+        while let Some(ty) = it.next() {
+            ty.fmt(f)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")
+    }
+}

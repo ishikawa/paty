@@ -1,4 +1,4 @@
-use crate::ty::Type;
+use crate::ty::{FunctionSignature, Type};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -13,6 +13,8 @@ pub enum SemanticError<'tcx> {
     UndefinedStructField { name: String, struct_name: String },
     #[error("named field `{name}` is defined more than once in struct `{struct_name}`")]
     DuplicateStructField { name: String, struct_name: String },
+    #[error("function `{signature}` is defined more than once in the same scope")]
+    DuplicateFunction { signature: FunctionSignature<'tcx> },
     #[error("named type `{name}` is bound more than once in the same scope")]
     DuplicateNamedType { name: String },
     #[error(
@@ -23,6 +25,8 @@ pub enum SemanticError<'tcx> {
         expected: usize,
         actual: usize,
     },
+    #[error("multiple candidate functions in overload resolution: {description}")]
+    MultipleCandidateFunctions { description: String },
     // Type errors
     #[error("expected type `{expected}`, found `{actual}`")]
     MismatchedType {
