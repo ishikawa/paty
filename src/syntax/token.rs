@@ -80,6 +80,7 @@ pub enum TokenKind {
     // Operators
     RangeIncluded, // RangeEnd::Included
     RangeExcluded, // RangeEnd::Excluded
+    Spread,        // "..."
     Eq,
     Ne,
     Le,
@@ -111,6 +112,7 @@ impl fmt::Display for TokenKind {
             Self::String(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
             Self::RangeIncluded => write!(f, "{}", RangeEnd::Included),
             Self::RangeExcluded => write!(f, "{}", RangeEnd::Excluded),
+            Self::Spread => write!(f, "..."),
             Self::Operator(c) => write!(f, "{}", c),
             Self::Eq => write!(f, "=="),
             Self::Ne => write!(f, "!="),
@@ -150,6 +152,7 @@ fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let operator2 = choice((
         just("..=").to(TokenKind::RangeIncluded),
         just("..<").to(TokenKind::RangeExcluded),
+        just("...").to(TokenKind::Spread),
         just("==").to(TokenKind::Eq),
         just("!=").to(TokenKind::Ne),
         just("<=").to(TokenKind::Le),
