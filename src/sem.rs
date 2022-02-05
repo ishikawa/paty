@@ -1,5 +1,5 @@
 //! Semantic analysis
-use self::error::SemanticError;
+use self::error::{FormatSymbols, SemanticError};
 use crate::syntax::{PatternKind, StmtKind};
 use crate::{
     syntax,
@@ -286,7 +286,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
     expr: &'nd syntax::Expr<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&'nd syntax::Function<'nd, 'tcx>],
-    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match expr.kind() {
@@ -350,7 +350,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 } else {
                     errors.push(SemanticError::UndefinedStructField {
                         name: field.name().to_string(),
-                        struct_name: struct_value.name().to_string(),
+                        struct_ty: ty,
                     });
                     return;
                 };
@@ -640,7 +640,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&'nd syntax::Function<'nd, 'tcx>],
-    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     // Infer the type of pattern from its values.
@@ -682,6 +682,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             unify_pat_type(tcx.tuple(sub_types), pat, errors);
         }
         PatternKind::Struct(struct_pat) => {
+            // Struct type check
             let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
                 struct_ty
             } else {
@@ -692,25 +693,65 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 return;
             };
 
-            if unify_pat_type(expected_ty, pat, errors) {
-                for field in struct_pat.fields() {
-                    if let Some((_, fty)) = struct_ty.get_field(field.name()) {
-                        analyze_pattern(
-                            tcx,
-                            field.pattern(),
-                            fty,
-                            vars,
-                            functions,
-                            named_types,
-                            errors,
-                        );
-                    } else {
-                        errors.push(SemanticError::UndefinedStructField {
-                            name: field.name().to_string(),
-                            struct_name: struct_ty.name().to_string(),
-                        });
+            if !unify_pat_type(expected_ty, pat, errors) {
+                return;
+            }
+
+            // Fields check
+            // All fields must be covered or omitted by a spread pattern.
+            let mut consumed_field_names = HashSet::new();
+            let mut spread = false;
+
+            for pf in struct_pat.fields() {
+                match pf {
+                    syntax::PatternFieldOrSpread::PatternField(field) => {
+                        if let Some((_, fty)) = struct_ty.get_field(field.name()) {
+                            if consumed_field_names.contains(&field.name()) {
+                                errors.push(SemanticError::DuplicateStructField {
+                                    name: field.name().to_string(),
+                                    struct_name: struct_ty.name().to_string(),
+                                });
+                            } else {
+                                analyze_pattern(
+                                    tcx,
+                                    field.pattern(),
+                                    fty,
+                                    vars,
+                                    functions,
+                                    named_types,
+                                    errors,
+                                );
+                                consumed_field_names.insert(field.name());
+                            }
+                        } else {
+                            errors.push(SemanticError::UndefinedStructField {
+                                name: field.name().to_string(),
+                                struct_ty: expected_ty,
+                            });
+                        }
+                    }
+                    syntax::PatternFieldOrSpread::Spread(_) => {
+                        if spread {
+                            errors.push(SemanticError::DuplicateSpreadPattern {
+                                pattern: pf.to_string(),
+                            });
+                        }
+
+                        spread = true;
                     }
                 }
+            }
+
+            if !spread && consumed_field_names.len() != struct_ty.fields().len() {
+                let names = struct_ty
+                    .fields()
+                    .filter(|(name, _)| !consumed_field_names.contains(name.as_str()))
+                    .map(|(name, _)| name.to_string())
+                    .collect();
+                errors.push(SemanticError::UncoveredStructFields {
+                    names: FormatSymbols { names },
+                    struct_ty: expected_ty,
+                });
             }
         }
         PatternKind::Var(name) => {
@@ -732,6 +773,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     unify_pat_type(expected_ty, pat, errors);
 }
 
+// Only used for error description
 fn pattern_to_type<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
@@ -751,10 +793,13 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
             tcx.tuple(&sub_types)
         }
         PatternKind::Struct(struct_pat) => {
-            let field_types: Vec<_> = struct_pat
-                .fields()
-                .map(|f| (f.name().to_string(), pattern_to_type(tcx, f.pattern())))
-                .collect();
+            let mut field_types = vec![];
+
+            for f in struct_pat.fields() {
+                if let syntax::PatternFieldOrSpread::PatternField(f) = f {
+                    field_types.push((f.name().to_string(), pattern_to_type(tcx, f.pattern())));
+                }
+            }
 
             tcx.struct_ty(struct_pat.name(), field_types)
         }

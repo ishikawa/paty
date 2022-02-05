@@ -3,7 +3,9 @@
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/deconstruct_pat.rs
 use super::error::SemanticError;
 use crate::syntax::token::RangeEnd;
-use crate::syntax::tree::{CaseArm, Pattern, PatternField, PatternKind, StructPattern};
+use crate::syntax::{
+    CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern,
+};
 use crate::ty::Type;
 use std::{
     cell::Cell,
@@ -925,13 +927,13 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 let mut sub_pats = vec![];
 
                 for (fname, fty) in struct_ty.fields() {
-                    let sub_pat =
-                        if let Some(pat_field) = struct_pat.fields().find(|f| f.name() == fname) {
-                            DeconstructedPat::from_pat(cx, pat_field.pattern())
-                        } else {
-                            // omitted field is handled by wildcard
-                            DeconstructedPat::wildcard(fty)
-                        };
+                    let sub_pat = if let Some(pat_field) = struct_pat.get_field(fname) {
+                        DeconstructedPat::from_pat(cx, pat_field.pattern())
+                    } else {
+                        // omitted fields are handled by wildcard
+                        DeconstructedPat::wildcard(fty)
+                    };
+
                     sub_pats.push(sub_pat);
                 }
 
@@ -942,6 +944,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         DeconstructedPat::new(ctor, fields, pat_ty)
     }
 
+    // Only used for error description
     pub fn to_pat(&self, cx: &MatchCheckContext<'p, 'tcx>) -> &'p Pattern<'p, 'tcx> {
         let kind = match &self.ctor {
             Constructor::Single => match self.ty() {
@@ -957,7 +960,10 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     let pat_fields: Vec<_> = fields
                         .iter()
                         .zip(struct_ty.fields())
-                        .map(|(pat, (fname, _))| PatternField::new(fname, pat.to_pat(cx)))
+                        .map(|(pat, (fname, _))| {
+                            PatternField::new(fname.to_string(), pat.to_pat(cx))
+                        })
+                        .map(PatternFieldOrSpread::PatternField)
                         .collect();
 
                     PatternKind::Struct(StructPattern::new(struct_ty.name(), pat_fields))

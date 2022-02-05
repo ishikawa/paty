@@ -592,11 +592,11 @@ impl fmt::Display for PatternKind<'_, '_> {
 #[derive(Debug)]
 pub struct StructPattern<'nd, 'tcx> {
     name: String,
-    fields: Vec<PatternField<'nd, 'tcx>>,
+    fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>,
 }
 
 impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
-    pub fn new(name: &str, fields: Vec<PatternField<'nd, 'tcx>>) -> Self {
+    pub fn new(name: &str, fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
         Self {
             name: name.to_string(),
             fields,
@@ -607,8 +607,19 @@ impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
         &self.name
     }
 
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternField<'nd, 'tcx>> {
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
         self.fields.iter()
+    }
+
+    pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
+        for f in &self.fields {
+            if let PatternFieldOrSpread::PatternField(f) = f {
+                if f.name() == name {
+                    return Some(f);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -623,8 +634,7 @@ impl fmt::Display for StructPattern<'_, '_> {
             write!(f, " ")?;
         }
         while let Some(field) = it.next() {
-            write!(f, "{}: ", field.name())?;
-            write!(f, "{}", field.pattern().kind())?;
+            field.fmt(f)?;
             if it.peek().is_some() {
                 write!(f, ", ")?;
             }
@@ -637,6 +647,46 @@ impl fmt::Display for StructPattern<'_, '_> {
 }
 
 #[derive(Debug)]
+pub struct SpreadPattern {
+    name: Option<String>,
+}
+
+impl SpreadPattern {
+    pub fn new(name: Option<String>) -> Self {
+        Self { name }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+impl fmt::Display for SpreadPattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "...")?;
+        if let Some(name) = &self.name {
+            name.fmt(f)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum PatternFieldOrSpread<'nd, 'tcx> {
+    PatternField(PatternField<'nd, 'tcx>),
+    Spread(SpreadPattern),
+}
+
+impl fmt::Display for PatternFieldOrSpread<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PatternFieldOrSpread::PatternField(field) => field.fmt(f),
+            PatternFieldOrSpread::Spread(spread) => spread.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct PatternField<'nd, 'tcx> {
     name: String,
     pattern: &'nd Pattern<'nd, 'tcx>,
@@ -644,9 +694,9 @@ pub struct PatternField<'nd, 'tcx> {
 }
 
 impl<'nd, 'tcx> PatternField<'nd, 'tcx> {
-    pub fn new(name: &str, pattern: &'nd Pattern<'nd, 'tcx>) -> Self {
+    pub fn new(name: String, pattern: &'nd Pattern<'nd, 'tcx>) -> Self {
         Self {
-            name: name.to_string(),
+            name,
             pattern,
             data: NodeData::new(),
         }
@@ -658,6 +708,13 @@ impl<'nd, 'tcx> PatternField<'nd, 'tcx> {
 
     pub fn pattern(&self) -> &'nd Pattern<'nd, 'tcx> {
         self.pattern
+    }
+}
+
+impl fmt::Display for PatternField<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: ", self.name())?;
+        write!(f, "{}", self.pattern().kind())
     }
 }
 
@@ -928,31 +985,49 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
     fn pattern_field(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<PatternField<'nd, 'tcx>, ParseError<'t>> {
-        let (name_token, name) = if let Some(t) = it.peek() {
-            if let TokenKind::Identifier(name) = t.kind() {
-                let t = it.next().unwrap();
-                (t, name.to_string())
-            } else {
-                return Err(ParseError::NotParsed);
-            }
+    ) -> Result<PatternFieldOrSpread<'nd, 'tcx>, ParseError<'t>> {
+        let start_token = if let Some(tok) = it.peek() {
+            tok
         } else {
             return Err(ParseError::NotParsed);
         };
 
-        // Variable pattern in field value can be omitted.
-        let value_pat = if self.match_token(it, TokenKind::Operator(':')) {
-            it.next();
-            self.pattern(it)?
-        } else {
-            let kind = PatternKind::Var(name.to_string());
-            self.pat_arena.alloc(Pattern::new(kind))
-        };
+        match start_token.kind() {
+            TokenKind::Spread => {
+                it.next();
 
-        let mut field = PatternField::new(&name, value_pat);
-        field.data_mut().append_comments_from_token(name_token);
+                // spread pattern
+                let name = if let TokenKind::Identifier(name) = self.peek_token(it)?.kind() {
+                    it.next();
+                    Some(name.to_string())
+                } else {
+                    None
+                };
 
-        Ok(field)
+                let spread = SpreadPattern::new(name);
+                Ok(PatternFieldOrSpread::Spread(spread))
+            }
+            TokenKind::Identifier(name) => {
+                let name = name.to_string();
+                let t = it.next().unwrap();
+
+                // field
+                // Variable pattern in field value can be omitted.
+                let value_pat = if self.match_token(it, TokenKind::Operator(':')) {
+                    it.next();
+                    self.pattern(it)?
+                } else {
+                    let kind = PatternKind::Var(name.to_string());
+                    self.pat_arena.alloc(Pattern::new(kind))
+                };
+
+                let mut field = PatternField::new(name, value_pat);
+                field.data_mut().append_comments_from_token(t);
+
+                Ok(PatternFieldOrSpread::PatternField(field))
+            }
+            _ => Err(ParseError::NotParsed),
+        }
     }
 
     fn type_specifier(
@@ -1166,7 +1241,9 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
                 for field in struct_value.fields() {
                     let field_pat = self.expr_to_pattern(field.value())?;
-                    fields.push(PatternField::new(field.name(), field_pat));
+                    let field = PatternField::new(field.name().to_string(), field_pat);
+
+                    fields.push(PatternFieldOrSpread::PatternField(field));
                 }
 
                 let struct_pat = StructPattern::new(struct_value.name(), fields);

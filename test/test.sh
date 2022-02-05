@@ -325,19 +325,12 @@ assert 'Year 2022' '
 struct D { foo: int64, bar: boolean, baz: string }
 d = D { bar: true, foo: 2022, baz: "Year" }
 D { bar: x, foo: y, baz: z} = d
-case D { bar: x, foo: y, baz: z}
-when D { bar: false }
+case D { bar: x, foo: y, baz: z }
+when D { bar: false, ... }
   puts(false)
-when D { foo: foo, baz }
+when D { foo: foo, baz, ... }
   puts(baz, foo)
 end'
-assert 'Year 2022' '
-struct D { foo: int64, bar: boolean, baz: string }
-d = D { bar: true, foo: 2022, baz: "Year" }
-D { bar: _ } = d
-D { foo } = d
-D { baz } = d
-puts(baz, foo)'
 assert 'Year 2022' '
 struct D { foo: int64, bar: boolean, baz: string }
 d = D { bar: true, foo: 2022, baz: "Year" }
@@ -346,15 +339,22 @@ assert '3' '
 struct D { foo: int64, bar: boolean, baz: string }
 d = D { bar: false, foo: 1000, baz: "Hello" }
 case d
-when D { bar: true }
+when D { bar: true, ... }
   puts(1)
-when D { foo: 999 }
+when D { foo: 999, ... }
   puts(2)
-when D { baz: "Hello" }
+when D { baz: "Hello", ... }
   puts(3)
 else
   puts(4)
 end'
+assert 'Year 2022' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: true, foo: 2022, baz: "Year" }
+D { bar: _, ... } = d
+D { foo, ... } = d
+D { baz, ... } = d
+puts(baz, foo)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

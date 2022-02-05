@@ -1,5 +1,4 @@
-use crate::syntax;
-use crate::syntax::PatternKind;
+use crate::syntax::{self, PatternKind};
 use crate::ty::{FunctionSignature, Type, TypeContext};
 use std::cell::Cell;
 use std::fmt;
@@ -874,16 +873,25 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 }
             }
             PatternKind::Struct(struct_pat) => {
-                for pat_field in struct_pat.fields() {
-                    let kind = ExprKind::FieldAccess {
-                        operand: inc_used(init),
-                        name: pat_field.name().to_string(),
-                    };
-                    let field = self
-                        .expr_arena
-                        .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+                for f in struct_pat.fields() {
+                    match f {
+                        syntax::PatternFieldOrSpread::PatternField(pat_field) => {
+                            let kind = ExprKind::FieldAccess {
+                                operand: inc_used(init),
+                                name: pat_field.name().to_string(),
+                            };
+                            let field = self
+                                .expr_arena
+                                .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
 
-                    self._build_let_pattern(pat_field.pattern(), field, stmts)
+                            self._build_let_pattern(pat_field.pattern(), field, stmts)
+                        }
+                        syntax::PatternFieldOrSpread::Spread(spread) => {
+                            if spread.name().is_some() {
+                                todo!("anonymous struct");
+                            }
+                        }
+                    }
                 }
             }
             PatternKind::Integer(_)
@@ -1072,7 +1080,27 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         "Empty struct must be zero-sized type. It should be handled above."
                     );
                 } else {
-                    let first_field = struct_pat.fields().next().unwrap();
+                    // Split fields into pattern fields and a spread.
+                    let mut pattern_fields = vec![];
+                    let mut spread_pat = None;
+
+                    for f in struct_pat.fields() {
+                        match f {
+                            syntax::PatternFieldOrSpread::PatternField(pf) => {
+                                pattern_fields.push(pf);
+                            }
+                            syntax::PatternFieldOrSpread::Spread(spread) => {
+                                spread_pat = Some(spread);
+                            }
+                        }
+                    }
+                    if let Some(spread_pat) = spread_pat {
+                        if spread_pat.name().is_some() {
+                            todo!("Assign values to an anonymous struct value.");
+                        }
+                    }
+
+                    let first_field = pattern_fields[0];
                     let kind = ExprKind::FieldAccess {
                         operand: inc_used(t_expr),
                         name: first_field.name().to_string(),
@@ -1083,7 +1111,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                     let mut condition = self._build_pattern(operand, first_field.pattern(), stmts);
 
-                    for pat_field in struct_pat.fields().skip(1) {
+                    for pat_field in pattern_fields.iter().skip(1) {
                         let kind = ExprKind::FieldAccess {
                             operand: inc_used(t_expr),
                             name: pat_field.name().to_string(),
