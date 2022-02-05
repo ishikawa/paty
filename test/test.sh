@@ -198,6 +198,8 @@ def baz(t: (boolean, string))
   end
 end
 baz(10, (true, "baz!"))'
+# uniform function call syntax
+assert 'hi' '"hi".puts()'
 # boolean
 assert 'true' "
   n = 5

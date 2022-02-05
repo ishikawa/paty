@@ -1372,18 +1372,41 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             let token = it.next().unwrap();
 
             let t = self.peek_token(it)?;
-            if let TokenKind::Integer(n) = t.kind() {
-                it.next();
-                let index = n.parse().unwrap();
-                lhs = self.alloc_expr(ExprKind::IndexAccess(lhs, index), token);
-            } else if let TokenKind::Identifier(name) = t.kind() {
-                it.next();
-                lhs = self.alloc_expr(ExprKind::FieldAccess(lhs, name.to_string()), token);
-            } else {
-                return Err(ParseError::UnexpectedToken {
-                    expected: "index".to_string(),
-                    actual: t,
-                });
+            match t.kind() {
+                TokenKind::Integer(n) => {
+                    // tuple element
+                    it.next();
+                    let index = n.parse().unwrap();
+                    lhs = self.alloc_expr(ExprKind::IndexAccess(lhs, index), token);
+                }
+                TokenKind::Identifier(name) => {
+                    // struct member / uniform function call
+                    it.next();
+                    lhs = if self.match_token(it, TokenKind::Operator('(')) {
+                        let mut args = self.parse_elements(it, ('(', ')'), Self::expr)?;
+                        args.insert(0, lhs);
+                        self.alloc_expr(ExprKind::Call(CallExpr::new(name.clone(), args)), token)
+                    } else {
+                        self.alloc_expr(ExprKind::FieldAccess(lhs, name.to_string()), token)
+                    };
+                }
+                TokenKind::Puts => {
+                    // struct member / uniform function call
+                    it.next();
+                    lhs = if self.match_token(it, TokenKind::Operator('(')) {
+                        let mut args = self.parse_elements(it, ('(', ')'), Self::expr)?;
+                        args.insert(0, lhs);
+                        self.alloc_expr(ExprKind::Puts(args), token)
+                    } else {
+                        self.alloc_expr(ExprKind::FieldAccess(lhs, "puts".to_string()), token)
+                    };
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "index".to_string(),
+                        actual: t,
+                    });
+                }
             }
         }
 
