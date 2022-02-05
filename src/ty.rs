@@ -34,7 +34,7 @@ impl<'tcx> TypeContext<'tcx> {
     }
 
     pub fn struct_ty(&self, name: String, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
-        let struct_ty = StructTy { name, fields };
+        let struct_ty = StructTy::new(name, fields);
         self.type_arena.alloc(Type::Struct(struct_ty))
     }
 
@@ -110,9 +110,7 @@ impl<'tcx> Type<'tcx> {
         match self {
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => false,
             Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
-            Type::Struct(struct_ty) => {
-                struct_ty.is_empty() || struct_ty.fields().iter().all(|f| f.ty().is_zero_sized())
-            }
+            Type::Struct(struct_ty) => struct_ty.fields().iter().all(|f| f.ty().is_zero_sized()),
             Type::Named(named_ty) => {
                 if let Some(ty) = named_ty.ty() {
                     ty.is_zero_sized()
@@ -224,22 +222,13 @@ impl fmt::Display for TypedField<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StructTy<'tcx> {
-    name: String,
+pub struct StructTyBody<'tcx> {
     fields: Vec<TypedField<'tcx>>,
 }
 
-impl<'tcx> StructTy<'tcx> {
-    pub fn new(name: String, fields: Vec<TypedField<'tcx>>) -> Self {
-        Self { name, fields }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
+impl<'tcx> StructTyBody<'tcx> {
+    pub fn new(fields: Vec<TypedField<'tcx>>) -> Self {
+        Self { fields }
     }
 
     pub fn fields(&self) -> &[TypedField<'tcx>] {
@@ -251,10 +240,8 @@ impl<'tcx> StructTy<'tcx> {
     }
 }
 
-impl fmt::Display for StructTy<'_> {
+impl fmt::Display for StructTyBody<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "struct {} ", self.name())?;
-
         let mut it = self.fields().iter().peekable();
         let empty = it.peek().is_none();
 
@@ -272,6 +259,38 @@ impl fmt::Display for StructTy<'_> {
             write!(f, " ")?;
         }
         write!(f, "}}")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StructTy<'tcx> {
+    name: String,
+    body: StructTyBody<'tcx>,
+}
+
+impl<'tcx> StructTy<'tcx> {
+    pub fn new(name: String, fields: Vec<TypedField<'tcx>>) -> Self {
+        let body = StructTyBody::new(fields);
+        Self { name, body }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fields(&self) -> &[TypedField<'tcx>] {
+        self.body.fields()
+    }
+
+    pub fn get_field(&self, name: &str) -> Option<&TypedField<'tcx>> {
+        self.body.get_field(name)
+    }
+}
+
+impl fmt::Display for StructTy<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "struct {} ", self.name())?;
+        write!(f, "{}", self.body)
     }
 }
 
