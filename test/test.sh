@@ -156,6 +156,18 @@ end
 x = foo(33)
 puts(x)
 puts(x + 34)'
+assert "100
+55" '
+def foo(b: boolean)
+  case b
+  when true
+    100
+  when false
+    55
+  end
+end
+puts(foo(true))
+puts(foo(false))'
 # function overloading
 assert "30
 true
