@@ -498,7 +498,7 @@ impl<'a, 'tcx> Emitter {
 
                 code.push('}');
             }
-            ExprKind::StructValue(_, fs) => {
+            ExprKind::StructValue(fs) => {
                 // Specify struct type explicitly.
                 code.push('(');
                 code.push_str(&c_type(expr.ty()));
@@ -561,7 +561,7 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Call { .. } => true,
             ExprKind::Printf(_) => true,
             ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| self.has_side_effect(sub_expr)),
-            ExprKind::StructValue(_, fs) => fs
+            ExprKind::StructValue(fs) => fs
                 .iter()
                 .any(|(_, sub_expr)| self.has_side_effect(sub_expr)),
             ExprKind::Int64(_)

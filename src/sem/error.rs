@@ -31,13 +31,16 @@ pub enum SemanticError<'tcx> {
     UndefinedFunction { name: String },
     #[error("cannot find named type `{name}` in scope")]
     UndefinedNamedType { name: String },
-    #[error("cannot find named field `{name}` in struct `{struct_ty}`")]
+    #[error("cannot find named field `{name}` in `{struct_ty}`")]
     UndefinedStructField {
         name: String,
         struct_ty: &'tcx Type<'tcx>,
     },
-    #[error("named field `{name}` is defined more than once in struct `{struct_name}`")]
-    DuplicateStructField { name: String, struct_name: String },
+    #[error("named field `{name}` is defined more than once in `{struct_ty}`")]
+    DuplicateStructField {
+        name: String,
+        struct_ty: &'tcx Type<'tcx>,
+    },
     #[error("function `{signature}` is defined more than once in the same scope")]
     DuplicateFunction { signature: FunctionSignature<'tcx> },
     #[error("named type `{name}` is bound more than once in the same scope")]
@@ -76,4 +79,8 @@ pub enum SemanticError<'tcx> {
     AlreadyBoundInPattern { name: String },
     #[error("spread pattern can appear only once: `{pattern}`")]
     DuplicateSpreadPattern { pattern: String },
+    #[error("empty spread expression is no-op")]
+    EmptySpreadExpression,
+    #[error("value of `{ty}` cannot be spread")]
+    InvalidSpreadOperand { ty: &'tcx Type<'tcx> },
 }

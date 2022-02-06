@@ -33,6 +33,15 @@ impl<'tcx> TypeContext<'tcx> {
             .alloc(Type::Tuple(value_types.iter().copied().collect()))
     }
 
+    pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
+        self.anon_struct_ty(vec![])
+    }
+
+    pub fn anon_struct_ty(&self, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
+        let struct_ty = AnonStructTy::new(fields);
+        self.type_arena.alloc(Type::AnonStruct(struct_ty))
+    }
+
     pub fn struct_ty(&self, name: String, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
         let struct_ty = StructTy::new(name, fields);
         self.type_arena.alloc(Type::Struct(struct_ty))

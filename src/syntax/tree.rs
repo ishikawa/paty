@@ -195,6 +195,7 @@ pub enum ExprKind<'nd, 'tcx> {
     Var(String),
     Tuple(Vec<&'nd Expr<'nd, 'tcx>>),
     Struct(StructValue<'nd, 'tcx>),
+    AnonStruct(AnonStructValue<'nd, 'tcx>),
 
     // unary operators
     Minus(&'nd Expr<'nd, 'tcx>),
@@ -247,6 +248,7 @@ impl fmt::Display for ExprKind<'_, '_> {
                 }
                 write!(f, ")")
             }
+            ExprKind::AnonStruct(value) => value.fmt(f),
             ExprKind::Struct(value) => value.fmt(f),
             ExprKind::Minus(operand) => write!(f, "-{}", operand),
             ExprKind::Add(a, b) => write!(f, "{} + {}", a, b),
@@ -521,6 +523,28 @@ impl fmt::Display for StructValueBody<'_, '_> {
 }
 
 #[derive(Debug)]
+pub struct AnonStructValue<'nd, 'tcx> {
+    body: StructValueBody<'nd, 'tcx>,
+}
+
+impl<'nd, 'tcx> AnonStructValue<'nd, 'tcx> {
+    pub fn new(fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
+        let body = StructValueBody::new(fields);
+        Self { body }
+    }
+
+    pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
+        self.body.fields()
+    }
+}
+
+impl fmt::Display for AnonStructValue<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.body)
+    }
+}
+
+#[derive(Debug)]
 pub struct StructValue<'nd, 'tcx> {
     name: String,
     body: StructValueBody<'nd, 'tcx>,
@@ -570,64 +594,6 @@ impl fmt::Display for SpreadExpr<'_, '_> {
             write!(f, "{}", expr)?;
         }
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub enum ValueFieldOrSpread<'nd, 'tcx> {
-    ValueField(ValueField<'nd, 'tcx>),
-    Spread(SpreadExpr<'nd, 'tcx>),
-}
-
-impl fmt::Display for ValueFieldOrSpread<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ValueFieldOrSpread::ValueField(field) => field.fmt(f),
-            ValueFieldOrSpread::Spread(spread) => spread.fmt(f),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct ValueField<'nd, 'tcx> {
-    name: String,
-    value: &'nd Expr<'nd, 'tcx>,
-    data: NodeData,
-}
-
-impl<'nd, 'tcx> ValueField<'nd, 'tcx> {
-    pub fn new(name: &str, value: &'nd Expr<'nd, 'tcx>) -> Self {
-        Self {
-            name: name.to_string(),
-            value,
-            data: NodeData::new(),
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn value(&self) -> &'nd Expr<'nd, 'tcx> {
-        self.value
-    }
-}
-
-impl fmt::Display for ValueField<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.name.fmt(f)?;
-        write!(f, ": ")?;
-        write!(f, "{}", self.value)
-    }
-}
-
-impl<'nd, 'tcx> Node for ValueField<'nd, 'tcx> {
-    fn data(&self) -> &NodeData {
-        &self.data
-    }
-
-    fn data_mut(&mut self) -> &mut NodeData {
-        &mut self.data
     }
 }
 
@@ -722,6 +688,7 @@ pub enum PatternKind<'nd, 'tcx> {
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
     Tuple(Vec<&'nd Pattern<'nd, 'tcx>>),
+    AnonStruct(AnonStructPattern<'nd, 'tcx>),
     Struct(StructPattern<'nd, 'tcx>),
     Var(String),
     Wildcard,
@@ -759,6 +726,7 @@ impl fmt::Display for PatternKind<'_, '_> {
                 }
                 write!(f, ")")
             }
+            PatternKind::AnonStruct(struct_pat) => struct_pat.fmt(f),
             PatternKind::Struct(struct_pat) => struct_pat.fmt(f),
             PatternKind::Var(name) => write!(f, "{}", name),
             PatternKind::Wildcard => write!(f, "_"),
@@ -810,6 +778,90 @@ impl fmt::Display for StructPatternBody<'_, '_> {
             write!(f, " ")?;
         }
         write!(f, "}}")
+    }
+}
+
+#[derive(Debug)]
+pub enum ValueFieldOrSpread<'nd, 'tcx> {
+    ValueField(ValueField<'nd, 'tcx>),
+    Spread(SpreadExpr<'nd, 'tcx>),
+}
+
+impl fmt::Display for ValueFieldOrSpread<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ValueFieldOrSpread::ValueField(field) => field.fmt(f),
+            ValueFieldOrSpread::Spread(spread) => spread.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ValueField<'nd, 'tcx> {
+    name: String,
+    value: &'nd Expr<'nd, 'tcx>,
+    data: NodeData,
+}
+
+impl<'nd, 'tcx> ValueField<'nd, 'tcx> {
+    pub fn new(name: &str, value: &'nd Expr<'nd, 'tcx>) -> Self {
+        Self {
+            name: name.to_string(),
+            value,
+            data: NodeData::new(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn value(&self) -> &'nd Expr<'nd, 'tcx> {
+        self.value
+    }
+}
+
+impl fmt::Display for ValueField<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.name.fmt(f)?;
+        write!(f, ": ")?;
+        write!(f, "{}", self.value)
+    }
+}
+
+impl<'nd, 'tcx> Node for ValueField<'nd, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
+    }
+}
+
+#[derive(Debug)]
+pub struct AnonStructPattern<'nd, 'tcx> {
+    body: StructPatternBody<'nd, 'tcx>,
+}
+
+impl<'nd, 'tcx> AnonStructPattern<'nd, 'tcx> {
+    pub fn new(fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
+        let body = StructPatternBody::new(fields);
+        Self { body }
+    }
+
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
+        self.body.fields()
+    }
+
+    pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
+        self.body.get_field(name)
+    }
+}
+
+impl fmt::Display for AnonStructPattern<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.body)
     }
 }
 
@@ -1446,36 +1498,16 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
                 PatternKind::Tuple(ps)
             }
+            ExprKind::AnonStruct(struct_value) => {
+                let fields = self.value_fields_to_pattern_fields(struct_value.fields())?;
+                let struct_pat = AnonStructPattern::new(fields);
+
+                PatternKind::AnonStruct(struct_pat)
+            }
             ExprKind::Struct(struct_value) => {
-                let mut fields = vec![];
-
-                for f in struct_value.fields() {
-                    match f {
-                        ValueFieldOrSpread::ValueField(field) => {
-                            let field_pat = self.expr_to_pattern(field.value())?;
-                            let field = PatternField::new(field.name().to_string(), field_pat);
-
-                            fields.push(PatternFieldOrSpread::PatternField(field));
-                        }
-                        ValueFieldOrSpread::Spread(spread) => {
-                            let spread_pat = if let Some(expr) = spread.operand {
-                                if let ExprKind::Var(name) = expr.kind() {
-                                    SpreadPattern::new(Some(name.to_string()))
-                                } else {
-                                    return Err(ParseError::UnrecognizedPattern {
-                                        src: expr.to_string(),
-                                    });
-                                }
-                            } else {
-                                SpreadPattern::new(None)
-                            };
-
-                            fields.push(PatternFieldOrSpread::Spread(spread_pat));
-                        }
-                    }
-                }
-
+                let fields = self.value_fields_to_pattern_fields(struct_value.fields())?;
                 let struct_pat = StructPattern::new(struct_value.name().to_string(), fields);
+
                 PatternKind::Struct(struct_pat)
             }
             ExprKind::Minus(_)
@@ -1503,6 +1535,41 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         };
 
         Ok(self.pat_arena.alloc(Pattern::new(kind)))
+    }
+
+    fn value_fields_to_pattern_fields(
+        &self,
+        value_fields: &[ValueFieldOrSpread<'nd, 'tcx>],
+    ) -> Result<Vec<PatternFieldOrSpread<'nd, 'tcx>>, ParseError<'t>> {
+        let mut fields = vec![];
+
+        for f in value_fields {
+            match f {
+                ValueFieldOrSpread::ValueField(field) => {
+                    let field_pat = self.expr_to_pattern(field.value())?;
+                    let field = PatternField::new(field.name().to_string(), field_pat);
+
+                    fields.push(PatternFieldOrSpread::PatternField(field));
+                }
+                ValueFieldOrSpread::Spread(spread) => {
+                    let spread_pat = if let Some(expr) = spread.operand {
+                        if let ExprKind::Var(name) = expr.kind() {
+                            SpreadPattern::new(Some(name.to_string()))
+                        } else {
+                            return Err(ParseError::UnrecognizedPattern {
+                                src: expr.to_string(),
+                            });
+                        }
+                    } else {
+                        SpreadPattern::new(None)
+                    };
+
+                    fields.push(PatternFieldOrSpread::Spread(spread_pat));
+                }
+            }
+        }
+
+        Ok(fields)
     }
 
     fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'nd, 'tcx> {

@@ -913,6 +913,32 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
                 fields = Fields::from_iter(cx, pats);
             }
+            PatternKind::AnonStruct(struct_pat) => {
+                ctor = Constructor::Single;
+
+                // Convert struct fields to deconstruct patterns.
+                // We must follow the order of fields in the type.
+                let struct_ty = if let Type::AnonStruct(struct_ty) = pat_ty {
+                    struct_ty
+                } else {
+                    unreachable!("Pattern type {} must be struct type.", pat_ty);
+                };
+
+                let mut sub_pats = vec![];
+
+                for f in struct_ty.fields() {
+                    let sub_pat = if let Some(pat_field) = struct_pat.get_field(f.name()) {
+                        DeconstructedPat::from_pat(cx, pat_field.pattern())
+                    } else {
+                        // omitted fields are handled by wildcard
+                        DeconstructedPat::wildcard(f.ty())
+                    };
+
+                    sub_pats.push(sub_pat);
+                }
+
+                fields = Fields::from_iter(cx, sub_pats);
+            }
             PatternKind::Struct(struct_pat) => {
                 ctor = Constructor::Single;
 
