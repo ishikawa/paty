@@ -618,22 +618,22 @@ fn c_type(ty: &Type) -> String {
 /// ## Tuple type
 ///
 /// ```ignore
-/// +-----+---------------------------+-----+---------------+
-/// | "T" | digits (number of fields) | "_" | (field types) |
-/// +-----+---------------------------+-----+---------------+
+/// +-----+---------------------------+---------------+
+/// | "T" | digits (number of fields) | (field types) |
+/// +-----+---------------------------+---------------+
 /// ```
 ///
 /// ## Anonymous struct type
 ///
 /// ```ignore
-/// +-----+---------------------------+-----+----------------+
-/// | "S" | digits (number of fields) | "_" | (named fields) |
-/// +-----+---------------------------+-----+----------------+
+/// +-----+---------------------------+----------------+
+/// | "S" | digits (number of fields) | (named fields) |
+/// +-----+---------------------------+----------------+
 ///
 /// named field:
-/// +-------------------------------------------+------+------+
-/// | digits (The length of the following name) | name | type |
-/// +-------------------------------------------+------+------+
+/// +------+-------------------------------------------+------+
+/// | type | digits (The length of the following name) | name |
+/// +------+-------------------------------------------+------+
 ///
 /// ```
 ///
@@ -662,7 +662,6 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
         Type::Tuple(fs) => {
             buffer.push('T');
             buffer.push_str(&fs.len().to_string());
-            buffer.push('_');
             for fty in fs {
                 encode_ty(fty, buffer);
             }
@@ -670,10 +669,10 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
         Type::AnonStruct(struct_ty) => {
             buffer.push('S');
             buffer.push_str(&struct_ty.fields().len().to_string());
-            buffer.push('_');
             for f in struct_ty.fields() {
-                buffer.push_str(&f.name().len().to_string());
                 encode_ty(f.ty(), buffer);
+                buffer.push_str(&f.name().len().to_string());
+                buffer.push_str(f.name());
             }
         }
         Type::Struct(struct_ty) => {

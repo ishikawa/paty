@@ -615,6 +615,11 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, tuple_ty, stmts)
             }
             syntax::ExprKind::AnonStruct(struct_value) => {
+                // Add anonymous struct type to declaration types, because we have to
+                // declare a type as a struct type in C.
+                // However, the Zero-sized struct should not have a definition.
+                program.add_decl_type(expr.expect_ty());
+
                 let mut fields = vec![];
 
                 for f in struct_value.fields() {

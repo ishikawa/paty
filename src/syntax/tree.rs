@@ -1828,6 +1828,11 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 it.next();
                 ExprKind::Boolean(false)
             }
+            TokenKind::Operator('{') => {
+                let fields = self.parse_elements(it, ('{', '}'), Self::value_field)?;
+                let struct_value = AnonStructValue::new(fields);
+                ExprKind::AnonStruct(struct_value)
+            }
             TokenKind::Operator('(') => {
                 // tuple or grouping values.
                 // - `()` -> empty tuple

@@ -355,6 +355,8 @@ D { bar: _, ... } = d
 D { foo, ... } = d
 D { baz, ... } = d
 puts(baz, foo)'
+# anonymous struct
+assert '{ a: 1 }' 'puts({a: 1})'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
