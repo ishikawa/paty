@@ -404,6 +404,12 @@ case { a: 100, b: 200, c: 300 }
 when { a, ...x }
   puts(a, x.c)
 end'
+assert '100 300' '
+struct T { a: int64, b: int64, c: int64 }
+case T { a: 100, b: 200, c: 300 }
+when T { a, ...x }
+  puts(a, x.c)
+end'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
