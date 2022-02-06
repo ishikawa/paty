@@ -484,13 +484,18 @@ impl<'tcx> Node for StructFieldDef<'tcx> {
 }
 
 #[derive(Debug)]
-struct StructValueBody<'nd, 'tcx> {
+pub struct StructValue<'nd, 'tcx> {
+    name: Option<String>,
     fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>,
 }
 
-impl<'nd, 'tcx> StructValueBody<'nd, 'tcx> {
-    pub fn new(fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
-        Self { fields }
+impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
+    pub fn new(name: Option<String>, fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
+        Self { name, fields }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
@@ -498,8 +503,12 @@ impl<'nd, 'tcx> StructValueBody<'nd, 'tcx> {
     }
 }
 
-impl fmt::Display for StructValueBody<'_, '_> {
+impl fmt::Display for StructValue<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(name) = self.name() {
+            write!(f, "struct {} ", name)?;
+        }
+
         let mut it = self.fields().iter().peekable();
         let empty = it.peek().is_none();
 
@@ -517,36 +526,6 @@ impl fmt::Display for StructValueBody<'_, '_> {
             write!(f, " ")?;
         }
         write!(f, "}}")
-    }
-}
-
-#[derive(Debug)]
-pub struct StructValue<'nd, 'tcx> {
-    name: Option<String>,
-    body: StructValueBody<'nd, 'tcx>,
-}
-
-impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
-    pub fn new(name: Option<String>, fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
-        let body = StructValueBody::new(fields);
-        Self { name, body }
-    }
-
-    pub fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-
-    pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
-        self.body.fields()
-    }
-}
-
-impl fmt::Display for StructValue<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(name) = self.name() {
-            write!(f, "struct {} ", name)?;
-        }
-        write!(f, "{}", self.body)
     }
 }
 
@@ -716,53 +695,6 @@ impl fmt::Display for PatternKind<'_, '_> {
 }
 
 #[derive(Debug)]
-struct StructPatternBody<'nd, 'tcx> {
-    fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>,
-}
-
-impl<'nd, 'tcx> StructPatternBody<'nd, 'tcx> {
-    pub fn new(fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
-        Self { fields }
-    }
-
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
-        self.fields.iter()
-    }
-
-    pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
-        for f in &self.fields {
-            if let PatternFieldOrSpread::PatternField(f) = f {
-                if f.name() == name {
-                    return Some(f);
-                }
-            }
-        }
-        None
-    }
-}
-
-impl fmt::Display for StructPatternBody<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut it = self.fields().peekable();
-        let empty = it.peek().is_none();
-        write!(f, "{{")?;
-        if !empty {
-            write!(f, " ")?;
-        }
-        while let Some(field) = it.next() {
-            field.fmt(f)?;
-            if it.peek().is_some() {
-                write!(f, ", ")?;
-            }
-        }
-        if !empty {
-            write!(f, " ")?;
-        }
-        write!(f, "}}")
-    }
-}
-
-#[derive(Debug)]
 pub enum ValueFieldOrSpread<'nd, 'tcx> {
     ValueField(ValueField<'nd, 'tcx>),
     Spread(SpreadExpr<'nd, 'tcx>),
@@ -823,13 +755,12 @@ impl<'nd, 'tcx> Node for ValueField<'nd, 'tcx> {
 #[derive(Debug)]
 pub struct StructPattern<'nd, 'tcx> {
     name: Option<String>,
-    body: StructPatternBody<'nd, 'tcx>,
+    fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>,
 }
 
 impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
     pub fn new(name: Option<String>, fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
-        let body = StructPatternBody::new(fields);
-        Self { name, body }
+        Self { name, fields }
     }
 
     pub fn name(&self) -> Option<&str> {
@@ -837,11 +768,18 @@ impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
     }
 
     pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
-        self.body.fields()
+        self.fields.iter()
     }
 
     pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
-        self.body.get_field(name)
+        for f in &self.fields {
+            if let PatternFieldOrSpread::PatternField(f) = f {
+                if f.name() == name {
+                    return Some(f);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -850,7 +788,23 @@ impl fmt::Display for StructPattern<'_, '_> {
         if let Some(name) = self.name() {
             write!(f, "{} ", name)?;
         }
-        write!(f, "{}", self.body)
+
+        let mut it = self.fields().peekable();
+        let empty = it.peek().is_none();
+        write!(f, "{{")?;
+        if !empty {
+            write!(f, " ")?;
+        }
+        while let Some(field) = it.next() {
+            field.fmt(f)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        if !empty {
+            write!(f, " ")?;
+        }
+        write!(f, "}}")
     }
 }
 

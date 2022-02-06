@@ -231,50 +231,9 @@ impl fmt::Display for TypedField<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct StructTyBody<'tcx> {
-    fields: Vec<TypedField<'tcx>>,
-}
-
-impl<'tcx> StructTyBody<'tcx> {
-    pub fn new(fields: Vec<TypedField<'tcx>>) -> Self {
-        Self { fields }
-    }
-
-    pub fn fields(&self) -> &[TypedField<'tcx>] {
-        self.fields.as_slice()
-    }
-
-    pub fn get_field(&self, name: &str) -> Option<&TypedField<'tcx>> {
-        self.fields.iter().find(|f| f.name() == name)
-    }
-}
-
-impl fmt::Display for StructTyBody<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut it = self.fields().iter().peekable();
-        let empty = it.peek().is_none();
-
-        write!(f, "{{")?;
-        if !empty {
-            write!(f, " ")?;
-        }
-        while let Some(field) = it.next() {
-            write!(f, "{}", field)?;
-            if it.peek().is_some() {
-                write!(f, ", ")?;
-            }
-        }
-        if !empty {
-            write!(f, " ")?;
-        }
-        write!(f, "}}")
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StructTy<'tcx> {
     name: Option<String>,
-    body: StructTyBody<'tcx>,
+    fields: Vec<TypedField<'tcx>>,
 }
 
 impl<'tcx> StructTy<'tcx> {
@@ -292,11 +251,9 @@ impl<'tcx> StructTy<'tcx> {
             // matched by structural.
             let mut fs = fields;
             fs.sort_by(|a, b| a.name().cmp(b.name()));
-            let body = StructTyBody::new(fs);
-            Self { name, body }
+            Self { name, fields: fs }
         } else {
-            let body = StructTyBody::new(fields);
-            Self { name, body }
+            Self { name, fields }
         }
     }
 
@@ -305,11 +262,11 @@ impl<'tcx> StructTy<'tcx> {
     }
 
     pub fn fields(&self) -> &[TypedField<'tcx>] {
-        self.body.fields()
+        self.fields.as_slice()
     }
 
     pub fn get_field(&self, name: &str) -> Option<&TypedField<'tcx>> {
-        self.body.get_field(name)
+        self.fields.iter().find(|f| f.name() == name)
     }
 }
 
@@ -318,7 +275,24 @@ impl fmt::Display for StructTy<'_> {
         if let Some(name) = self.name() {
             write!(f, "struct {} ", name)?;
         }
-        write!(f, "{}", self.body)
+
+        let mut it = self.fields().iter().peekable();
+        let empty = it.peek().is_none();
+
+        write!(f, "{{")?;
+        if !empty {
+            write!(f, " ")?;
+        }
+        while let Some(field) = it.next() {
+            write!(f, "{}", field)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        if !empty {
+            write!(f, " ")?;
+        }
+        write!(f, "}}")
     }
 }
 
