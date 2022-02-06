@@ -379,6 +379,10 @@ def foo({ a, ... }: { a: int64 })
   a
 end
 { a: 123 }.foo().puts()'
+assert '{ a: 100, b: 200, c: 300 }' '
+t1 = { a: 100, b: 200 }
+t2 = { c: 300, ...t1 }
+puts(t2)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

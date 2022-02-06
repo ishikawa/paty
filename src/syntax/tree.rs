@@ -585,6 +585,11 @@ impl<'nd, 'tcx> SpreadExpr<'nd, 'tcx> {
     pub fn operand(&self) -> Option<&'nd Expr<'nd, 'tcx>> {
         self.operand
     }
+
+    pub fn expect_operand(&self) -> &'nd Expr<'nd, 'tcx> {
+        self.operand
+            .unwrap_or_else(|| panic!("spread operator without an operand is illegal."))
+    }
 }
 
 impl fmt::Display for SpreadExpr<'_, '_> {

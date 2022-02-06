@@ -185,7 +185,7 @@ impl<'a, 'tcx> Emitter {
                     }
 
                     // Emit init statement if needed
-                    if var.used.get() > 0 || self.has_side_effect(init) {
+                    if var.used.get() > 0 || init.has_side_effect() {
                         self.emit_expr(init, code);
                         code.push_str(";\n");
                     }
@@ -537,37 +537,6 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             ExprKind::Var(var) => code.push_str(var.name()),
-        }
-    }
-
-    fn has_side_effect(&self, expr: &Expr) -> bool {
-        match expr.kind() {
-            ExprKind::Minus(a) | ExprKind::Not(a) => self.has_side_effect(a),
-            ExprKind::Add(a, b)
-            | ExprKind::Sub(a, b)
-            | ExprKind::Mul(a, b)
-            | ExprKind::Div(a, b)
-            | ExprKind::Eq(a, b)
-            | ExprKind::Ne(a, b)
-            | ExprKind::Lt(a, b)
-            | ExprKind::Le(a, b)
-            | ExprKind::Gt(a, b)
-            | ExprKind::Ge(a, b)
-            | ExprKind::And(a, b)
-            | ExprKind::Or(a, b) => self.has_side_effect(a) || self.has_side_effect(b),
-            ExprKind::Call { .. } => true,
-            ExprKind::Printf(_) => true,
-            ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| self.has_side_effect(sub_expr)),
-            ExprKind::StructValue(fs) => fs
-                .iter()
-                .any(|(_, sub_expr)| self.has_side_effect(sub_expr)),
-            ExprKind::Int64(_)
-            | ExprKind::Bool(_)
-            | ExprKind::Str(_)
-            | ExprKind::IndexAccess { .. }
-            | ExprKind::FieldAccess { .. }
-            | ExprKind::TmpVar(_)
-            | ExprKind::Var(_) => false,
         }
     }
 }

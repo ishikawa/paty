@@ -282,6 +282,66 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty.bottom_ty()
     }
+
+    // Returns `true` if the expression is cheap operation, so it can
+    // be used as immediate value.
+    pub fn can_be_immediate(&self) -> bool {
+        match &self.kind {
+            ExprKind::Minus(a) | ExprKind::Not(a) => a.can_be_immediate(),
+            ExprKind::Add(_, _)
+            | ExprKind::Sub(_, _)
+            | ExprKind::Mul(_, _)
+            | ExprKind::Div(_, _)
+            | ExprKind::Eq(_, _)
+            | ExprKind::Ne(_, _)
+            | ExprKind::Lt(_, _)
+            | ExprKind::Le(_, _)
+            | ExprKind::Gt(_, _)
+            | ExprKind::Ge(_, _)
+            | ExprKind::And(_, _)
+            | ExprKind::Or(_, _) => false,
+            ExprKind::Tuple(_)
+            | ExprKind::StructValue(_)
+            | ExprKind::Call { .. }
+            | ExprKind::Printf(_) => false,
+            ExprKind::Int64(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::IndexAccess { .. }
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::TmpVar(_)
+            | ExprKind::Var(_) => true,
+        }
+    }
+
+    // Returns `true` if the expression can have side effects.
+    pub fn has_side_effect(&self) -> bool {
+        match &self.kind {
+            ExprKind::Call { .. } | ExprKind::Printf(_) => true,
+            ExprKind::Minus(a) | ExprKind::Not(a) => a.has_side_effect(),
+            ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Le(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Ge(a, b)
+            | ExprKind::And(a, b)
+            | ExprKind::Or(a, b) => a.has_side_effect() || b.has_side_effect(),
+            ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| sub_expr.has_side_effect()),
+            ExprKind::StructValue(fs) => fs.iter().any(|(_, sub_expr)| sub_expr.has_side_effect()),
+            ExprKind::Int64(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::IndexAccess { .. }
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::TmpVar(_)
+            | ExprKind::Var(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -625,19 +685,36 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 // However, the Zero-sized struct should not have a definition.
                 program.add_decl_type(expr.expect_ty());
 
-                let mut fields = vec![];
+                let mut value_fields = vec![];
 
-                for f in struct_value.fields() {
-                    match f {
+                for field_or_spread in struct_value.fields() {
+                    match field_or_spread {
                         syntax::ValueFieldOrSpread::ValueField(field) => {
                             let value = self._build_expr(field.value(), program, stmts);
-                            fields.push((field.name().to_string(), inc_used(value)));
+                            value_fields.push((field.name().to_string(), inc_used(value)));
                         }
-                        syntax::ValueFieldOrSpread::Spread(_) => todo!(),
+                        syntax::ValueFieldOrSpread::Spread(spread) => {
+                            let operand = spread.expect_operand();
+                            let spread_value = self._build_expr(operand, program, stmts);
+                            let fields = match spread_value.ty() {
+                                Type::Struct(struct_ty) => struct_ty.fields(),
+                                Type::AnonStruct(struct_ty) => struct_ty.fields(),
+                                _ => unreachable!("spread with invalid expr: {}", spread),
+                            };
+
+                            for f in fields {
+                                let kind = ExprKind::FieldAccess {
+                                    name: f.name().to_string(),
+                                    operand: inc_used(spread_value),
+                                };
+                                let expr = self.expr_arena.alloc(Expr::new(kind, f.ty()));
+                                value_fields.push((f.name().to_string(), inc_used(expr)));
+                            }
+                        }
                     }
                 }
 
-                let kind = ExprKind::StructValue(fields);
+                let kind = ExprKind::StructValue(value_fields);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Struct(struct_value) => {
@@ -1318,7 +1395,7 @@ impl<'a, 'tcx> Optimizer {
     fn optimize_stmt(&mut self, stmt: &Stmt<'a, 'tcx>) {
         match stmt {
             Stmt::TmpVarDef { var, init, pruned } => {
-                if var.used.get() == 1 {
+                if var.used.get() == 1 || init.can_be_immediate() {
                     // This temporary variable is used only once, so it could be
                     // replaced with the expression.
                     var.immediate.set(Some(init));
