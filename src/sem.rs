@@ -310,173 +310,174 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
             unify_expr_type(tcx.tuple(&value_types), expr, errors);
         }
-        syntax::ExprKind::AnonStruct(struct_value) => {
-            // Iterate over all initial fields and spread operators,
-            // and analyze these sub-expressions. The result of merging
-            // all these fields is then the type of the structure.
-            let mut defined_fields: HashMap<&str, &Type<'tcx>> = HashMap::new();
-            let mut value_fields = HashSet::new();
-
-            for f in struct_value.fields() {
-                match f {
-                    syntax::ValueFieldOrSpread::ValueField(field) => {
-                        // Define by field can be only once.
-                        if value_fields.contains(&field.name()) {
-                            errors.push(SemanticError::DuplicateStructField {
-                                name: field.name().to_string(),
-                                struct_ty: tcx.empty_anon_struct_ty(),
-                            });
-                            continue;
-                        }
-
-                        analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
-                        let ty = if let Some(ty) = field.value().ty() {
-                            ty
-                        } else {
-                            continue;
-                        };
-
-                        // If the value will be overridden, its type must be consistence.
-                        if let Some(defined_ty) = defined_fields.get(&field.name()) {
-                            if !check_type(defined_ty, ty, errors) {
-                                continue;
-                            }
-                        }
-                        defined_fields.insert(field.name(), ty);
-                        value_fields.insert(field.name());
-                    }
-                    syntax::ValueFieldOrSpread::Spread(spread) => {
-                        let operand = if let Some(operand) = spread.operand() {
-                            operand
-                        } else {
-                            errors.push(SemanticError::EmptySpreadExpression);
-                            continue;
-                        };
-
-                        analyze_expr(tcx, operand, vars, functions, named_types, errors);
-                        let ty = if let Some(ty) = operand.ty() {
-                            ty
-                        } else {
-                            continue;
-                        };
-
-                        if let Type::Struct(struct_ty) = ty.bottom_ty() {
-                            for tf in struct_ty.fields() {
-                                // If the value will be overridden, its type must be consistence.
-                                if let Some(defined_ty) = defined_fields.get(&tf.name()) {
-                                    if !check_type(defined_ty, tf.ty(), errors) {
-                                        continue;
-                                    }
-                                }
-                                defined_fields.insert(tf.name(), tf.ty());
-                            }
-                        } else {
-                            errors.push(SemanticError::InvalidSpreadOperand { ty });
-                        }
-                    }
-                }
-            }
-
-            // Construct struct type
-            let expected_tfs = defined_fields
-                .iter()
-                .map(|(k, ty)| TypedField::new(k.to_string(), ty))
-                .collect::<Vec<_>>();
-
-            unify_expr_type(tcx.anon_struct_ty(expected_tfs), expr, errors);
-        }
         syntax::ExprKind::Struct(struct_value) => {
-            // Assign named struct type to struct value
-            let expected_ty = if let Some(ty) = named_types.get(struct_value.name()) {
-                ty
-            } else {
-                errors.push(SemanticError::UndefinedNamedType {
-                    name: struct_value.name().to_string(),
-                });
-                return;
-            };
+            if let Some(struct_name) = struct_value.name() {
+                // Assign named struct type to struct value
+                let expected_ty = if let Some(ty) = named_types.get(struct_name) {
+                    ty
+                } else {
+                    errors.push(SemanticError::UndefinedNamedType {
+                        name: struct_name.to_string(),
+                    });
+                    return;
+                };
 
-            let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
-                struct_ty
-            } else {
-                errors.push(SemanticError::MismatchedType {
-                    expected: tcx.empty_struct_ty(struct_value.name().to_string()),
-                    actual: expected_ty,
-                });
-                return;
-            };
+                let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
+                    struct_ty
+                } else {
+                    errors.push(SemanticError::MismatchedType {
+                        expected: tcx.empty_struct_ty(struct_name.to_string()),
+                        actual: expected_ty,
+                    });
+                    return;
+                };
 
-            unify_expr_type(expected_ty, expr, errors);
+                unify_expr_type(expected_ty, expr, errors);
 
-            // Analyze fields
-            let mut defined_fields = HashSet::new();
+                // Analyze fields
+                let mut defined_fields = HashSet::new();
 
-            for value_or_spread in struct_value.fields() {
-                match value_or_spread {
-                    syntax::ValueFieldOrSpread::ValueField(field) => {
-                        if defined_fields.contains(field.name()) {
-                            errors.push(SemanticError::DuplicateStructField {
-                                name: field.name().to_string(),
-                                struct_ty: expected_ty,
-                            });
-                            continue;
-                        }
-                        defined_fields.insert(field.name());
-
-                        let field_ty = if let Some(f) = struct_ty.get_field(field.name()) {
-                            f.ty()
-                        } else {
-                            errors.push(SemanticError::UndefinedStructField {
-                                name: field.name().to_string(),
-                                struct_ty: expected_ty,
-                            });
-                            return;
-                        };
-
-                        analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
-                        unify_expr_type(field_ty, field.value(), errors);
-                    }
-                    syntax::ValueFieldOrSpread::Spread(spread) => {
-                        let operand = if let Some(operand) = spread.operand() {
-                            operand
-                        } else {
-                            errors.push(SemanticError::EmptySpreadExpression);
-                            continue;
-                        };
-
-                        analyze_expr(tcx, operand, vars, functions, named_types, errors);
-                        let ty = if let Some(ty) = operand.ty() {
-                            ty
-                        } else {
-                            continue;
-                        };
-
-                        let fields = match ty.bottom_ty() {
-                            Type::Struct(t) => t.fields(),
-                            _ => {
-                                errors.push(SemanticError::InvalidSpreadOperand { ty });
+                for value_or_spread in struct_value.fields() {
+                    match value_or_spread {
+                        syntax::ValueFieldOrSpread::ValueField(field) => {
+                            if defined_fields.contains(field.name()) {
+                                errors.push(SemanticError::DuplicateStructField {
+                                    name: field.name().to_string(),
+                                    struct_ty: expected_ty,
+                                });
                                 continue;
                             }
-                        };
+                            defined_fields.insert(field.name());
 
-                        for tf in fields {
-                            let expected_field_ty = if let Some(f) = struct_ty.get_field(tf.name())
-                            {
+                            let field_ty = if let Some(f) = struct_ty.get_field(field.name()) {
                                 f.ty()
                             } else {
                                 errors.push(SemanticError::UndefinedStructField {
-                                    name: tf.name().to_string(),
+                                    name: field.name().to_string(),
                                     struct_ty: expected_ty,
                                 });
                                 return;
                             };
 
-                            if !check_type(expected_field_ty, tf.ty(), errors) {
+                            analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
+                            unify_expr_type(field_ty, field.value(), errors);
+                        }
+                        syntax::ValueFieldOrSpread::Spread(spread) => {
+                            let operand = if let Some(operand) = spread.operand() {
+                                operand
+                            } else {
+                                errors.push(SemanticError::EmptySpreadExpression);
                                 continue;
+                            };
+
+                            analyze_expr(tcx, operand, vars, functions, named_types, errors);
+                            let ty = if let Some(ty) = operand.ty() {
+                                ty
+                            } else {
+                                continue;
+                            };
+
+                            let fields = match ty.bottom_ty() {
+                                Type::Struct(t) => t.fields(),
+                                _ => {
+                                    errors.push(SemanticError::InvalidSpreadOperand { ty });
+                                    continue;
+                                }
+                            };
+
+                            for tf in fields {
+                                let expected_field_ty =
+                                    if let Some(f) = struct_ty.get_field(tf.name()) {
+                                        f.ty()
+                                    } else {
+                                        errors.push(SemanticError::UndefinedStructField {
+                                            name: tf.name().to_string(),
+                                            struct_ty: expected_ty,
+                                        });
+                                        return;
+                                    };
+
+                                if !check_type(expected_field_ty, tf.ty(), errors) {
+                                    continue;
+                                }
                             }
                         }
                     }
                 }
+            } else {
+                // Iterate over all initial fields and spread operators,
+                // and analyze these sub-expressions. The result of merging
+                // all these fields is then the type of the structure.
+                let mut defined_fields: HashMap<&str, &Type<'tcx>> = HashMap::new();
+                let mut value_fields = HashSet::new();
+
+                for f in struct_value.fields() {
+                    match f {
+                        syntax::ValueFieldOrSpread::ValueField(field) => {
+                            // Define by field can be only once.
+                            if value_fields.contains(&field.name()) {
+                                errors.push(SemanticError::DuplicateStructField {
+                                    name: field.name().to_string(),
+                                    struct_ty: tcx.empty_anon_struct_ty(),
+                                });
+                                continue;
+                            }
+
+                            analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
+                            let ty = if let Some(ty) = field.value().ty() {
+                                ty
+                            } else {
+                                continue;
+                            };
+
+                            // If the value will be overridden, its type must be consistence.
+                            if let Some(defined_ty) = defined_fields.get(&field.name()) {
+                                if !check_type(defined_ty, ty, errors) {
+                                    continue;
+                                }
+                            }
+                            defined_fields.insert(field.name(), ty);
+                            value_fields.insert(field.name());
+                        }
+                        syntax::ValueFieldOrSpread::Spread(spread) => {
+                            let operand = if let Some(operand) = spread.operand() {
+                                operand
+                            } else {
+                                errors.push(SemanticError::EmptySpreadExpression);
+                                continue;
+                            };
+
+                            analyze_expr(tcx, operand, vars, functions, named_types, errors);
+                            let ty = if let Some(ty) = operand.ty() {
+                                ty
+                            } else {
+                                continue;
+                            };
+
+                            if let Type::Struct(struct_ty) = ty.bottom_ty() {
+                                for tf in struct_ty.fields() {
+                                    // If the value will be overridden, its type must be consistence.
+                                    if let Some(defined_ty) = defined_fields.get(&tf.name()) {
+                                        if !check_type(defined_ty, tf.ty(), errors) {
+                                            continue;
+                                        }
+                                    }
+                                    defined_fields.insert(tf.name(), tf.ty());
+                                }
+                            } else {
+                                errors.push(SemanticError::InvalidSpreadOperand { ty });
+                            }
+                        }
+                    }
+                }
+
+                // Construct struct type
+                let expected_tfs = defined_fields
+                    .iter()
+                    .map(|(k, ty)| TypedField::new(k.to_string(), ty))
+                    .collect::<Vec<_>>();
+
+                unify_expr_type(tcx.anon_struct_ty(expected_tfs), expr, errors);
             }
         }
         syntax::ExprKind::Minus(a) => {
@@ -749,7 +750,6 @@ fn analyze_let_pattern<'nd: 'tcx, 'tcx>(
         | PatternKind::Boolean(_)
         | PatternKind::String(_)
         | PatternKind::Tuple(_)
-        | PatternKind::AnonStruct(_)
         | PatternKind::Struct(_) => {}
         PatternKind::Range { .. } => {
             unreachable!("Unsupported let pattern: `{}`", pat.kind());
@@ -897,35 +897,6 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
 
             unify_pat_type(tcx.tuple(sub_types), pat, errors);
         }
-        PatternKind::AnonStruct(struct_pat) => {
-            // Struct type check
-            let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
-                struct_ty
-            } else {
-                errors.push(SemanticError::MismatchedType {
-                    expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat),
-                });
-                return;
-            };
-
-            if !unify_pat_type(expected_ty, pat, errors) {
-                return;
-            }
-
-            // Fields check
-            // All fields must be covered or omitted by a spread pattern.
-            analyze_pattern_struct_fields(
-                tcx,
-                struct_pat.fields(),
-                struct_ty.fields(),
-                expected_ty,
-                vars,
-                functions,
-                named_types,
-                errors,
-            );
-        }
         PatternKind::Struct(struct_pat) => {
             // Struct type check
             let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
@@ -993,33 +964,23 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
 
             tcx.tuple(&sub_types)
         }
-        PatternKind::AnonStruct(struct_pat) => {
-            let mut field_types = vec![];
-
-            for f in struct_pat.fields() {
-                if let syntax::PatternFieldOrSpread::PatternField(f) = f {
-                    field_types.push(TypedField::new(
-                        f.name().to_string(),
-                        pattern_to_type(tcx, f.pattern()),
-                    ));
-                }
-            }
-
-            tcx.anon_struct_ty(field_types)
-        }
         PatternKind::Struct(struct_pat) => {
-            let mut field_types = vec![];
+            let mut typed_fields = vec![];
 
             for f in struct_pat.fields() {
                 if let syntax::PatternFieldOrSpread::PatternField(f) = f {
-                    field_types.push(TypedField::new(
+                    typed_fields.push(TypedField::new(
                         f.name().to_string(),
                         pattern_to_type(tcx, f.pattern()),
                     ));
                 }
             }
 
-            tcx.struct_ty(struct_pat.name().to_string(), field_types)
+            if let Some(struct_name) = struct_pat.name() {
+                tcx.struct_ty(struct_name.to_string(), typed_fields)
+            } else {
+                tcx.anon_struct_ty(typed_fields)
+            }
         }
         PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }

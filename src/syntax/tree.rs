@@ -195,7 +195,6 @@ pub enum ExprKind<'nd, 'tcx> {
     Var(String),
     Tuple(Vec<&'nd Expr<'nd, 'tcx>>),
     Struct(StructValue<'nd, 'tcx>),
-    AnonStruct(AnonStructValue<'nd, 'tcx>),
 
     // unary operators
     Minus(&'nd Expr<'nd, 'tcx>),
@@ -248,7 +247,6 @@ impl fmt::Display for ExprKind<'_, '_> {
                 }
                 write!(f, ")")
             }
-            ExprKind::AnonStruct(value) => value.fmt(f),
             ExprKind::Struct(value) => value.fmt(f),
             ExprKind::Minus(operand) => write!(f, "-{}", operand),
             ExprKind::Add(a, b) => write!(f, "{} + {}", a, b),
@@ -486,7 +484,7 @@ impl<'tcx> Node for StructFieldDef<'tcx> {
 }
 
 #[derive(Debug)]
-pub struct StructValueBody<'nd, 'tcx> {
+struct StructValueBody<'nd, 'tcx> {
     fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>,
 }
 
@@ -523,41 +521,19 @@ impl fmt::Display for StructValueBody<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct AnonStructValue<'nd, 'tcx> {
-    body: StructValueBody<'nd, 'tcx>,
-}
-
-impl<'nd, 'tcx> AnonStructValue<'nd, 'tcx> {
-    pub fn new(fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
-        let body = StructValueBody::new(fields);
-        Self { body }
-    }
-
-    pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
-        self.body.fields()
-    }
-}
-
-impl fmt::Display for AnonStructValue<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.body)
-    }
-}
-
-#[derive(Debug)]
 pub struct StructValue<'nd, 'tcx> {
-    name: String,
+    name: Option<String>,
     body: StructValueBody<'nd, 'tcx>,
 }
 
 impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
-    pub fn new(name: String, fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
+    pub fn new(name: Option<String>, fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
         let body = StructValueBody::new(fields);
         Self { name, body }
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
@@ -567,7 +543,9 @@ impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
 
 impl fmt::Display for StructValue<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "struct {} ", self.name())?;
+        if let Some(name) = self.name() {
+            write!(f, "struct {} ", name)?;
+        }
         write!(f, "{}", self.body)
     }
 }
@@ -693,7 +671,6 @@ pub enum PatternKind<'nd, 'tcx> {
     String(String),
     Range { lo: i64, hi: i64, end: RangeEnd },
     Tuple(Vec<&'nd Pattern<'nd, 'tcx>>),
-    AnonStruct(AnonStructPattern<'nd, 'tcx>),
     Struct(StructPattern<'nd, 'tcx>),
     Var(String),
     Wildcard,
@@ -731,7 +708,6 @@ impl fmt::Display for PatternKind<'_, '_> {
                 }
                 write!(f, ")")
             }
-            PatternKind::AnonStruct(struct_pat) => struct_pat.fmt(f),
             PatternKind::Struct(struct_pat) => struct_pat.fmt(f),
             PatternKind::Var(name) => write!(f, "{}", name),
             PatternKind::Wildcard => write!(f, "_"),
@@ -740,7 +716,7 @@ impl fmt::Display for PatternKind<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct StructPatternBody<'nd, 'tcx> {
+struct StructPatternBody<'nd, 'tcx> {
     fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>,
 }
 
@@ -845,45 +821,19 @@ impl<'nd, 'tcx> Node for ValueField<'nd, 'tcx> {
 }
 
 #[derive(Debug)]
-pub struct AnonStructPattern<'nd, 'tcx> {
-    body: StructPatternBody<'nd, 'tcx>,
-}
-
-impl<'nd, 'tcx> AnonStructPattern<'nd, 'tcx> {
-    pub fn new(fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
-        let body = StructPatternBody::new(fields);
-        Self { body }
-    }
-
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
-        self.body.fields()
-    }
-
-    pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
-        self.body.get_field(name)
-    }
-}
-
-impl fmt::Display for AnonStructPattern<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.body)
-    }
-}
-
-#[derive(Debug)]
 pub struct StructPattern<'nd, 'tcx> {
-    name: String,
+    name: Option<String>,
     body: StructPatternBody<'nd, 'tcx>,
 }
 
 impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
-    pub fn new(name: String, fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
+    pub fn new(name: Option<String>, fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
         let body = StructPatternBody::new(fields);
         Self { name, body }
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
@@ -897,7 +847,9 @@ impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
 
 impl fmt::Display for StructPattern<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ", self.name())?;
+        if let Some(name) = self.name() {
+            write!(f, "{} ", name)?;
+        }
         write!(f, "{}", self.body)
     }
 }
@@ -1514,15 +1466,15 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             }
             TokenKind::Operator('{') => {
                 let fields = self.parse_elements(it, ('{', '}'), Self::pattern_field)?;
-                let struct_value = AnonStructPattern::new(fields);
-                let kind = PatternKind::AnonStruct(struct_value);
+                let struct_value = StructPattern::new(None, fields);
+                let kind = PatternKind::Struct(struct_value);
                 self.alloc_pat(kind, token)
             }
             TokenKind::Identifier(name) => {
                 it.next();
                 if self.match_token(it, TokenKind::Operator('{')) {
                     let fields = self.parse_elements(it, ('{', '}'), Self::pattern_field)?;
-                    let struct_value = StructPattern::new(name.to_string(), fields);
+                    let struct_value = StructPattern::new(Some(name.to_string()), fields);
                     let kind = PatternKind::Struct(struct_value);
                     self.alloc_pat(kind, token)
                 } else {
@@ -1556,15 +1508,13 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
                 PatternKind::Tuple(ps)
             }
-            ExprKind::AnonStruct(struct_value) => {
-                let fields = self.value_fields_to_pattern_fields(struct_value.fields())?;
-                let struct_pat = AnonStructPattern::new(fields);
-
-                PatternKind::AnonStruct(struct_pat)
-            }
             ExprKind::Struct(struct_value) => {
                 let fields = self.value_fields_to_pattern_fields(struct_value.fields())?;
-                let struct_pat = StructPattern::new(struct_value.name().to_string(), fields);
+                let struct_pat = if let Some(name) = struct_value.name() {
+                    StructPattern::new(Some(name.to_string()), fields)
+                } else {
+                    StructPattern::new(None, fields)
+                };
 
                 PatternKind::Struct(struct_pat)
             }
@@ -1862,7 +1812,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                     ExprKind::Call(CallExpr::new(name.clone(), args))
                 } else if self.match_token(it, TokenKind::Operator('{')) {
                     let fields = self.parse_elements(it, ('{', '}'), Self::value_field)?;
-                    let struct_value = StructValue::new(name.to_string(), fields);
+                    let struct_value = StructValue::new(Some(name.to_string()), fields);
                     ExprKind::Struct(struct_value)
                 } else {
                     ExprKind::Var(name.clone())
@@ -1888,8 +1838,8 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             }
             TokenKind::Operator('{') => {
                 let fields = self.parse_elements(it, ('{', '}'), Self::value_field)?;
-                let struct_value = AnonStructValue::new(fields);
-                ExprKind::AnonStruct(struct_value)
+                let struct_value = StructValue::new(None, fields);
+                ExprKind::Struct(struct_value)
             }
             TokenKind::Operator('(') => {
                 // tuple or grouping values.

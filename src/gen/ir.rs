@@ -564,9 +564,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             // ignore pattern but we have to define a parameter.
                             Parameter::TmpVar(self.next_temp_var(ty))
                         }
-                        PatternKind::Tuple(_)
-                        | PatternKind::AnonStruct(_)
-                        | PatternKind::Struct(_) => {
+                        PatternKind::Tuple(_) | PatternKind::Struct(_) => {
                             // Create a temporary parameter name to be able to referenced in the body.
                             // Simultaneously, we build deconstruct assignment expressions.
                             let t = self.next_temp_var(ty);
@@ -675,61 +673,14 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Tuple(values);
                 self.push_expr_kind(kind, tuple_ty, stmts)
             }
-            syntax::ExprKind::AnonStruct(struct_value) => {
-                // Add anonymous struct type to declaration types, because we have to
-                // declare a type as a struct type in C.
-                // However, the Zero-sized struct should not have a definition.
-                program.add_decl_type(expr.expect_ty());
-
-                // Latter initializer can override previous initializers.
-                // So generate initializer values in reversed order.
-                let mut value_fields = vec![];
-                let mut initialized_fields = HashSet::new();
-
-                for field_or_spread in struct_value.fields().iter().rev() {
-                    match field_or_spread {
-                        syntax::ValueFieldOrSpread::ValueField(field) => {
-                            if !initialized_fields.contains(&field.name()) {
-                                let value = self._build_expr(field.value(), program, stmts);
-                                value_fields.push((field.name().to_string(), inc_used(value)));
-                                initialized_fields.insert(field.name());
-                            }
-                        }
-                        syntax::ValueFieldOrSpread::Spread(spread) => {
-                            let operand = spread.expect_operand();
-                            let fields = match operand.expect_ty() {
-                                Type::Struct(struct_ty) => struct_ty.fields(),
-                                _ => unreachable!("spread with invalid expr: {}", spread),
-                            };
-                            let built_spread_value = None;
-                            for field in fields.iter().rev() {
-                                if initialized_fields.contains(&field.name()) {
-                                    // Overridden
-                                    continue;
-                                }
-
-                                let spread_value = built_spread_value
-                                    .unwrap_or_else(|| self._build_expr(operand, program, stmts));
-
-                                let kind = ExprKind::FieldAccess {
-                                    name: field.name().to_string(),
-                                    operand: inc_used(spread_value),
-                                };
-                                let expr = self.expr_arena.alloc(Expr::new(kind, field.ty()));
-                                value_fields.push((field.name().to_string(), inc_used(expr)));
-                                initialized_fields.insert(field.name());
-                            }
-                        }
-                    }
+            syntax::ExprKind::Struct(struct_value) => {
+                if struct_value.name().is_none() {
+                    // Add anonymous struct type to declaration types, because we have to
+                    // declare a type as a struct type in C.
+                    // However, the Zero-sized struct should not have a definition.
+                    program.add_decl_type(expr.expect_ty());
                 }
 
-                // Reversed -> Ordered
-                value_fields.reverse();
-
-                let kind = ExprKind::StructValue(value_fields);
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
-            }
-            syntax::ExprKind::Struct(struct_value) => {
                 // Latter initializer can override previous initializers.
                 // So generate initializer values in reversed order.
                 let mut value_fields = vec![];
@@ -1032,28 +983,6 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     self._build_let_pattern(sub_pat, field, stmts)
                 }
             }
-            PatternKind::AnonStruct(struct_pat) => {
-                for f in struct_pat.fields() {
-                    match f {
-                        syntax::PatternFieldOrSpread::PatternField(pat_field) => {
-                            let kind = ExprKind::FieldAccess {
-                                operand: inc_used(init),
-                                name: pat_field.name().to_string(),
-                            };
-                            let field = self
-                                .expr_arena
-                                .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-
-                            self._build_let_pattern(pat_field.pattern(), field, stmts)
-                        }
-                        syntax::PatternFieldOrSpread::Spread(spread) => {
-                            if spread.name().is_some() {
-                                todo!("anonymous struct");
-                            }
-                        }
-                    }
-                }
-            }
             PatternKind::Struct(struct_pat) => {
                 for f in struct_pat.fields() {
                     match f {
@@ -1070,7 +999,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         }
                         syntax::PatternFieldOrSpread::Spread(spread) => {
                             if spread.name().is_some() {
-                                todo!("anonymous struct");
+                                todo!("struct spread in let");
                             }
                         }
                     }
@@ -1262,103 +1191,6 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         };
                         let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
                         let sub_condition = self._build_pattern(operand, pat, program, stmts);
-
-                        if let Some(cond) = condition {
-                            if let Some(sub_cond) = sub_condition {
-                                let kind = ExprKind::And(cond, sub_cond);
-                                condition = Some(
-                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
-                                );
-                            }
-                        } else {
-                            condition = sub_condition;
-                        }
-                    }
-
-                    condition
-                }
-            }
-            PatternKind::AnonStruct(struct_pat) => {
-                if struct_pat.fields().len() == 0 {
-                    unreachable!(
-                        "Empty struct must be zero-sized type. It should be handled above."
-                    );
-                } else {
-                    // Split fields into pattern fields and a spread.
-                    let mut pattern_fields = vec![];
-                    let mut spread_pat = None;
-
-                    for f in struct_pat.fields() {
-                        match f {
-                            syntax::PatternFieldOrSpread::PatternField(pf) => {
-                                pattern_fields.push(pf);
-                            }
-                            syntax::PatternFieldOrSpread::Spread(spread) => {
-                                spread_pat = Some(spread);
-                            }
-                        }
-                    }
-                    if let Some(spread_pat) = spread_pat {
-                        if let Some(spread_name) = spread_pat.name() {
-                            let spread_ty = spread_pat.expect_ty();
-                            program.add_decl_type(spread_ty);
-
-                            let struct_ty = if let Type::Struct(struct_ty) = spread_ty {
-                                struct_ty
-                            } else {
-                                unreachable!(
-                                    "spread pattern type must be anonymous struct: {}",
-                                    spread_ty
-                                );
-                            };
-
-                            let values = struct_ty
-                                .fields()
-                                .iter()
-                                .map(|f| {
-                                    let kind = ExprKind::FieldAccess {
-                                        operand: inc_used(t_expr),
-                                        name: f.name().to_string(),
-                                    };
-                                    let v = self.expr_arena.alloc(Expr::new(kind, f.ty()));
-
-                                    (f.name().to_string(), &*v)
-                                })
-                                .collect::<Vec<_>>();
-
-                            let struct_value = self
-                                .expr_arena
-                                .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
-
-                            stmts.push(Stmt::VarDef {
-                                name: spread_name.to_string(),
-                                init: inc_used(struct_value),
-                            });
-                        }
-                    }
-
-                    let first_field = pattern_fields[0];
-                    let kind = ExprKind::FieldAccess {
-                        operand: inc_used(t_expr),
-                        name: first_field.name().to_string(),
-                    };
-                    let operand = self
-                        .expr_arena
-                        .alloc(Expr::new(kind, first_field.pattern().expect_ty()));
-
-                    let mut condition =
-                        self._build_pattern(operand, first_field.pattern(), program, stmts);
-
-                    for pat_field in pattern_fields.iter().skip(1) {
-                        let kind = ExprKind::FieldAccess {
-                            operand: inc_used(t_expr),
-                            name: pat_field.name().to_string(),
-                        };
-                        let operand = self
-                            .expr_arena
-                            .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-                        let sub_condition =
-                            self._build_pattern(operand, pat_field.pattern(), program, stmts);
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {
