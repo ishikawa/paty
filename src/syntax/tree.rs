@@ -1485,6 +1485,12 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                     unreachable!("invalid tuple or group");
                 }
             }
+            TokenKind::Operator('{') => {
+                let fields = self.parse_elements(it, ('{', '}'), Self::pattern_field)?;
+                let struct_value = AnonStructPattern::new(fields);
+                let kind = PatternKind::AnonStruct(struct_value);
+                self.alloc_pat(kind, token)
+            }
             TokenKind::Identifier(name) => {
                 it.next();
                 if self.match_token(it, TokenKind::Operator('{')) {

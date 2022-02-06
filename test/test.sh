@@ -374,6 +374,11 @@ def foo(n: int64, options: { repeat: boolean, count: int64 })
 end
 6.foo({ count: 0, repeat: false }).puts()
 3.foo({ count: 3, repeat: true }).puts()'
+assert '123' '
+def foo({ a, ... }: { a: int64 })
+  a
+end
+{ a: 123 }.foo().puts()'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
