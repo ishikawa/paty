@@ -167,6 +167,30 @@ def foo(b: boolean)
 end
 puts(foo(true))
 puts(foo(false))'
+assert '0..=2
+0..=2
+3..<10
+3..<10
+10
+11..' '
+def bar(n: int64)
+  case n
+  when 0 | 1 | 2
+    "0..=2"
+  when 3 | 4..<10
+    "3..<10"
+  when 10
+    "10"
+  else
+    "11.."
+  end
+end
+bar(0)
+bar(2)
+bar(3)
+bar(6)
+bar(10)
+bar(11)'
 # function overloading
 assert "30
 true

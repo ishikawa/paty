@@ -1467,7 +1467,26 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             }
         };
 
-        Ok(pat)
+        // Or-pattern?
+        let mut sub_pats = vec![pat];
+
+        while let Some(t) = it.peek() {
+            if let TokenKind::Operator('|') = t.kind() {
+                it.next();
+                sub_pats.push(self.pattern(it)?);
+            } else {
+                break;
+            }
+        }
+
+        if sub_pats.len() > 1 {
+            let kind = PatternKind::Or(sub_pats);
+            let or_pat = self.pat_arena.alloc(Pattern::new(kind));
+
+            Ok(or_pat)
+        } else {
+            Ok(pat)
+        }
     }
 
     fn expr_to_pattern(
