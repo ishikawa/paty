@@ -415,6 +415,16 @@ struct T { a: int64, b: int64, c: int64 }
 t1 = T { a: 1, b: 2, c: 3 }
 { a, ...x } = t1
 puts(a, x.c)'
+assert 'T { a: 50, b: 10, c: 40 }' '
+struct T {
+  a: int64,
+  b: int64,
+  c: int64,
+}
+t1 = T { a: 1, b: 2, c: 3 }
+t2 = T { ...t1, a: 3, b: 10 } # { a: 3, b: 10, c: 3 }
+t3 = T { ...t1, ...t2, ...{ a: 50, c: 40 } }
+puts(t3)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
