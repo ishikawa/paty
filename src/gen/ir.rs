@@ -498,6 +498,9 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     let pat = p.pattern();
                     let ty = pat.expect_ty();
 
+                    // To emit anonymous struct type
+                    program.add_decl_type(ty);
+
                     // Assign parameter names to be able to referenced later.
                     let param = match pat.kind() {
                         PatternKind::Var(name) => Parameter::Var(Var::new(name, ty)),

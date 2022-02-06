@@ -526,7 +526,14 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
             // index boundary check
             let ty = operand.expect_ty();
+
             if let Type::Struct(struct_ty) = ty {
+                if let Some(f) = struct_ty.get_field(name) {
+                    // apply type
+                    unify_expr_type(f.ty(), expr, errors);
+                    return;
+                }
+            } else if let Type::AnonStruct(struct_ty) = ty {
                 if let Some(f) = struct_ty.get_field(name) {
                     // apply type
                     unify_expr_type(f.ty(), expr, errors);

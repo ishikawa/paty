@@ -1292,6 +1292,27 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         }
     }
 
+    fn type_field(&self, it: &mut TokenIterator<'t>) -> Result<TypedField<'tcx>, ParseError<'t>> {
+        let start_token = if let Some(tok) = it.peek() {
+            tok
+        } else {
+            return Err(ParseError::NotParsed);
+        };
+
+        match start_token.kind() {
+            TokenKind::Identifier(name) => {
+                let name = name.to_string();
+                it.next();
+
+                // field
+                self.expect_token(it, TokenKind::Operator(':'))?;
+
+                let ty = self.type_specifier(it)?;
+                Ok(TypedField::new(name, ty))
+            }
+            _ => Err(ParseError::NotParsed),
+        }
+    }
     fn type_specifier(
         &self,
         it: &mut TokenIterator<'t>,
@@ -1335,6 +1356,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 it.next();
 
                 self.tcx.tuple(&value_types)
+            }
+            TokenKind::Operator('{') => {
+                let fields = self.parse_elements(it, ('{', '}'), Self::type_field)?;
+                self.tcx.anon_struct_ty(fields)
             }
             TokenKind::Identifier(name) => {
                 it.next();

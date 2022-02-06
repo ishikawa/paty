@@ -234,3 +234,9 @@ assert 'Semantic error: no field `b` on type `struct A { a: int64 }`' "
 struct A { a: int64 }
 a = A { a: 100 }
 a.b"
+# anonymous struct
+assert 'expected type `{ a: int64, b: int64 }`, found `int64`' '
+def foo(opts: { a: int64, b: int64 })
+  opts.a + opts.b
+end
+foo(100)'
