@@ -397,7 +397,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
         }
         syntax::ExprKind::Struct(struct_value) => {
             // Assign named struct type to struct value
-            let ty = if let Some(ty) = named_types.get(struct_value.name()) {
+            let expected_ty = if let Some(ty) = named_types.get(struct_value.name()) {
                 ty
             } else {
                 errors.push(SemanticError::UndefinedNamedType {
@@ -406,28 +406,28 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 return;
             };
 
-            let struct_ty = if let Type::Struct(struct_ty) = ty {
+            let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
                 struct_ty
             } else {
                 errors.push(SemanticError::MismatchedType {
                     expected: tcx.named_struct(struct_value.name().to_string()),
-                    actual: ty,
+                    actual: expected_ty,
                 });
                 return;
             };
 
-            unify_expr_type(ty, expr, errors);
+            unify_expr_type(expected_ty, expr, errors);
 
             // Analyze fields
             let mut defined_fields = HashSet::new();
 
-            for f in struct_value.fields() {
-                match f {
+            for value_or_spread in struct_value.fields() {
+                match value_or_spread {
                     syntax::ValueFieldOrSpread::ValueField(field) => {
                         if defined_fields.contains(field.name()) {
                             errors.push(SemanticError::DuplicateStructField {
                                 name: field.name().to_string(),
-                                struct_ty: ty,
+                                struct_ty: expected_ty,
                             });
                             continue;
                         }
@@ -438,7 +438,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                         } else {
                             errors.push(SemanticError::UndefinedStructField {
                                 name: field.name().to_string(),
-                                struct_ty: ty,
+                                struct_ty: expected_ty,
                             });
                             return;
                         };
@@ -447,13 +447,45 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                         unify_expr_type(field_ty, field.value(), errors);
                     }
                     syntax::ValueFieldOrSpread::Spread(spread) => {
-                        let _operand = if let Some(operand) = spread.operand() {
+                        let operand = if let Some(operand) = spread.operand() {
                             operand
                         } else {
                             errors.push(SemanticError::EmptySpreadExpression);
                             continue;
                         };
-                        todo!();
+
+                        analyze_expr(tcx, operand, vars, functions, named_types, errors);
+                        let ty = if let Some(ty) = operand.ty() {
+                            ty
+                        } else {
+                            continue;
+                        };
+
+                        let fields = match ty.bottom_ty() {
+                            Type::Struct(t) => t.fields(),
+                            Type::AnonStruct(t) => t.fields(),
+                            _ => {
+                                errors.push(SemanticError::InvalidSpreadOperand { ty });
+                                continue;
+                            }
+                        };
+
+                        for tf in fields {
+                            let expected_field_ty = if let Some(f) = struct_ty.get_field(tf.name())
+                            {
+                                f.ty()
+                            } else {
+                                errors.push(SemanticError::UndefinedStructField {
+                                    name: tf.name().to_string(),
+                                    struct_ty: expected_ty,
+                                });
+                                return;
+                            };
+
+                            if !check_type(expected_field_ty, tf.ty(), errors) {
+                                continue;
+                            }
+                        }
                     }
                 }
             }

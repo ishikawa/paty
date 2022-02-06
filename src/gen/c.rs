@@ -551,7 +551,7 @@ fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
 }
 
 fn tmp_var(t: &TmpVar) -> String {
-    format!("t{}", t.index)
+    format!("_t{}", t.index)
 }
 
 fn c_type(ty: &Type) -> String {

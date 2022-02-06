@@ -383,6 +383,17 @@ assert '{ a: 100, b: 200, c: 300 }' '
 t1 = { a: 100, b: 200 }
 t2 = { c: 300, ...t1 }
 puts(t2)'
+assert 'T { a: 100, b: 200, c: 400 }' '
+struct T { a: int64, b: int64, c: int64, }
+t1 = T { a: 100, b: 200, c: 300 }
+t2 = T { ...t1, c: 400 }
+puts(t2)'
+assert 'T { a: 0, b: 1, c: 400 }' '
+struct T { a: int64, b: int64, c: int64, }
+t1 = T { a: 100, b: 200, c: 300 }
+t2 = T { ...t1, c: 400 }
+t3 = T { ...t1, ...t2, a: 0, b: 1 }
+puts(t3)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

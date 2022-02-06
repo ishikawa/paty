@@ -1,6 +1,7 @@
 use crate::syntax::{self, PatternKind};
 use crate::ty::{FunctionSignature, Type, TypeContext, TypedField};
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::fmt;
 use typed_arena::Arena;
 
@@ -685,52 +686,103 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 // However, the Zero-sized struct should not have a definition.
                 program.add_decl_type(expr.expect_ty());
 
+                // Latter initializer can override previous initializers.
+                // So generate initializer values in reversed order.
                 let mut value_fields = vec![];
+                let mut initialized_fields = HashSet::new();
 
-                for field_or_spread in struct_value.fields() {
+                for field_or_spread in struct_value.fields().iter().rev() {
                     match field_or_spread {
                         syntax::ValueFieldOrSpread::ValueField(field) => {
-                            let value = self._build_expr(field.value(), program, stmts);
-                            value_fields.push((field.name().to_string(), inc_used(value)));
+                            if !initialized_fields.contains(&field.name()) {
+                                let value = self._build_expr(field.value(), program, stmts);
+                                value_fields.push((field.name().to_string(), inc_used(value)));
+                                initialized_fields.insert(field.name());
+                            }
                         }
                         syntax::ValueFieldOrSpread::Spread(spread) => {
                             let operand = spread.expect_operand();
-                            let spread_value = self._build_expr(operand, program, stmts);
-                            let fields = match spread_value.ty() {
+                            let fields = match operand.expect_ty() {
                                 Type::Struct(struct_ty) => struct_ty.fields(),
                                 Type::AnonStruct(struct_ty) => struct_ty.fields(),
                                 _ => unreachable!("spread with invalid expr: {}", spread),
                             };
+                            let built_spread_value = None;
+                            for field in fields.iter().rev() {
+                                if initialized_fields.contains(&field.name()) {
+                                    // Overridden
+                                    continue;
+                                }
 
-                            for f in fields {
+                                let spread_value = built_spread_value
+                                    .unwrap_or_else(|| self._build_expr(operand, program, stmts));
+
                                 let kind = ExprKind::FieldAccess {
-                                    name: f.name().to_string(),
+                                    name: field.name().to_string(),
                                     operand: inc_used(spread_value),
                                 };
-                                let expr = self.expr_arena.alloc(Expr::new(kind, f.ty()));
-                                value_fields.push((f.name().to_string(), inc_used(expr)));
+                                let expr = self.expr_arena.alloc(Expr::new(kind, field.ty()));
+                                value_fields.push((field.name().to_string(), inc_used(expr)));
+                                initialized_fields.insert(field.name());
                             }
                         }
                     }
                 }
 
+                // Reversed -> Ordered
+                value_fields.reverse();
+
                 let kind = ExprKind::StructValue(value_fields);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Struct(struct_value) => {
-                let mut fields = vec![];
+                // Latter initializer can override previous initializers.
+                // So generate initializer values in reversed order.
+                let mut value_fields = vec![];
+                let mut initialized_fields = HashSet::new();
 
-                for f in struct_value.fields() {
-                    match f {
+                for field_or_spread in struct_value.fields().iter().rev() {
+                    match field_or_spread {
                         syntax::ValueFieldOrSpread::ValueField(field) => {
-                            let value = self._build_expr(field.value(), program, stmts);
-                            fields.push((field.name().to_string(), inc_used(value)));
+                            if !initialized_fields.contains(&field.name()) {
+                                let value = self._build_expr(field.value(), program, stmts);
+                                value_fields.push((field.name().to_string(), inc_used(value)));
+                                initialized_fields.insert(field.name());
+                            }
                         }
-                        syntax::ValueFieldOrSpread::Spread(_) => todo!(),
+                        syntax::ValueFieldOrSpread::Spread(spread) => {
+                            let operand = spread.expect_operand();
+                            let fields = match operand.expect_ty() {
+                                Type::Struct(struct_ty) => struct_ty.fields(),
+                                Type::AnonStruct(struct_ty) => struct_ty.fields(),
+                                _ => unreachable!("spread with invalid expr: {}", spread),
+                            };
+                            let built_spread_value = None;
+                            for field in fields.iter().rev() {
+                                if initialized_fields.contains(&field.name()) {
+                                    // Overridden
+                                    continue;
+                                }
+
+                                let spread_value = built_spread_value
+                                    .unwrap_or_else(|| self._build_expr(operand, program, stmts));
+
+                                let kind = ExprKind::FieldAccess {
+                                    name: field.name().to_string(),
+                                    operand: inc_used(spread_value),
+                                };
+                                let expr = self.expr_arena.alloc(Expr::new(kind, field.ty()));
+                                value_fields.push((field.name().to_string(), inc_used(expr)));
+                                initialized_fields.insert(field.name());
+                            }
+                        }
                     }
                 }
 
-                let kind = ExprKind::StructValue(fields);
+                // Reversed -> Ordered
+                value_fields.reverse();
+
+                let kind = ExprKind::StructValue(value_fields);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Minus(a) => {
