@@ -1193,7 +1193,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             .iter()
             .map(|f| TypedField::new(f.name().to_string(), f.ty()))
             .collect();
-        let struct_ty = StructTy::new(name.to_string(), fs);
+        let struct_ty = StructTy::new_named(name.to_string(), fs);
         let ty = self.tcx.type_arena.alloc(Type::Struct(struct_ty));
 
         let r#struct = StructDeclaration { name, fields, ty };

@@ -209,11 +209,6 @@ fn resolve_type<'tcx>(
                 resolve_type(tcx, f.ty(), named_types, errors);
             }
         }
-        Type::AnonStruct(struct_ty) => {
-            for f in struct_ty.fields() {
-                resolve_type(tcx, f.ty(), named_types, errors);
-            }
-        }
         Type::Named(named_ty) => {
             if named_ty.ty().is_none() {
                 if let Some(ty) = named_types.get(named_ty.name()) {
@@ -365,23 +360,18 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                             continue;
                         };
 
-                        let fields = match ty.bottom_ty() {
-                            Type::Struct(t) => t.fields(),
-                            Type::AnonStruct(t) => t.fields(),
-                            _ => {
-                                errors.push(SemanticError::InvalidSpreadOperand { ty });
-                                continue;
-                            }
-                        };
-
-                        for tf in fields {
-                            // If the value will be overridden, its type must be consistence.
-                            if let Some(defined_ty) = defined_fields.get(&tf.name()) {
-                                if !check_type(defined_ty, tf.ty(), errors) {
-                                    continue;
+                        if let Type::Struct(struct_ty) = ty.bottom_ty() {
+                            for tf in struct_ty.fields() {
+                                // If the value will be overridden, its type must be consistence.
+                                if let Some(defined_ty) = defined_fields.get(&tf.name()) {
+                                    if !check_type(defined_ty, tf.ty(), errors) {
+                                        continue;
+                                    }
                                 }
+                                defined_fields.insert(tf.name(), tf.ty());
                             }
-                            defined_fields.insert(tf.name(), tf.ty());
+                        } else {
+                            errors.push(SemanticError::InvalidSpreadOperand { ty });
                         }
                     }
                 }
@@ -410,7 +400,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 struct_ty
             } else {
                 errors.push(SemanticError::MismatchedType {
-                    expected: tcx.named_struct(struct_value.name().to_string()),
+                    expected: tcx.empty_struct_ty(struct_value.name().to_string()),
                     actual: expected_ty,
                 });
                 return;
@@ -463,7 +453,6 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
                         let fields = match ty.bottom_ty() {
                             Type::Struct(t) => t.fields(),
-                            Type::AnonStruct(t) => t.fields(),
                             _ => {
                                 errors.push(SemanticError::InvalidSpreadOperand { ty });
                                 continue;
@@ -563,12 +552,6 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             let ty = operand.expect_ty();
 
             if let Type::Struct(struct_ty) = ty {
-                if let Some(f) = struct_ty.get_field(name) {
-                    // apply type
-                    unify_expr_type(f.ty(), expr, errors);
-                    return;
-                }
-            } else if let Type::AnonStruct(struct_ty) = ty {
                 if let Some(f) = struct_ty.get_field(name) {
                     // apply type
                     unify_expr_type(f.ty(), expr, errors);
@@ -916,7 +899,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
         }
         PatternKind::AnonStruct(struct_pat) => {
             // Struct type check
-            let struct_ty = if let Type::AnonStruct(struct_ty) = expected_ty {
+            let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
                 struct_ty
             } else {
                 errors.push(SemanticError::MismatchedType {

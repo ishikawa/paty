@@ -33,11 +33,6 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
                     self.add_decl_type(f.ty());
                 }
             }
-            Type::AnonStruct(struct_ty) => {
-                for f in struct_ty.fields() {
-                    self.add_decl_type(f.ty());
-                }
-            }
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
                 // no declaration
                 return;
@@ -704,7 +699,6 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             let operand = spread.expect_operand();
                             let fields = match operand.expect_ty() {
                                 Type::Struct(struct_ty) => struct_ty.fields(),
-                                Type::AnonStruct(struct_ty) => struct_ty.fields(),
                                 _ => unreachable!("spread with invalid expr: {}", spread),
                             };
                             let built_spread_value = None;
@@ -754,7 +748,6 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             let operand = spread.expect_operand();
                             let fields = match operand.expect_ty() {
                                 Type::Struct(struct_ty) => struct_ty.fields(),
-                                Type::AnonStruct(struct_ty) => struct_ty.fields(),
                                 _ => unreachable!("spread with invalid expr: {}", spread),
                             };
                             let built_spread_value = None;
@@ -1131,11 +1124,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Str(")"));
             }
             Type::Struct(struct_ty) => {
-                specs.push(FormatSpec::Value(self.const_string(struct_ty.name())));
-                specs.push(FormatSpec::Str(" "));
-                self._printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
-            }
-            Type::AnonStruct(struct_ty) => {
+                if let Some(name) = struct_ty.name() {
+                    specs.push(FormatSpec::Value(self.const_string(name)));
+                    specs.push(FormatSpec::Str(" "));
+                }
                 self._printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
             }
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
@@ -1311,7 +1303,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             let spread_ty = spread_pat.expect_ty();
                             program.add_decl_type(spread_ty);
 
-                            let struct_ty = if let Type::AnonStruct(struct_ty) = spread_ty {
+                            let struct_ty = if let Type::Struct(struct_ty) = spread_ty {
                                 struct_ty
                             } else {
                                 unreachable!(
@@ -1408,7 +1400,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             let spread_ty = spread_pat.expect_ty();
                             program.add_decl_type(spread_ty);
 
-                            let struct_ty = if let Type::AnonStruct(struct_ty) = spread_ty {
+                            let struct_ty = if let Type::Struct(struct_ty) = spread_ty {
                                 struct_ty
                             } else {
                                 unreachable!(

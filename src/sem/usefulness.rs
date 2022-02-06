@@ -4,7 +4,8 @@
 use super::error::SemanticError;
 use crate::syntax::token::RangeEnd;
 use crate::syntax::{
-    CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern,
+    AnonStructPattern, CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind,
+    StructPattern,
 };
 use crate::ty::Type;
 use std::{
@@ -337,7 +338,7 @@ impl<'tcx> SplitWildcard {
                 ));
                 vec![ctor]
             }
-            Type::Tuple(_) | Type::Struct(_) | Type::AnonStruct(_) => vec![Constructor::Single],
+            Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
             Type::NativeInt => unreachable!("Native C types are not supported."),
@@ -809,9 +810,6 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         match constructor {
             Constructor::Single => match ty {
                 Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
-                Type::AnonStruct(struct_ty) => {
-                    Fields::wildcards_from_tys(cx, struct_ty.fields().iter().map(|f| f.ty()))
-                }
                 Type::Struct(struct_ty) => {
                     Fields::wildcards_from_tys(cx, struct_ty.fields().iter().map(|f| f.ty()))
                 }
@@ -921,7 +919,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
                 // Convert struct fields to deconstruct patterns.
                 // We must follow the order of fields in the type.
-                let struct_ty = if let Type::AnonStruct(struct_ty) = pat_ty {
+                let struct_ty = if let Type::Struct(struct_ty) = pat_ty {
                     struct_ty
                 } else {
                     unreachable!("Pattern type {} must be struct type.", pat_ty);
@@ -993,10 +991,11 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                         .map(PatternFieldOrSpread::PatternField)
                         .collect();
 
-                    PatternKind::Struct(StructPattern::new(
-                        struct_ty.name().to_string(),
-                        pat_fields,
-                    ))
+                    if let Some(name) = struct_ty.name() {
+                        PatternKind::Struct(StructPattern::new(name.to_string(), pat_fields))
+                    } else {
+                        PatternKind::AnonStruct(AnonStructPattern::new(pat_fields))
+                    }
                 }
                 _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
             },

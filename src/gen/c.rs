@@ -89,18 +89,6 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str("};\n\n");
             }
-            Type::AnonStruct(struct_ty) => {
-                code.push_str(&c_type(ty));
-                code.push_str(" {\n");
-                for f in struct_ty.fields() {
-                    if !f.ty().is_zero_sized() {
-                        code.push_str(&c_type(f.ty()));
-                        code.push(' ');
-                        code.push_str(&format!("{};\n", f.name()));
-                    }
-                }
-                code.push_str("};\n\n");
-            }
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
                 // no emit
             }
@@ -386,7 +374,7 @@ impl<'a, 'tcx> Emitter {
                                 Type::NativeInt => {
                                     code.push_str("%d");
                                 }
-                                Type::Tuple(_) | Type::Struct(_) | Type::AnonStruct(_) => {
+                                Type::Tuple(_) | Type::Struct(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
                                 }
                                 Type::Named(name) => {
@@ -432,7 +420,7 @@ impl<'a, 'tcx> Emitter {
                                 }
                             }
                         }
-                        Type::Tuple(_) | Type::Struct(_) | Type::AnonStruct(_) => {
+                        Type::Tuple(_) | Type::Struct(_) => {
                             unreachable!("compound value can't be printed: {:?}", value);
                         }
                         Type::Named(name) => {
@@ -560,7 +548,7 @@ fn c_type(ty: &Type) -> String {
         Type::Boolean => "bool".to_string(),
         Type::String => "const char *".to_string(),
         Type::NativeInt => "int".to_string(),
-        Type::Tuple(_) | Type::Struct(_) | Type::AnonStruct(_) => {
+        Type::Tuple(_) | Type::Struct(_) => {
             let mut buffer = String::new();
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
@@ -632,18 +620,18 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
                 encode_ty(fty, buffer);
             }
         }
-        Type::AnonStruct(struct_ty) => {
-            buffer.push('S');
-            buffer.push_str(&struct_ty.fields().len().to_string());
-            for f in struct_ty.fields() {
-                encode_ty(f.ty(), buffer);
-                buffer.push_str(&f.name().len().to_string());
-                buffer.push_str(f.name());
-            }
-        }
         Type::Struct(struct_ty) => {
             buffer.push('S');
-            buffer.push_str(struct_ty.name());
+            if let Some(name) = struct_ty.name() {
+                buffer.push_str(name);
+            } else {
+                buffer.push_str(&struct_ty.fields().len().to_string());
+                for f in struct_ty.fields() {
+                    encode_ty(f.ty(), buffer);
+                    buffer.push_str(&f.name().len().to_string());
+                    buffer.push_str(f.name());
+                }
+            }
         }
         Type::Named(named_ty) => {
             encode_ty(named_ty.expect_ty(), buffer);
