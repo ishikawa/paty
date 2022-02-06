@@ -398,8 +398,12 @@ assert '100' '
 case { a: 100, b: 200 }
 when { a, ... }
   puts(a)
-end
-'
+end'
+assert '100 300' '
+case { a: 100, b: 200, c: 300 }
+when { a, ...x }
+  puts(a, x.c)
+end'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

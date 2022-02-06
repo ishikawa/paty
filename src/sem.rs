@@ -555,6 +555,9 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
         }
         syntax::ExprKind::FieldAccess(operand, name) => {
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
+            if operand.ty().is_none() {
+                return;
+            }
 
             // index boundary check
             let ty = operand.expect_ty();
@@ -787,10 +790,10 @@ fn analyze_pattern_struct_fields<'nd: 'tcx, 'tcx>(
     // Fields check
     // All fields must be covered or omitted by a spread pattern.
     let mut consumed_field_names = HashSet::new();
-    let mut spread = false;
+    let mut already_spread = false;
 
-    for pf in pattern_fields {
-        match pf {
+    for pat_field_or_spread in pattern_fields {
+        match pat_field_or_spread {
             syntax::PatternFieldOrSpread::PatternField(field) => {
                 if let Some(f) = struct_fields.iter().find(|tf| tf.name() == field.name()) {
                     if consumed_field_names.contains(&field.name()) {
@@ -817,19 +820,41 @@ fn analyze_pattern_struct_fields<'nd: 'tcx, 'tcx>(
                     });
                 }
             }
-            syntax::PatternFieldOrSpread::Spread(_) => {
-                if spread {
+            syntax::PatternFieldOrSpread::Spread(spread) => {
+                if already_spread {
                     errors.push(SemanticError::DuplicateSpreadPattern {
-                        pattern: pf.to_string(),
+                        pattern: pat_field_or_spread.to_string(),
                     });
                 }
 
-                spread = true;
+                // Assign anonymous struct type to spread pattern.
+                let rest_fields = struct_fields
+                    .iter()
+                    .filter(|f| !consumed_field_names.contains(&f.name()))
+                    .cloned()
+                    .collect();
+                spread.assign_ty(tcx.anon_struct_ty(rest_fields));
+
+                if let Some(spread_name) = spread.name() {
+                    // Bind rest fields to the name.
+                    if vars.get(spread_name).is_some() {
+                        errors.push(SemanticError::AlreadyBoundInPattern {
+                            name: spread_name.to_string(),
+                        });
+                        return;
+                    }
+
+                    // New binding with rest fields.
+                    let binding = Binding::new(spread_name, spread.expect_ty());
+                    vars.insert(binding);
+                }
+
+                already_spread = true;
             }
         }
     }
 
-    if !spread && consumed_field_names.len() != struct_fields.len() {
+    if !already_spread && consumed_field_names.len() != struct_fields.len() {
         let names = struct_fields
             .iter()
             .filter(|f| !consumed_field_names.contains(f.name()))

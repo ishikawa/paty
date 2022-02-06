@@ -964,7 +964,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         // Build an condition and variable declarations from the pattern
                         let mut branch_stmts = vec![];
                         let condition =
-                            self._build_pattern(t_head, arm.pattern(), &mut branch_stmts);
+                            self._build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
                         let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
 
                         branch_stmts.push(Stmt::Phi {
@@ -1186,6 +1186,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         &mut self,
         t_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
         // zero-sized type is always matched with a value.
@@ -1260,7 +1261,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .expr_arena
                         .alloc(Expr::new(kind, sub_pats[0].expect_ty()));
 
-                    let mut condition = self._build_pattern(operand, sub_pats[0], stmts);
+                    let mut condition = self._build_pattern(operand, sub_pats[0], program, stmts);
 
                     for (i, pat) in sub_pats.iter().enumerate().skip(1) {
                         let kind = ExprKind::IndexAccess {
@@ -1268,7 +1269,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             index: i,
                         };
                         let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
-                        let sub_condition = self._build_pattern(operand, pat, stmts);
+                        let sub_condition = self._build_pattern(operand, pat, program, stmts);
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {
@@ -1306,8 +1307,41 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         }
                     }
                     if let Some(spread_pat) = spread_pat {
-                        if spread_pat.name().is_some() {
-                            todo!("Assign values to an anonymous struct value.");
+                        if let Some(spread_name) = spread_pat.name() {
+                            let spread_ty = spread_pat.expect_ty();
+                            program.add_decl_type(spread_ty);
+
+                            let struct_ty = if let Type::AnonStruct(struct_ty) = spread_ty {
+                                struct_ty
+                            } else {
+                                unreachable!(
+                                    "spread pattern type must be anonymous struct: {}",
+                                    spread_ty
+                                );
+                            };
+
+                            let values = struct_ty
+                                .fields()
+                                .iter()
+                                .map(|f| {
+                                    let kind = ExprKind::FieldAccess {
+                                        operand: inc_used(t_expr),
+                                        name: f.name().to_string(),
+                                    };
+                                    let v = self.expr_arena.alloc(Expr::new(kind, f.ty()));
+
+                                    (f.name().to_string(), &*v)
+                                })
+                                .collect::<Vec<_>>();
+
+                            let struct_value = self
+                                .expr_arena
+                                .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
+
+                            stmts.push(Stmt::VarDef {
+                                name: spread_name.to_string(),
+                                init: inc_used(struct_value),
+                            });
                         }
                     }
 
@@ -1320,7 +1354,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .expr_arena
                         .alloc(Expr::new(kind, first_field.pattern().expect_ty()));
 
-                    let mut condition = self._build_pattern(operand, first_field.pattern(), stmts);
+                    let mut condition =
+                        self._build_pattern(operand, first_field.pattern(), program, stmts);
 
                     for pat_field in pattern_fields.iter().skip(1) {
                         let kind = ExprKind::FieldAccess {
@@ -1331,7 +1366,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             .expr_arena
                             .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
                         let sub_condition =
-                            self._build_pattern(operand, pat_field.pattern(), stmts);
+                            self._build_pattern(operand, pat_field.pattern(), program, stmts);
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {
@@ -1369,9 +1404,47 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         }
                     }
                     if let Some(spread_pat) = spread_pat {
-                        if spread_pat.name().is_some() {
-                            todo!("Assign values to an anonymous struct value.");
+                        if let Some(spread_name) = spread_pat.name() {
+                            let spread_ty = spread_pat.expect_ty();
+                            program.add_decl_type(spread_ty);
+
+                            let struct_ty = if let Type::AnonStruct(struct_ty) = spread_ty {
+                                struct_ty
+                            } else {
+                                unreachable!(
+                                    "spread pattern type must be anonymous struct: {}",
+                                    spread_ty
+                                );
+                            };
+
+                            let values = struct_ty
+                                .fields()
+                                .iter()
+                                .map(|f| {
+                                    let kind = ExprKind::FieldAccess {
+                                        operand: inc_used(t_expr),
+                                        name: f.name().to_string(),
+                                    };
+                                    let v = self.expr_arena.alloc(Expr::new(kind, f.ty()));
+
+                                    (f.name().to_string(), &*v)
+                                })
+                                .collect::<Vec<_>>();
+
+                            let struct_value = self
+                                .expr_arena
+                                .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
+
+                            stmts.push(Stmt::VarDef {
+                                name: spread_name.to_string(),
+                                init: inc_used(struct_value),
+                            });
                         }
+                    }
+
+                    // no condition
+                    if pattern_fields.is_empty() {
+                        return None;
                     }
 
                     let first_field = pattern_fields[0];
@@ -1383,7 +1456,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .expr_arena
                         .alloc(Expr::new(kind, first_field.pattern().expect_ty()));
 
-                    let mut condition = self._build_pattern(operand, first_field.pattern(), stmts);
+                    let mut condition =
+                        self._build_pattern(operand, first_field.pattern(), program, stmts);
 
                     for pat_field in pattern_fields.iter().skip(1) {
                         let kind = ExprKind::FieldAccess {
@@ -1394,7 +1468,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             .expr_arena
                             .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
                         let sub_condition =
-                            self._build_pattern(operand, pat_field.pattern(), stmts);
+                            self._build_pattern(operand, pat_field.pattern(), program, stmts);
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {

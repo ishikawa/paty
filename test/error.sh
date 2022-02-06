@@ -240,3 +240,13 @@ def foo(opts: { a: int64, b: int64 })
   opts.a + opts.b
 end
 foo(100)'
+assert 'identifier `a` is bound more than once in the same pattern' '
+case { a: 100, b: 200, c: 300 }
+when { a, ...a }
+  puts(a)
+end'
+assert 'spread pattern can appear only once' '
+case { a: 100, b: 200, c: 300 }
+when { a, ...x, ...y }
+  puts(a)
+end'

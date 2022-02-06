@@ -903,21 +903,43 @@ impl fmt::Display for StructPattern<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct SpreadPattern {
+pub struct SpreadPattern<'tcx> {
     name: Option<String>,
+    // The type of expression is determined in later phase.
+    ty: Cell<Option<&'tcx Type<'tcx>>>,
 }
 
-impl SpreadPattern {
+impl<'tcx> SpreadPattern<'tcx> {
     pub fn new(name: Option<String>) -> Self {
-        Self { name }
+        Self {
+            name,
+            ty: Cell::new(None),
+        }
     }
 
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
+
+    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
+        self.ty().unwrap_or_else(|| {
+            panic!(
+                "Semantic analyzer couldn't assign type for the spread pattern {}",
+                self
+            );
+        })
+    }
+
+    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.ty.set(Some(ty))
+    }
 }
 
-impl fmt::Display for SpreadPattern {
+impl fmt::Display for SpreadPattern<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "...")?;
         if let Some(name) = &self.name {
@@ -930,7 +952,7 @@ impl fmt::Display for SpreadPattern {
 #[derive(Debug)]
 pub enum PatternFieldOrSpread<'nd, 'tcx> {
     PatternField(PatternField<'nd, 'tcx>),
-    Spread(SpreadPattern),
+    Spread(SpreadPattern<'tcx>),
 }
 
 impl fmt::Display for PatternFieldOrSpread<'_, '_> {
