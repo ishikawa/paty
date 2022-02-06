@@ -362,6 +362,18 @@ assert '{ t: { a: 123 }, z: 33 }' '
 t1 = { a: 123 }
 t2 = { t: t1, z: 33}
 puts(t2)'
+assert '6
+9' '
+def foo(n: int64, options: { repeat: boolean, count: int64 })
+  case options.repeat
+  when true
+    options.count * n
+  else
+    n
+  end
+end
+6.foo({ count: 0, repeat: false }).puts()
+3.foo({ count: 3, repeat: true }).puts()'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
