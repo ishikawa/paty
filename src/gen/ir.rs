@@ -338,6 +338,8 @@ pub enum ExprKind<'a, 'tcx> {
 #[derive(Debug, Clone)]
 pub enum FormatSpec<'a, 'tcx> {
     Value(&'a Expr<'a, 'tcx>),
+    /// Show value as `"{value}"`
+    Quoted(&'a Expr<'a, 'tcx>),
     Str(&'static str),
 }
 
@@ -802,7 +804,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 while let Some(arg) = it.next() {
                     let a = self._build_expr(arg, program, stmts);
-                    self._printf_format(a, program, stmts, &mut format_specs);
+                    self._printf_format(a, program, stmts, &mut format_specs, false);
 
                     // separated by a space
                     if it.peek().is_some() {
@@ -964,10 +966,18 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
         specs: &mut Vec<FormatSpec<'a, 'tcx>>,
+        escape_string: bool,
     ) {
         match arg.ty() {
-            Type::Int64 | Type::NativeInt | Type::Boolean | Type::String => {
+            Type::Int64 | Type::NativeInt | Type::Boolean => {
                 specs.push(FormatSpec::Value(inc_used(arg)));
+            }
+            Type::String => {
+                if escape_string {
+                    specs.push(FormatSpec::Quoted(inc_used(arg)));
+                } else {
+                    specs.push(FormatSpec::Value(inc_used(arg)));
+                }
             }
             Type::Tuple(fs) => {
                 let mut it = fs.iter().enumerate().peekable();
@@ -980,7 +990,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     };
 
                     let ir_expr = self.push_expr_kind(kind, sub_ty, stmts);
-                    self._printf_format(ir_expr, program, stmts, specs);
+                    self._printf_format(ir_expr, program, stmts, specs, true);
 
                     if it.peek().is_some() {
                         specs.push(FormatSpec::Str(", "));
@@ -1026,7 +1036,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             };
 
             let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
-            self._printf_format(ir_expr, program, stmts, specs);
+            self._printf_format(ir_expr, program, stmts, specs, true);
 
             if it.peek().is_some() {
                 specs.push(FormatSpec::Str(", "));

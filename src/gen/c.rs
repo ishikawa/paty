@@ -395,53 +395,50 @@ impl<'a, 'tcx> Emitter {
                                 Type::Undetermined => unreachable!("untyped code"),
                             }
                         }
+                        FormatSpec::Quoted(value) => match value.ty() {
+                            Type::String => {
+                                code.push_str("\\\"%s\\\"");
+                            }
+                            _ => unreachable!("quoted value must be a string: {:?}", value),
+                        },
                     }
                 }
                 code.push('"');
 
                 // arguments
-                let mut is_first_arg = true;
-                let mut it = specs
-                    .iter()
-                    .filter(|spec| matches!(spec, FormatSpec::Value(_)))
-                    .peekable();
+                for spec in specs {
+                    let value = match spec {
+                        FormatSpec::Value(value) => value,
+                        FormatSpec::Quoted(value) => value,
+                        FormatSpec::Str(_) => continue,
+                    };
 
-                while let Some(spec) = it.next() {
-                    if let FormatSpec::Value(value) = spec {
-                        if is_first_arg {
-                            code.push_str(", ");
-                            is_first_arg = false;
+                    code.push_str(", ");
+
+                    match value.ty() {
+                        Type::Int64 | Type::String | Type::NativeInt => {
+                            self.emit_expr(value, code);
                         }
-
-                        match value.ty() {
-                            Type::Int64 | Type::String | Type::NativeInt => {
-                                self.emit_expr(value, code);
-                            }
-                            Type::Boolean => {
-                                match immediate(value).kind() {
-                                    ExprKind::Bool(true) => code.push_str("\"true\""),
-                                    ExprKind::Bool(false) => code.push_str("\"false\""),
-                                    _ => {
-                                        // "true" / "false"
-                                        code.push('(');
-                                        self.emit_expr(value, code);
-                                        code.push_str(" ? \"true\" : \"false\"");
-                                        code.push(')');
-                                    }
+                        Type::Boolean => {
+                            match immediate(value).kind() {
+                                ExprKind::Bool(true) => code.push_str("\"true\""),
+                                ExprKind::Bool(false) => code.push_str("\"false\""),
+                                _ => {
+                                    // "true" / "false"
+                                    code.push('(');
+                                    self.emit_expr(value, code);
+                                    code.push_str(" ? \"true\" : \"false\"");
+                                    code.push(')');
                                 }
                             }
-                            Type::Tuple(_) | Type::Struct(_) | Type::AnonStruct(_) => {
-                                unreachable!("compound value can't be printed: {:?}", value);
-                            }
-                            Type::Named(name) => {
-                                unreachable!("untyped for the type named: {}", name)
-                            }
-                            Type::Undetermined => unreachable!("untyped code"),
                         }
-                    }
-
-                    if it.peek().is_some() {
-                        code.push_str(", ");
+                        Type::Tuple(_) | Type::Struct(_) | Type::AnonStruct(_) => {
+                            unreachable!("compound value can't be printed: {:?}", value);
+                        }
+                        Type::Named(name) => {
+                            unreachable!("untyped for the type named: {}", name)
+                        }
+                        Type::Undetermined => unreachable!("untyped code"),
                     }
                 }
                 code.push(')');

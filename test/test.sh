@@ -357,6 +357,11 @@ D { baz, ... } = d
 puts(baz, foo)'
 # anonymous struct
 assert '{ a: 1 }' 'puts({a: 1})'
+assert '{ b: true, m: "hello" }' 'puts({m: "hello", b: true})'
+assert '{ t: { a: 123 }, z: 33 }' '
+t1 = { a: 123 }
+t2 = { t: t1, z: 33}
+puts(t2)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
