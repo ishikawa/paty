@@ -1,5 +1,5 @@
 use crate::syntax::{self, PatternKind};
-use crate::ty::{FunctionSignature, Type, TypeContext, TypedField};
+use crate::ty::{FunctionSignature, StructTy, Type, TypeContext, TypedField};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::fmt;
@@ -571,7 +571,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             let param_expr =
                                 self.expr_arena.alloc(Expr::new(ExprKind::TmpVar(t), ty));
 
-                            self._build_let_pattern(pat, param_expr, &mut body_stmts);
+                            self._build_let_pattern(pat, param_expr, program, &mut body_stmts);
 
                             Parameter::TmpVar(t)
                         }
@@ -626,7 +626,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         match stmt.kind() {
             syntax::StmtKind::Let { pattern, rhs } => {
                 let init = self._build_expr(rhs, program, stmts);
-                self._build_let_pattern(pattern, init, stmts);
+                self._build_let_pattern(pattern, init, program, stmts);
 
                 None
             }
@@ -955,65 +955,6 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    fn _build_let_pattern(
-        &mut self,
-        pattern: &'nd syntax::Pattern<'nd, 'tcx>,
-        init: &'a Expr<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-    ) {
-        match pattern.kind() {
-            PatternKind::Var(name) => {
-                let stmt = Stmt::VarDef {
-                    name: name.to_string(),
-                    init: inc_used(init),
-                };
-                stmts.push(stmt);
-            }
-            PatternKind::Wildcard => {
-                // no bound variable to `_`
-            }
-            PatternKind::Tuple(fs) => {
-                for (i, sub_pat) in fs.iter().enumerate() {
-                    let kind = ExprKind::IndexAccess {
-                        operand: inc_used(init),
-                        index: i,
-                    };
-                    let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
-
-                    self._build_let_pattern(sub_pat, field, stmts)
-                }
-            }
-            PatternKind::Struct(struct_pat) => {
-                for f in struct_pat.fields() {
-                    match f {
-                        syntax::PatternFieldOrSpread::PatternField(pat_field) => {
-                            let kind = ExprKind::FieldAccess {
-                                operand: inc_used(init),
-                                name: pat_field.name().to_string(),
-                            };
-                            let field = self
-                                .expr_arena
-                                .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-
-                            self._build_let_pattern(pat_field.pattern(), field, stmts)
-                        }
-                        syntax::PatternFieldOrSpread::Spread(spread) => {
-                            if spread.name().is_some() {
-                                todo!("struct spread in let");
-                            }
-                        }
-                    }
-                }
-            }
-            PatternKind::Integer(_)
-            | PatternKind::Boolean(_)
-            | PatternKind::String(_)
-            | PatternKind::Range { .. } => {
-                unreachable!("Unsupported let pattern: `{}`", pattern.kind());
-            }
-        };
-    }
-
     fn _printf_format(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
@@ -1232,29 +1173,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             let spread_ty = spread_pat.expect_ty();
                             program.add_decl_type(spread_ty);
 
-                            let struct_ty = if let Type::Struct(struct_ty) = spread_ty {
-                                struct_ty
-                            } else {
-                                unreachable!(
-                                    "spread pattern type must be anonymous struct: {}",
-                                    spread_ty
-                                );
-                            };
-
-                            let values = struct_ty
-                                .fields()
-                                .iter()
-                                .map(|f| {
-                                    let kind = ExprKind::FieldAccess {
-                                        operand: inc_used(t_expr),
-                                        name: f.name().to_string(),
-                                    };
-                                    let v = self.expr_arena.alloc(Expr::new(kind, f.ty()));
-
-                                    (f.name().to_string(), &*v)
-                                })
-                                .collect::<Vec<_>>();
-
+                            let struct_ty = spread_pat.expect_struct_ty();
+                            let values = self.struct_values(struct_ty, t_expr);
                             let struct_value = self
                                 .expr_arena
                                 .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
@@ -1319,6 +1239,98 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             PatternKind::Wildcard => None,
         }
+    }
+
+    fn _build_let_pattern(
+        &mut self,
+        pattern: &'nd syntax::Pattern<'nd, 'tcx>,
+        init: &'a Expr<'a, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) {
+        match pattern.kind() {
+            PatternKind::Var(name) => {
+                let stmt = Stmt::VarDef {
+                    name: name.to_string(),
+                    init: inc_used(init),
+                };
+                stmts.push(stmt);
+            }
+            PatternKind::Wildcard => {
+                // no bound variable to `_`
+            }
+            PatternKind::Tuple(fs) => {
+                for (i, sub_pat) in fs.iter().enumerate() {
+                    let kind = ExprKind::IndexAccess {
+                        operand: inc_used(init),
+                        index: i,
+                    };
+                    let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
+
+                    self._build_let_pattern(sub_pat, field, program, stmts)
+                }
+            }
+            PatternKind::Struct(struct_pat) => {
+                for f in struct_pat.fields() {
+                    match f {
+                        syntax::PatternFieldOrSpread::PatternField(pat_field) => {
+                            let kind = ExprKind::FieldAccess {
+                                operand: inc_used(init),
+                                name: pat_field.name().to_string(),
+                            };
+                            let field = self
+                                .expr_arena
+                                .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+
+                            self._build_let_pattern(pat_field.pattern(), field, program, stmts)
+                        }
+                        syntax::PatternFieldOrSpread::Spread(spread_pat) => {
+                            if let Some(spread_name) = spread_pat.name() {
+                                let spread_ty = spread_pat.expect_ty();
+                                program.add_decl_type(spread_ty);
+
+                                let struct_ty = spread_pat.expect_struct_ty();
+                                let values = self.struct_values(struct_ty, init);
+                                let struct_value = self
+                                    .expr_arena
+                                    .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
+
+                                stmts.push(Stmt::VarDef {
+                                    name: spread_name.to_string(),
+                                    init: inc_used(struct_value),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            PatternKind::Integer(_)
+            | PatternKind::Boolean(_)
+            | PatternKind::String(_)
+            | PatternKind::Range { .. } => {
+                unreachable!("Unsupported let pattern: `{}`", pattern.kind());
+            }
+        };
+    }
+
+    fn struct_values(
+        &self,
+        struct_ty: &StructTy<'tcx>,
+        init: &'a Expr<'a, 'tcx>,
+    ) -> Vec<(String, &'a Expr<'a, 'tcx>)> {
+        struct_ty
+            .fields()
+            .iter()
+            .map(|f| {
+                let kind = ExprKind::FieldAccess {
+                    operand: inc_used(init),
+                    name: f.name().to_string(),
+                };
+                let v = self.expr_arena.alloc(Expr::new(kind, f.ty()));
+
+                (f.name().to_string(), &*v)
+            })
+            .collect::<Vec<_>>()
     }
 }
 

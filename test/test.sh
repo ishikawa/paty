@@ -410,6 +410,11 @@ case T { a: 100, b: 200, c: 300 }
 when T { a, ...x }
   puts(a, x.b, x.c)
 end'
+assert '1 3' '
+struct T { a: int64, b: int64, c: int64 }
+t1 = T { a: 1, b: 2, c: 3 }
+{ a, ...x } = t1
+puts(a, x.c)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

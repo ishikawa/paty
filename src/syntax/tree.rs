@@ -886,6 +886,17 @@ impl<'tcx> SpreadPattern<'tcx> {
         })
     }
 
+    pub fn expect_struct_ty(&self) -> &StructTy<'tcx> {
+        if let Type::Struct(struct_ty) = self.expect_ty() {
+            struct_ty
+        } else {
+            unreachable!(
+                "spread pattern type must be anonymous struct: {}",
+                self.expect_ty()
+            );
+        }
+    }
+
     pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
     }
