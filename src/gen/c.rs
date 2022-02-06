@@ -80,11 +80,11 @@ impl<'a, 'tcx> Emitter {
             Type::Struct(struct_ty) => {
                 code.push_str(&c_type(ty));
                 code.push_str(" {\n");
-                for (name, fty) in struct_ty.fields() {
-                    if !fty.is_zero_sized() {
-                        code.push_str(&c_type(fty));
+                for f in struct_ty.fields() {
+                    if !f.ty().is_zero_sized() {
+                        code.push_str(&c_type(f.ty()));
                         code.push(' ');
-                        code.push_str(&format!("{};\n", name));
+                        code.push_str(&format!("{};\n", f.name()));
                     }
                 }
                 code.push_str("};\n\n");
@@ -173,7 +173,7 @@ impl<'a, 'tcx> Emitter {
                     }
 
                     // Emit init statement if needed
-                    if var.used.get() > 0 || self.has_side_effect(init) {
+                    if var.used.get() > 0 || init.has_side_effect() {
                         self.emit_expr(init, code);
                         code.push_str(";\n");
                     }
@@ -383,53 +383,50 @@ impl<'a, 'tcx> Emitter {
                                 Type::Undetermined => unreachable!("untyped code"),
                             }
                         }
+                        FormatSpec::Quoted(value) => match value.ty() {
+                            Type::String => {
+                                code.push_str("\\\"%s\\\"");
+                            }
+                            _ => unreachable!("quoted value must be a string: {:?}", value),
+                        },
                     }
                 }
                 code.push('"');
 
                 // arguments
-                let mut is_first_arg = true;
-                let mut it = specs
-                    .iter()
-                    .filter(|spec| matches!(spec, FormatSpec::Value(_)))
-                    .peekable();
+                for spec in specs {
+                    let value = match spec {
+                        FormatSpec::Value(value) => value,
+                        FormatSpec::Quoted(value) => value,
+                        FormatSpec::Str(_) => continue,
+                    };
 
-                while let Some(spec) = it.next() {
-                    if let FormatSpec::Value(value) = spec {
-                        if is_first_arg {
-                            code.push_str(", ");
-                            is_first_arg = false;
+                    code.push_str(", ");
+
+                    match value.ty() {
+                        Type::Int64 | Type::String | Type::NativeInt => {
+                            self.emit_expr(value, code);
                         }
-
-                        match value.ty() {
-                            Type::Int64 | Type::String | Type::NativeInt => {
-                                self.emit_expr(value, code);
-                            }
-                            Type::Boolean => {
-                                match immediate(value).kind() {
-                                    ExprKind::Bool(true) => code.push_str("\"true\""),
-                                    ExprKind::Bool(false) => code.push_str("\"false\""),
-                                    _ => {
-                                        // "true" / "false"
-                                        code.push('(');
-                                        self.emit_expr(value, code);
-                                        code.push_str(" ? \"true\" : \"false\"");
-                                        code.push(')');
-                                    }
+                        Type::Boolean => {
+                            match immediate(value).kind() {
+                                ExprKind::Bool(true) => code.push_str("\"true\""),
+                                ExprKind::Bool(false) => code.push_str("\"false\""),
+                                _ => {
+                                    // "true" / "false"
+                                    code.push('(');
+                                    self.emit_expr(value, code);
+                                    code.push_str(" ? \"true\" : \"false\"");
+                                    code.push(')');
                                 }
                             }
-                            Type::Tuple(_) | Type::Struct(_) => {
-                                unreachable!("compound value can't be printed: {:?}", value);
-                            }
-                            Type::Named(name) => {
-                                unreachable!("untyped for the type named: {}", name)
-                            }
-                            Type::Undetermined => unreachable!("untyped code"),
                         }
-                    }
-
-                    if it.peek().is_some() {
-                        code.push_str(", ");
+                        Type::Tuple(_) | Type::Struct(_) => {
+                            unreachable!("compound value can't be printed: {:?}", value);
+                        }
+                        Type::Named(name) => {
+                            unreachable!("untyped for the type named: {}", name)
+                        }
+                        Type::Undetermined => unreachable!("untyped code"),
                     }
                 }
                 code.push(')');
@@ -486,7 +483,7 @@ impl<'a, 'tcx> Emitter {
 
                 code.push('}');
             }
-            ExprKind::StructValue(_, fs) => {
+            ExprKind::StructValue(fs) => {
                 // Specify struct type explicitly.
                 code.push('(');
                 code.push_str(&c_type(expr.ty()));
@@ -530,37 +527,6 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Var(var) => code.push_str(var.name()),
         }
     }
-
-    fn has_side_effect(&self, expr: &Expr) -> bool {
-        match expr.kind() {
-            ExprKind::Minus(a) | ExprKind::Not(a) => self.has_side_effect(a),
-            ExprKind::Add(a, b)
-            | ExprKind::Sub(a, b)
-            | ExprKind::Mul(a, b)
-            | ExprKind::Div(a, b)
-            | ExprKind::Eq(a, b)
-            | ExprKind::Ne(a, b)
-            | ExprKind::Lt(a, b)
-            | ExprKind::Le(a, b)
-            | ExprKind::Gt(a, b)
-            | ExprKind::Ge(a, b)
-            | ExprKind::And(a, b)
-            | ExprKind::Or(a, b) => self.has_side_effect(a) || self.has_side_effect(b),
-            ExprKind::Call { .. } => true,
-            ExprKind::Printf(_) => true,
-            ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| self.has_side_effect(sub_expr)),
-            ExprKind::StructValue(_, fs) => fs
-                .iter()
-                .any(|(_, sub_expr)| self.has_side_effect(sub_expr)),
-            ExprKind::Int64(_)
-            | ExprKind::Bool(_)
-            | ExprKind::Str(_)
-            | ExprKind::IndexAccess { .. }
-            | ExprKind::FieldAccess { .. }
-            | ExprKind::TmpVar(_)
-            | ExprKind::Var(_) => false,
-        }
-    }
 }
 
 fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
@@ -573,7 +539,7 @@ fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
 }
 
 fn tmp_var(t: &TmpVar) -> String {
-    format!("t{}", t.index)
+    format!("_t{}", t.index)
 }
 
 fn c_type(ty: &Type) -> String {
@@ -606,9 +572,23 @@ fn c_type(ty: &Type) -> String {
 /// ## Tuple type
 ///
 /// ```ignore
-/// +-----+---------------------------+----------+
-/// | "T" | digits (number of fields) | (fields) |
-/// +-----+---------------------------+----------+
+/// +-----+---------------------------+---------------+
+/// | "T" | digits (number of fields) | (field types) |
+/// +-----+---------------------------+---------------+
+/// ```
+///
+/// ## Anonymous struct type
+///
+/// ```ignore
+/// +-----+---------------------------+----------------+
+/// | "S" | digits (number of fields) | (named fields) |
+/// +-----+---------------------------+----------------+
+///
+/// named field:
+/// +------+-------------------------------------------+------+
+/// | type | digits (The length of the following name) | name |
+/// +------+-------------------------------------------+------+
+///
 /// ```
 ///
 /// ## Struct type
@@ -642,7 +622,16 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
         }
         Type::Struct(struct_ty) => {
             buffer.push('S');
-            buffer.push_str(struct_ty.name());
+            if let Some(name) = struct_ty.name() {
+                buffer.push_str(name);
+            } else {
+                buffer.push_str(&struct_ty.fields().len().to_string());
+                for f in struct_ty.fields() {
+                    encode_ty(f.ty(), buffer);
+                    buffer.push_str(&f.name().len().to_string());
+                    buffer.push_str(f.name());
+                }
+            }
         }
         Type::Named(named_ty) => {
             encode_ty(named_ty.expect_ty(), buffer);

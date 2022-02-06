@@ -87,7 +87,7 @@ assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
   struct T { value: int64 }
   t = T { value: 123 }
   case t
-  when T {}
+  when T { ... }
     puts(t)
   when T { value: 0 }
     puts(t)
@@ -151,6 +151,31 @@ assert 'Semantic error: non-exhaustive pattern: `T { a: false, b: false }`' "
   when T { a: false, b: true }
     puts(3)
   end"
+# destructuring
+assert 'uncovered fields `value`' "
+  struct T { value: int64 }
+  case T { value: 123 }
+  when T {}
+    puts(0)
+  else
+    puts(1)
+  end"
+assert 'uncovered fields `a`, `b`' "
+  struct T { a: int64, b: int64 }
+  case T { a: 1, b: 2 }
+  when T {}
+    puts(0)
+  else
+    puts(2)
+  end"
+assert 'named field `value` is defined more than once' "
+  struct T { value: int64 }
+  case T { value: 123 }
+  when T { value: a, value: b }
+    puts(0)
+  else
+    puts(1)
+  end"
 # binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
 case (10, 20, 30)
@@ -209,3 +234,19 @@ assert 'Semantic error: no field `b` on type `struct A { a: int64 }`' "
 struct A { a: int64 }
 a = A { a: 100 }
 a.b"
+# anonymous struct
+assert 'expected type `{ a: int64, b: int64 }`, found `int64`' '
+def foo(opts: { a: int64, b: int64 })
+  opts.a + opts.b
+end
+foo(100)'
+assert 'identifier `a` is bound more than once in the same pattern' '
+case { a: 100, b: 200, c: 300 }
+when { a, ...a }
+  puts(a)
+end'
+assert 'spread pattern can appear only once' '
+case { a: 100, b: 200, c: 300 }
+when { a, ...x, ...y }
+  puts(a)
+end'

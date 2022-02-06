@@ -1,7 +1,7 @@
-use crate::syntax;
-use crate::syntax::PatternKind;
-use crate::ty::{FunctionSignature, Type, TypeContext};
+use crate::syntax::{self, PatternKind};
+use crate::ty::{FunctionSignature, StructTy, Type, TypeContext, TypedField};
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::fmt;
 use typed_arena::Arena;
 
@@ -29,8 +29,8 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
                 }
             }
             Type::Struct(struct_ty) => {
-                for (_, fty) in struct_ty.fields() {
-                    self.add_decl_type(fty);
+                for f in struct_ty.fields() {
+                    self.add_decl_type(f.ty());
                 }
             }
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
@@ -278,6 +278,66 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty.bottom_ty()
     }
+
+    // Returns `true` if the expression is cheap operation, so it can
+    // be used as immediate value.
+    pub fn can_be_immediate(&self) -> bool {
+        match &self.kind {
+            ExprKind::Minus(a) | ExprKind::Not(a) => a.can_be_immediate(),
+            ExprKind::Add(_, _)
+            | ExprKind::Sub(_, _)
+            | ExprKind::Mul(_, _)
+            | ExprKind::Div(_, _)
+            | ExprKind::Eq(_, _)
+            | ExprKind::Ne(_, _)
+            | ExprKind::Lt(_, _)
+            | ExprKind::Le(_, _)
+            | ExprKind::Gt(_, _)
+            | ExprKind::Ge(_, _)
+            | ExprKind::And(_, _)
+            | ExprKind::Or(_, _) => false,
+            ExprKind::Tuple(_)
+            | ExprKind::StructValue(_)
+            | ExprKind::Call { .. }
+            | ExprKind::Printf(_) => false,
+            ExprKind::Int64(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::IndexAccess { .. }
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::TmpVar(_)
+            | ExprKind::Var(_) => true,
+        }
+    }
+
+    // Returns `true` if the expression can have side effects.
+    pub fn has_side_effect(&self) -> bool {
+        match &self.kind {
+            ExprKind::Call { .. } | ExprKind::Printf(_) => true,
+            ExprKind::Minus(a) | ExprKind::Not(a) => a.has_side_effect(),
+            ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Le(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Ge(a, b)
+            | ExprKind::And(a, b)
+            | ExprKind::Or(a, b) => a.has_side_effect() || b.has_side_effect(),
+            ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| sub_expr.has_side_effect()),
+            ExprKind::StructValue(fs) => fs.iter().any(|(_, sub_expr)| sub_expr.has_side_effect()),
+            ExprKind::Int64(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::IndexAccess { .. }
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::TmpVar(_)
+            | ExprKind::Var(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -318,7 +378,7 @@ pub enum ExprKind<'a, 'tcx> {
     Bool(bool),
     Str(String),
     Tuple(Vec<&'a Expr<'a, 'tcx>>),
-    StructValue(String, Vec<(String, &'a Expr<'a, 'tcx>)>),
+    StructValue(Vec<(String, &'a Expr<'a, 'tcx>)>),
     IndexAccess {
         operand: &'a Expr<'a, 'tcx>,
         index: usize,
@@ -334,6 +394,8 @@ pub enum ExprKind<'a, 'tcx> {
 #[derive(Debug, Clone)]
 pub enum FormatSpec<'a, 'tcx> {
     Value(&'a Expr<'a, 'tcx>),
+    /// Show value as `"{value}"`
+    Quoted(&'a Expr<'a, 'tcx>),
     Str(&'static str),
 }
 
@@ -492,6 +554,9 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     let pat = p.pattern();
                     let ty = pat.expect_ty();
 
+                    // To emit anonymous struct type
+                    program.add_decl_type(ty);
+
                     // Assign parameter names to be able to referenced later.
                     let param = match pat.kind() {
                         PatternKind::Var(name) => Parameter::Var(Var::new(name, ty)),
@@ -506,7 +571,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             let param_expr =
                                 self.expr_arena.alloc(Expr::new(ExprKind::TmpVar(t), ty));
 
-                            self._build_let_pattern(pat, param_expr, &mut body_stmts);
+                            self._build_let_pattern(pat, param_expr, program, &mut body_stmts);
 
                             Parameter::TmpVar(t)
                         }
@@ -561,7 +626,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         match stmt.kind() {
             syntax::StmtKind::Let { pattern, rhs } => {
                 let init = self._build_expr(rhs, program, stmts);
-                self._build_let_pattern(pattern, init, stmts);
+                self._build_let_pattern(pattern, init, program, stmts);
 
                 None
             }
@@ -609,14 +674,59 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, tuple_ty, stmts)
             }
             syntax::ExprKind::Struct(struct_value) => {
-                let mut fields = vec![];
-
-                for field in struct_value.fields() {
-                    let value = self._build_expr(field.value(), program, stmts);
-                    fields.push((field.name().to_string(), inc_used(value)));
+                if struct_value.name().is_none() {
+                    // Add anonymous struct type to declaration types, because we have to
+                    // declare a type as a struct type in C.
+                    // However, the Zero-sized struct should not have a definition.
+                    program.add_decl_type(expr.expect_ty());
                 }
 
-                let kind = ExprKind::StructValue(struct_value.name().to_string(), fields);
+                // Latter initializer can override previous initializers.
+                // So generate initializer values in reversed order.
+                let mut value_fields = vec![];
+                let mut initialized_fields = HashSet::new();
+
+                for field_or_spread in struct_value.fields().iter().rev() {
+                    match field_or_spread {
+                        syntax::ValueFieldOrSpread::ValueField(field) => {
+                            if !initialized_fields.contains(&field.name()) {
+                                let value = self._build_expr(field.value(), program, stmts);
+                                value_fields.push((field.name().to_string(), inc_used(value)));
+                                initialized_fields.insert(field.name());
+                            }
+                        }
+                        syntax::ValueFieldOrSpread::Spread(spread) => {
+                            let operand = spread.expect_operand();
+                            let fields = match operand.expect_ty() {
+                                Type::Struct(struct_ty) => struct_ty.fields(),
+                                _ => unreachable!("spread with invalid expr: {}", spread),
+                            };
+                            let built_spread_value = None;
+                            for field in fields.iter().rev() {
+                                if initialized_fields.contains(&field.name()) {
+                                    // Overridden
+                                    continue;
+                                }
+
+                                let spread_value = built_spread_value
+                                    .unwrap_or_else(|| self._build_expr(operand, program, stmts));
+
+                                let kind = ExprKind::FieldAccess {
+                                    name: field.name().to_string(),
+                                    operand: inc_used(spread_value),
+                                };
+                                let expr = self.expr_arena.alloc(Expr::new(kind, field.ty()));
+                                value_fields.push((field.name().to_string(), inc_used(expr)));
+                                initialized_fields.insert(field.name());
+                            }
+                        }
+                    }
+                }
+
+                // Reversed -> Ordered
+                value_fields.reverse();
+
+                let kind = ExprKind::StructValue(value_fields);
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Minus(a) => {
@@ -770,7 +880,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 while let Some(arg) = it.next() {
                     let a = self._build_expr(arg, program, stmts);
-                    self._printf_format(a, program, stmts, &mut format_specs);
+                    self._printf_format(a, program, stmts, &mut format_specs, false);
 
                     // separated by a space
                     if it.peek().is_some() {
@@ -798,7 +908,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         // Build an condition and variable declarations from the pattern
                         let mut branch_stmts = vec![];
                         let condition =
-                            self._build_pattern(t_head, arm.pattern(), &mut branch_stmts);
+                            self._build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
                         let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
 
                         branch_stmts.push(Stmt::Phi {
@@ -845,66 +955,24 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    fn _build_let_pattern(
-        &mut self,
-        pattern: &'nd syntax::Pattern<'nd, 'tcx>,
-        init: &'a Expr<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-    ) {
-        match pattern.kind() {
-            PatternKind::Var(name) => {
-                let stmt = Stmt::VarDef {
-                    name: name.to_string(),
-                    init: inc_used(init),
-                };
-                stmts.push(stmt);
-            }
-            PatternKind::Wildcard => {
-                // no bound variable to `_`
-            }
-            PatternKind::Tuple(fs) => {
-                for (i, sub_pat) in fs.iter().enumerate() {
-                    let kind = ExprKind::IndexAccess {
-                        operand: inc_used(init),
-                        index: i,
-                    };
-                    let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
-
-                    self._build_let_pattern(sub_pat, field, stmts)
-                }
-            }
-            PatternKind::Struct(struct_pat) => {
-                for pat_field in struct_pat.fields() {
-                    let kind = ExprKind::FieldAccess {
-                        operand: inc_used(init),
-                        name: pat_field.name().to_string(),
-                    };
-                    let field = self
-                        .expr_arena
-                        .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-
-                    self._build_let_pattern(pat_field.pattern(), field, stmts)
-                }
-            }
-            PatternKind::Integer(_)
-            | PatternKind::Boolean(_)
-            | PatternKind::String(_)
-            | PatternKind::Range { .. } => {
-                unreachable!("Unsupported let pattern: `{}`", pattern.kind());
-            }
-        };
-    }
-
     fn _printf_format(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
         specs: &mut Vec<FormatSpec<'a, 'tcx>>,
+        escape_string: bool,
     ) {
         match arg.ty() {
-            Type::Int64 | Type::NativeInt | Type::Boolean | Type::String => {
+            Type::Int64 | Type::NativeInt | Type::Boolean => {
                 specs.push(FormatSpec::Value(inc_used(arg)));
+            }
+            Type::String => {
+                if escape_string {
+                    specs.push(FormatSpec::Quoted(inc_used(arg)));
+                } else {
+                    specs.push(FormatSpec::Value(inc_used(arg)));
+                }
             }
             Type::Tuple(fs) => {
                 let mut it = fs.iter().enumerate().peekable();
@@ -917,7 +985,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     };
 
                     let ir_expr = self.push_expr_kind(kind, sub_ty, stmts);
-                    self._printf_format(ir_expr, program, stmts, specs);
+                    self._printf_format(ir_expr, program, stmts, specs, true);
 
                     if it.peek().is_some() {
                         specs.push(FormatSpec::Str(", "));
@@ -926,40 +994,53 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 specs.push(FormatSpec::Str(")"));
             }
             Type::Struct(struct_ty) => {
-                let mut it = struct_ty.fields().peekable();
-                let empty = it.peek().is_none();
-
-                specs.push(FormatSpec::Value(self.const_string(struct_ty.name())));
-                specs.push(FormatSpec::Str(" {"));
-                if !empty {
-                    specs.push(FormatSpec::Str(" "));
-                }
-
-                while let Some((name, fty)) = it.next() {
+                if let Some(name) = struct_ty.name() {
                     specs.push(FormatSpec::Value(self.const_string(name)));
-                    specs.push(FormatSpec::Str(": "));
-
-                    let kind = ExprKind::FieldAccess {
-                        operand: inc_used(arg),
-                        name: name.to_string(),
-                    };
-
-                    let ir_expr = self.push_expr_kind(kind, fty, stmts);
-                    self._printf_format(ir_expr, program, stmts, specs);
-
-                    if it.peek().is_some() {
-                        specs.push(FormatSpec::Str(", "));
-                    }
-                }
-
-                if !empty {
                     specs.push(FormatSpec::Str(" "));
                 }
-                specs.push(FormatSpec::Str("}"));
+                self._printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
             }
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
+    }
+
+    fn _printf_format_typed_fields(
+        &mut self,
+        arg: &'a Expr<'a, 'tcx>,
+        fields: &[TypedField<'tcx>],
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        specs: &mut Vec<FormatSpec<'a, 'tcx>>,
+    ) {
+        let mut it = fields.iter().peekable();
+        let empty = it.peek().is_none();
+        specs.push(FormatSpec::Str("{"));
+        if !empty {
+            specs.push(FormatSpec::Str(" "));
+        }
+
+        while let Some(f) = it.next() {
+            specs.push(FormatSpec::Value(self.const_string(f.name())));
+            specs.push(FormatSpec::Str(": "));
+
+            let kind = ExprKind::FieldAccess {
+                operand: inc_used(arg),
+                name: f.name().to_string(),
+            };
+
+            let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
+            self._printf_format(ir_expr, program, stmts, specs, true);
+
+            if it.peek().is_some() {
+                specs.push(FormatSpec::Str(", "));
+            }
+        }
+
+        if !empty {
+            specs.push(FormatSpec::Str(" "));
+        }
+        specs.push(FormatSpec::Str("}"));
     }
 
     // Returns `None` for no condition.
@@ -967,6 +1048,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         &mut self,
         t_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
         // zero-sized type is always matched with a value.
@@ -1041,7 +1123,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .expr_arena
                         .alloc(Expr::new(kind, sub_pats[0].expect_ty()));
 
-                    let mut condition = self._build_pattern(operand, sub_pats[0], stmts);
+                    let mut condition = self._build_pattern(operand, sub_pats[0], program, stmts);
 
                     for (i, pat) in sub_pats.iter().enumerate().skip(1) {
                         let kind = ExprKind::IndexAccess {
@@ -1049,7 +1131,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             index: i,
                         };
                         let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
-                        let sub_condition = self._build_pattern(operand, pat, stmts);
+                        let sub_condition = self._build_pattern(operand, pat, program, stmts);
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {
@@ -1072,7 +1154,44 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         "Empty struct must be zero-sized type. It should be handled above."
                     );
                 } else {
-                    let first_field = struct_pat.fields().next().unwrap();
+                    // Split fields into pattern fields and a spread.
+                    let mut pattern_fields = vec![];
+                    let mut spread_pat = None;
+
+                    for f in struct_pat.fields() {
+                        match f {
+                            syntax::PatternFieldOrSpread::PatternField(pf) => {
+                                pattern_fields.push(pf);
+                            }
+                            syntax::PatternFieldOrSpread::Spread(spread) => {
+                                spread_pat = Some(spread);
+                            }
+                        }
+                    }
+                    if let Some(spread_pat) = spread_pat {
+                        if let Some(spread_name) = spread_pat.name() {
+                            let spread_ty = spread_pat.expect_ty();
+                            program.add_decl_type(spread_ty);
+
+                            let struct_ty = spread_pat.expect_struct_ty();
+                            let values = self.struct_values(struct_ty, t_expr);
+                            let struct_value = self
+                                .expr_arena
+                                .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
+
+                            stmts.push(Stmt::VarDef {
+                                name: spread_name.to_string(),
+                                init: inc_used(struct_value),
+                            });
+                        }
+                    }
+
+                    // no condition
+                    if pattern_fields.is_empty() {
+                        return None;
+                    }
+
+                    let first_field = pattern_fields[0];
                     let kind = ExprKind::FieldAccess {
                         operand: inc_used(t_expr),
                         name: first_field.name().to_string(),
@@ -1081,9 +1200,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .expr_arena
                         .alloc(Expr::new(kind, first_field.pattern().expect_ty()));
 
-                    let mut condition = self._build_pattern(operand, first_field.pattern(), stmts);
+                    let mut condition =
+                        self._build_pattern(operand, first_field.pattern(), program, stmts);
 
-                    for pat_field in struct_pat.fields().skip(1) {
+                    for pat_field in pattern_fields.iter().skip(1) {
                         let kind = ExprKind::FieldAccess {
                             operand: inc_used(t_expr),
                             name: pat_field.name().to_string(),
@@ -1092,7 +1212,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             .expr_arena
                             .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
                         let sub_condition =
-                            self._build_pattern(operand, pat_field.pattern(), stmts);
+                            self._build_pattern(operand, pat_field.pattern(), program, stmts);
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {
@@ -1120,6 +1240,98 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             PatternKind::Wildcard => None,
         }
     }
+
+    fn _build_let_pattern(
+        &mut self,
+        pattern: &'nd syntax::Pattern<'nd, 'tcx>,
+        init: &'a Expr<'a, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) {
+        match pattern.kind() {
+            PatternKind::Var(name) => {
+                let stmt = Stmt::VarDef {
+                    name: name.to_string(),
+                    init: inc_used(init),
+                };
+                stmts.push(stmt);
+            }
+            PatternKind::Wildcard => {
+                // no bound variable to `_`
+            }
+            PatternKind::Tuple(fs) => {
+                for (i, sub_pat) in fs.iter().enumerate() {
+                    let kind = ExprKind::IndexAccess {
+                        operand: inc_used(init),
+                        index: i,
+                    };
+                    let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
+
+                    self._build_let_pattern(sub_pat, field, program, stmts)
+                }
+            }
+            PatternKind::Struct(struct_pat) => {
+                for f in struct_pat.fields() {
+                    match f {
+                        syntax::PatternFieldOrSpread::PatternField(pat_field) => {
+                            let kind = ExprKind::FieldAccess {
+                                operand: inc_used(init),
+                                name: pat_field.name().to_string(),
+                            };
+                            let field = self
+                                .expr_arena
+                                .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+
+                            self._build_let_pattern(pat_field.pattern(), field, program, stmts)
+                        }
+                        syntax::PatternFieldOrSpread::Spread(spread_pat) => {
+                            if let Some(spread_name) = spread_pat.name() {
+                                let spread_ty = spread_pat.expect_ty();
+                                program.add_decl_type(spread_ty);
+
+                                let struct_ty = spread_pat.expect_struct_ty();
+                                let values = self.struct_values(struct_ty, init);
+                                let struct_value = self
+                                    .expr_arena
+                                    .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
+
+                                stmts.push(Stmt::VarDef {
+                                    name: spread_name.to_string(),
+                                    init: inc_used(struct_value),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            PatternKind::Integer(_)
+            | PatternKind::Boolean(_)
+            | PatternKind::String(_)
+            | PatternKind::Range { .. } => {
+                unreachable!("Unsupported let pattern: `{}`", pattern.kind());
+            }
+        };
+    }
+
+    fn struct_values(
+        &self,
+        struct_ty: &StructTy<'tcx>,
+        init: &'a Expr<'a, 'tcx>,
+    ) -> Vec<(String, &'a Expr<'a, 'tcx>)> {
+        struct_ty
+            .fields()
+            .iter()
+            .map(|f| {
+                let kind = ExprKind::FieldAccess {
+                    operand: inc_used(init),
+                    name: f.name().to_string(),
+                };
+                let v = self.expr_arena.alloc(Expr::new(kind, f.ty()));
+
+                (f.name().to_string(), &*v)
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
 #[derive(Default, Debug)]
@@ -1145,7 +1357,7 @@ impl<'a, 'tcx> Optimizer {
     fn optimize_stmt(&mut self, stmt: &Stmt<'a, 'tcx>) {
         match stmt {
             Stmt::TmpVarDef { var, init, pruned } => {
-                if var.used.get() == 1 {
+                if var.used.get() == 1 || init.can_be_immediate() {
                     // This temporary variable is used only once, so it could be
                     // replaced with the expression.
                     var.immediate.set(Some(init));
@@ -1226,7 +1438,7 @@ impl<'a, 'tcx> Optimizer {
                     self.optimize_expr(value);
                 }
             }
-            ExprKind::StructValue(_, fs) => {
+            ExprKind::StructValue(fs) => {
                 for (_, value) in fs {
                     self.optimize_expr(value);
                 }

@@ -33,11 +33,23 @@ impl<'tcx> TypeContext<'tcx> {
             .alloc(Type::Tuple(value_types.iter().copied().collect()))
     }
 
-    pub fn struct_ty(&self, name: &str, fields: Vec<StructTyField<'tcx>>) -> &'tcx Type<'tcx> {
-        let struct_ty = StructTy {
-            name: name.to_string(),
-            fields,
-        };
+    pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
+        self.anon_struct_ty(vec![])
+    }
+
+    /// Returns a struct type whose name is `name` and has no value.
+    pub fn empty_struct_ty(&self, name: String) -> &'tcx Type<'tcx> {
+        let struct_ty = StructTy::new_named(name, vec![]);
+        self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+
+    pub fn anon_struct_ty(&self, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
+        let struct_ty = StructTy::new_anonymous(fields);
+        self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+
+    pub fn struct_ty(&self, name: String, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
+        let struct_ty = StructTy::new_named(name, fields);
         self.type_arena.alloc(Type::Struct(struct_ty))
     }
 
@@ -58,12 +70,6 @@ impl<'tcx> TypeContext<'tcx> {
         }
 
         self.tuple(&value_types)
-    }
-
-    /// Returns a struct type whose name is `name` and has no value.
-    pub fn named_struct(&self, name: &str) -> &'tcx Type<'tcx> {
-        let struct_ty = StructTy::new(name, vec![]);
-        self.type_arena.alloc(Type::Struct(struct_ty))
     }
 
     pub fn native_int(&self) -> &'tcx Type<'tcx> {
@@ -113,9 +119,7 @@ impl<'tcx> Type<'tcx> {
         match self {
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => false,
             Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
-            Type::Struct(struct_ty) => {
-                struct_ty.is_empty() || struct_ty.fields().all(|(_, fty)| fty.is_zero_sized())
-            }
+            Type::Struct(struct_ty) => struct_ty.fields().iter().all(|f| f.ty().is_zero_sized()),
             Type::Named(named_ty) => {
                 if let Some(ty) = named_ty.ty() {
                     ty.is_zero_sized()
@@ -199,53 +203,88 @@ impl fmt::Display for Type<'_> {
     }
 }
 
-pub type StructTyField<'tcx> = (String, &'tcx Type<'tcx>);
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StructTy<'tcx> {
+pub struct TypedField<'tcx> {
     name: String,
-    fields: Vec<StructTyField<'tcx>>,
+    ty: &'tcx Type<'tcx>,
 }
 
-impl<'tcx> StructTy<'tcx> {
-    pub fn new(name: &str, fields: Vec<StructTyField<'tcx>>) -> Self {
-        Self {
-            name: name.to_string(),
-            fields,
-        }
+impl<'tcx> TypedField<'tcx> {
+    pub fn new(name: String, ty: &'tcx Type<'tcx>) -> Self {
+        Self { name, ty }
     }
 
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
+    }
+}
+
+impl fmt::Display for TypedField<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: ", self.name)?;
+        write!(f, "{}", self.ty)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StructTy<'tcx> {
+    name: Option<String>,
+    fields: Vec<TypedField<'tcx>>,
+}
+
+impl<'tcx> StructTy<'tcx> {
+    pub fn new_anonymous(fields: Vec<TypedField<'tcx>>) -> Self {
+        Self::new(None, fields)
     }
 
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = &StructTyField<'tcx>> {
-        self.fields.iter()
+    pub fn new_named(name: String, fields: Vec<TypedField<'tcx>>) -> Self {
+        Self::new(Some(name), fields)
     }
 
-    pub fn get_field(&self, name: &str) -> Option<&StructTyField<'tcx>> {
-        self.fields.iter().find(|f| f.0 == name)
+    pub fn new(name: Option<String>, fields: Vec<TypedField<'tcx>>) -> Self {
+        if name.is_none() {
+            // The order of fields must be sorted so that anonymous struct can be
+            // matched by structural.
+            let mut fs = fields;
+            fs.sort_by(|a, b| a.name().cmp(b.name()));
+            Self { name, fields: fs }
+        } else {
+            Self { name, fields }
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn fields(&self) -> &[TypedField<'tcx>] {
+        self.fields.as_slice()
+    }
+
+    pub fn get_field(&self, name: &str) -> Option<&TypedField<'tcx>> {
+        self.fields.iter().find(|f| f.name() == name)
     }
 }
 
 impl fmt::Display for StructTy<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "struct {} ", self.name())?;
+        if let Some(name) = self.name() {
+            write!(f, "struct {} ", name)?;
+        }
 
-        let mut it = self.fields().peekable();
+        let mut it = self.fields().iter().peekable();
         let empty = it.peek().is_none();
 
         write!(f, "{{")?;
         if !empty {
             write!(f, " ")?;
         }
-        while let Some((fname, ty)) = it.next() {
-            write!(f, "{}: ", fname)?;
-            write!(f, "{}", ty)?;
+        while let Some(field) = it.next() {
+            write!(f, "{}", field)?;
             if it.peek().is_some() {
                 write!(f, ", ")?;
             }

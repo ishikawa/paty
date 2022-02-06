@@ -325,19 +325,12 @@ assert 'Year 2022' '
 struct D { foo: int64, bar: boolean, baz: string }
 d = D { bar: true, foo: 2022, baz: "Year" }
 D { bar: x, foo: y, baz: z} = d
-case D { bar: x, foo: y, baz: z}
-when D { bar: false }
+case D { bar: x, foo: y, baz: z }
+when D { bar: false, ... }
   puts(false)
-when D { foo: foo, baz }
+when D { foo: foo, baz, ... }
   puts(baz, foo)
 end'
-assert 'Year 2022' '
-struct D { foo: int64, bar: boolean, baz: string }
-d = D { bar: true, foo: 2022, baz: "Year" }
-D { bar: _ } = d
-D { foo } = d
-D { baz } = d
-puts(baz, foo)'
 assert 'Year 2022' '
 struct D { foo: int64, bar: boolean, baz: string }
 d = D { bar: true, foo: 2022, baz: "Year" }
@@ -346,15 +339,92 @@ assert '3' '
 struct D { foo: int64, bar: boolean, baz: string }
 d = D { bar: false, foo: 1000, baz: "Hello" }
 case d
-when D { bar: true }
+when D { bar: true, ... }
   puts(1)
-when D { foo: 999 }
+when D { foo: 999, ... }
   puts(2)
-when D { baz: "Hello" }
+when D { baz: "Hello", ... }
   puts(3)
 else
   puts(4)
 end'
+assert 'Year 2022' '
+struct D { foo: int64, bar: boolean, baz: string }
+d = D { bar: true, foo: 2022, baz: "Year" }
+D { bar: _, ... } = d
+D { foo, ... } = d
+D { baz, ... } = d
+puts(baz, foo)'
+# anonymous struct
+assert '{ a: 1 }' 'puts({a: 1})'
+assert '{ b: true, m: "hello" }' 'puts({m: "hello", b: true})'
+assert '{ t: { a: 123 }, z: 33 }' '
+t1 = { a: 123 }
+t2 = { t: t1, z: 33}
+puts(t2)'
+assert '6
+9' '
+def foo(n: int64, options: { repeat: boolean, count: int64 })
+  case options.repeat
+  when true
+    options.count * n
+  else
+    n
+  end
+end
+6.foo({ count: 0, repeat: false }).puts()
+3.foo({ count: 3, repeat: true }).puts()'
+assert '123' '
+def foo({ a, ... }: { a: int64 })
+  a
+end
+{ a: 123 }.foo().puts()'
+assert '{ a: 100, b: 200, c: 300 }' '
+t1 = { a: 100, b: 200 }
+t2 = { c: 300, ...t1 }
+puts(t2)'
+assert 'T { a: 100, b: 200, c: 400 }' '
+struct T { a: int64, b: int64, c: int64, }
+t1 = T { a: 100, b: 200, c: 300 }
+t2 = T { ...t1, c: 400 }
+puts(t2)'
+assert 'T { a: 0, b: 1, c: 400 }' '
+struct T { a: int64, b: int64, c: int64, }
+t1 = T { a: 100, b: 200, c: 300 }
+t2 = T { ...t1, c: 400 }
+t3 = T { ...t1, ...t2, a: 0, b: 1 }
+puts(t3)'
+assert '100' '
+case { a: 100, b: 200 }
+when { a, ... }
+  puts(a)
+end'
+assert '100 300' '
+case { a: 100, b: 200, c: 300 }
+when { a, ...x }
+  puts(a, x.c)
+end'
+assert '100 200 300' '
+struct T { a: int64, b: int64, c: int64 }
+case T { a: 100, b: 200, c: 300 }
+when T { a, ...x }
+  puts(a, x.b, x.c)
+end'
+assert '1 3' '
+struct T { a: int64, b: int64, c: int64 }
+t1 = T { a: 1, b: 2, c: 3 }
+{ a, ...x } = t1
+puts(a, x.c)'
+assert 'T { a: 50, b: 10, c: 40 }' '
+struct T {
+  a: int64,
+  b: int64,
+  c: int64,
+}
+t1 = T { a: 1, b: 2, c: 3 }
+t2 = T { ...t1, a: 3, b: 10 } # { a: 3, b: 10, c: 3 }
+t3 = T { ...t1, ...t2, ...{ a: 50, c: 40 } }
+puts(t3)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

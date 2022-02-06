@@ -1,5 +1,5 @@
 use crate::syntax::{RangeEnd, Token, TokenKind};
-use crate::ty::{FunctionSignature, NamedTy, StructTy, StructTyField, Type, TypeContext};
+use crate::ty::{FunctionSignature, NamedTy, StructTy, Type, TypeContext, TypedField};
 use std::cell::Cell;
 use std::fmt;
 use std::iter::Peekable;
@@ -181,6 +181,12 @@ impl<'nd, 'tcx> Node for Expr<'nd, 'tcx> {
     }
 }
 
+impl fmt::Display for Expr<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
 #[derive(Debug)]
 pub enum ExprKind<'nd, 'tcx> {
     Integer(i64),
@@ -223,6 +229,72 @@ pub enum ExprKind<'nd, 'tcx> {
     Puts(Vec<&'nd Expr<'nd, 'tcx>>),
 }
 
+impl fmt::Display for ExprKind<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExprKind::Integer(n) => n.fmt(f),
+            ExprKind::Boolean(b) => b.fmt(f),
+            ExprKind::String(s) => s.escape_default().fmt(f),
+            ExprKind::Var(name) => name.fmt(f),
+            ExprKind::Tuple(fs) => {
+                write!(f, "(")?;
+                let mut it = fs.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            ExprKind::Struct(value) => value.fmt(f),
+            ExprKind::Minus(operand) => write!(f, "-{}", operand),
+            ExprKind::Add(a, b) => write!(f, "{} + {}", a, b),
+            ExprKind::Sub(a, b) => write!(f, "{} - {}", a, b),
+            ExprKind::Mul(a, b) => write!(f, "{} * {}", a, b),
+            ExprKind::Div(a, b) => write!(f, "{} / {}", a, b),
+            ExprKind::Eq(a, b) => write!(f, "{} == {}", a, b),
+            ExprKind::Ne(a, b) => write!(f, "{} != {}", a, b),
+            ExprKind::Le(a, b) => write!(f, "{} <= {}", a, b),
+            ExprKind::Ge(a, b) => write!(f, "{} >= {}", a, b),
+            ExprKind::Lt(a, b) => write!(f, "{} < {}", a, b),
+            ExprKind::Gt(a, b) => write!(f, "{} > {}", a, b),
+            ExprKind::And(a, b) => write!(f, "{} && {}", a, b),
+            ExprKind::Or(a, b) => write!(f, "{} || {}", a, b),
+            ExprKind::IndexAccess(operand, i) => write!(f, "{}.{}", operand, i),
+            ExprKind::FieldAccess(operand, name) => write!(f, "{}.{}", operand, name),
+            ExprKind::Call(call_expr) => call_expr.fmt(f),
+            ExprKind::Case {
+                head,
+                arms,
+                else_body,
+            } => {
+                writeln!(f, "case {}", head)?;
+                for arm in arms {
+                    writeln!(f, "when {:?}", arm.pattern())?;
+                    writeln!(f, "  {}", arm.body())?;
+                }
+                if let Some(else_body) = else_body {
+                    writeln!(f, "else")?;
+                    writeln!(f, "  {}", else_body)?;
+                }
+                write!(f, "end")
+            }
+            ExprKind::Puts(args) => {
+                write!(f, "puts(")?;
+                let mut it = args.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CallExpr<'nd, 'tcx> {
     name: String,
@@ -254,6 +326,21 @@ impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
 
     pub fn assign_function(&self, fun: &'nd Function<'nd, 'tcx>) {
         self.function.set(Some(fun));
+    }
+}
+
+impl fmt::Display for CallExpr<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        write!(f, "(")?;
+        let mut it = self.args.iter().peekable();
+        while let Some(a) = it.next() {
+            write!(f, "{}", a)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")
     }
 }
 
@@ -398,59 +485,77 @@ impl<'tcx> Node for StructFieldDef<'tcx> {
 
 #[derive(Debug)]
 pub struct StructValue<'nd, 'tcx> {
-    name: String,
-    fields: Vec<ValueField<'nd, 'tcx>>,
+    name: Option<String>,
+    fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>,
 }
 
 impl<'nd, 'tcx> StructValue<'nd, 'tcx> {
-    pub fn new(name: &str, fields: Vec<ValueField<'nd, 'tcx>>) -> Self {
-        Self {
-            name: name.to_string(),
-            fields,
-        }
+    pub fn new(name: Option<String>, fields: Vec<ValueFieldOrSpread<'nd, 'tcx>>) -> Self {
+        Self { name, fields }
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
-    pub fn fields(&self) -> &[ValueField<'nd, 'tcx>] {
+    pub fn fields(&self) -> &[ValueFieldOrSpread<'nd, 'tcx>] {
         &self.fields
     }
 }
 
-#[derive(Debug)]
-pub struct ValueField<'nd, 'tcx> {
-    name: String,
-    value: &'nd Expr<'nd, 'tcx>,
-    data: NodeData,
-}
-
-impl<'nd, 'tcx> ValueField<'nd, 'tcx> {
-    pub fn new(name: &str, value: &'nd Expr<'nd, 'tcx>) -> Self {
-        Self {
-            name: name.to_string(),
-            value,
-            data: NodeData::new(),
+impl fmt::Display for StructValue<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(name) = self.name() {
+            write!(f, "struct {} ", name)?;
         }
-    }
 
-    pub fn name(&self) -> &str {
-        &self.name
-    }
+        let mut it = self.fields().iter().peekable();
+        let empty = it.peek().is_none();
 
-    pub fn value(&self) -> &'nd Expr<'nd, 'tcx> {
-        self.value
+        write!(f, "{{")?;
+        if !empty {
+            write!(f, " ")?;
+        }
+        while let Some(field) = it.next() {
+            field.fmt(f)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        if !empty {
+            write!(f, " ")?;
+        }
+        write!(f, "}}")
     }
 }
 
-impl<'nd, 'tcx> Node for ValueField<'nd, 'tcx> {
-    fn data(&self) -> &NodeData {
-        &self.data
+#[derive(Debug)]
+pub struct SpreadExpr<'nd, 'tcx> {
+    operand: Option<&'nd Expr<'nd, 'tcx>>,
+}
+
+impl<'nd, 'tcx> SpreadExpr<'nd, 'tcx> {
+    pub fn new(operand: Option<&'nd Expr<'nd, 'tcx>>) -> Self {
+        Self { operand }
     }
 
-    fn data_mut(&mut self) -> &mut NodeData {
-        &mut self.data
+    pub fn operand(&self) -> Option<&'nd Expr<'nd, 'tcx>> {
+        self.operand
+    }
+
+    pub fn expect_operand(&self) -> &'nd Expr<'nd, 'tcx> {
+        self.operand
+            .unwrap_or_else(|| panic!("spread operator without an operand is illegal."))
+    }
+}
+
+impl fmt::Display for SpreadExpr<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "...")?;
+        if let Some(expr) = self.operand {
+            write!(f, "{}", expr)?;
+        }
+        Ok(())
     }
 }
 
@@ -590,16 +695,33 @@ impl fmt::Display for PatternKind<'_, '_> {
 }
 
 #[derive(Debug)]
-pub struct StructPattern<'nd, 'tcx> {
-    name: String,
-    fields: Vec<PatternField<'nd, 'tcx>>,
+pub enum ValueFieldOrSpread<'nd, 'tcx> {
+    ValueField(ValueField<'nd, 'tcx>),
+    Spread(SpreadExpr<'nd, 'tcx>),
 }
 
-impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
-    pub fn new(name: &str, fields: Vec<PatternField<'nd, 'tcx>>) -> Self {
+impl fmt::Display for ValueFieldOrSpread<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ValueFieldOrSpread::ValueField(field) => field.fmt(f),
+            ValueFieldOrSpread::Spread(spread) => spread.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ValueField<'nd, 'tcx> {
+    name: String,
+    value: &'nd Expr<'nd, 'tcx>,
+    data: NodeData,
+}
+
+impl<'nd, 'tcx> ValueField<'nd, 'tcx> {
+    pub fn new(name: &str, value: &'nd Expr<'nd, 'tcx>) -> Self {
         Self {
             name: name.to_string(),
-            fields,
+            value,
+            data: NodeData::new(),
         }
     }
 
@@ -607,14 +729,65 @@ impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
         &self.name
     }
 
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternField<'nd, 'tcx>> {
+    pub fn value(&self) -> &'nd Expr<'nd, 'tcx> {
+        self.value
+    }
+}
+
+impl fmt::Display for ValueField<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.name.fmt(f)?;
+        write!(f, ": ")?;
+        write!(f, "{}", self.value)
+    }
+}
+
+impl<'nd, 'tcx> Node for ValueField<'nd, 'tcx> {
+    fn data(&self) -> &NodeData {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut NodeData {
+        &mut self.data
+    }
+}
+
+#[derive(Debug)]
+pub struct StructPattern<'nd, 'tcx> {
+    name: Option<String>,
+    fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>,
+}
+
+impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
+    pub fn new(name: Option<String>, fields: Vec<PatternFieldOrSpread<'nd, 'tcx>>) -> Self {
+        Self { name, fields }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
         self.fields.iter()
+    }
+
+    pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
+        for f in &self.fields {
+            if let PatternFieldOrSpread::PatternField(f) = f {
+                if f.name() == name {
+                    return Some(f);
+                }
+            }
+        }
+        None
     }
 }
 
 impl fmt::Display for StructPattern<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ", self.name())?;
+        if let Some(name) = self.name() {
+            write!(f, "{} ", name)?;
+        }
 
         let mut it = self.fields().peekable();
         let empty = it.peek().is_none();
@@ -623,8 +796,7 @@ impl fmt::Display for StructPattern<'_, '_> {
             write!(f, " ")?;
         }
         while let Some(field) = it.next() {
-            write!(f, "{}: ", field.name())?;
-            write!(f, "{}", field.pattern().kind())?;
+            field.fmt(f)?;
             if it.peek().is_some() {
                 write!(f, ", ")?;
             }
@@ -637,6 +809,79 @@ impl fmt::Display for StructPattern<'_, '_> {
 }
 
 #[derive(Debug)]
+pub struct SpreadPattern<'tcx> {
+    name: Option<String>,
+    // The type of expression is determined in later phase.
+    ty: Cell<Option<&'tcx Type<'tcx>>>,
+}
+
+impl<'tcx> SpreadPattern<'tcx> {
+    pub fn new(name: Option<String>) -> Self {
+        Self {
+            name,
+            ty: Cell::new(None),
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
+        self.ty().unwrap_or_else(|| {
+            panic!(
+                "Semantic analyzer couldn't assign type for the spread pattern {}",
+                self
+            );
+        })
+    }
+
+    pub fn expect_struct_ty(&self) -> &StructTy<'tcx> {
+        if let Type::Struct(struct_ty) = self.expect_ty() {
+            struct_ty
+        } else {
+            unreachable!(
+                "spread pattern type must be anonymous struct: {}",
+                self.expect_ty()
+            );
+        }
+    }
+
+    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.ty.set(Some(ty))
+    }
+}
+
+impl fmt::Display for SpreadPattern<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "...")?;
+        if let Some(name) = &self.name {
+            name.fmt(f)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum PatternFieldOrSpread<'nd, 'tcx> {
+    PatternField(PatternField<'nd, 'tcx>),
+    Spread(SpreadPattern<'tcx>),
+}
+
+impl fmt::Display for PatternFieldOrSpread<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PatternFieldOrSpread::PatternField(field) => field.fmt(f),
+            PatternFieldOrSpread::Spread(spread) => spread.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct PatternField<'nd, 'tcx> {
     name: String,
     pattern: &'nd Pattern<'nd, 'tcx>,
@@ -644,9 +889,9 @@ pub struct PatternField<'nd, 'tcx> {
 }
 
 impl<'nd, 'tcx> PatternField<'nd, 'tcx> {
-    pub fn new(name: &str, pattern: &'nd Pattern<'nd, 'tcx>) -> Self {
+    pub fn new(name: String, pattern: &'nd Pattern<'nd, 'tcx>) -> Self {
         Self {
-            name: name.to_string(),
+            name,
             pattern,
             data: NodeData::new(),
         }
@@ -658,6 +903,13 @@ impl<'nd, 'tcx> PatternField<'nd, 'tcx> {
 
     pub fn pattern(&self) -> &'nd Pattern<'nd, 'tcx> {
         self.pattern
+    }
+}
+
+impl fmt::Display for PatternField<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: ", self.name())?;
+        write!(f, "{}", self.pattern().kind())
     }
 }
 
@@ -854,11 +1106,11 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         let fields = self.parse_elements(it, ('{', '}'), Self::struct_field_definition)?;
 
         // Build struct type
-        let fs: Vec<StructTyField> = fields
+        let fs: Vec<TypedField<'_>> = fields
             .iter()
-            .map(|f| (f.name().to_string(), f.ty()))
+            .map(|f| TypedField::new(f.name().to_string(), f.ty()))
             .collect();
-        let struct_ty = StructTy::new(&name, fs);
+        let struct_ty = StructTy::new_named(name.to_string(), fs);
         let ty = self.tcx.type_arena.alloc(Type::Struct(struct_ty));
 
         let r#struct = StructDeclaration { name, fields, ty };
@@ -897,64 +1149,114 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
     fn value_field(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<ValueField<'nd, 'tcx>, ParseError<'t>> {
-        let (name_token, name) = if let Some(t) = it.peek() {
-            if let TokenKind::Identifier(name) = t.kind() {
-                let t = it.next().unwrap();
-                (t, name.to_string())
-            } else {
-                return Err(ParseError::NotParsed);
-            }
+    ) -> Result<ValueFieldOrSpread<'nd, 'tcx>, ParseError<'t>> {
+        let start_token = if let Some(tok) = it.peek() {
+            tok
         } else {
             return Err(ParseError::NotParsed);
         };
 
-        // If a field value is omitted, it will be interpreted as an omitted variable
-        // binding with the same name of the field.
-        let value = if self.match_token(it, TokenKind::Operator(':')) {
-            it.next();
-            self.expr(it)?
-        } else {
-            let kind = ExprKind::Var(name.to_string());
-            self.expr_arena.alloc(Expr::new(kind))
-        };
+        match start_token.kind() {
+            TokenKind::Spread => {
+                it.next();
 
-        let mut field = ValueField::new(&name, value);
-        field.data_mut().append_comments_from_token(name_token);
+                // spread operator
+                let operand = self.lookahead(self.expr(it))?;
+                let spread = SpreadExpr::new(operand);
+                Ok(ValueFieldOrSpread::Spread(spread))
+            }
+            TokenKind::Identifier(name) => {
+                let name = name.to_string();
+                let t = it.next().unwrap();
 
-        Ok(field)
+                // If a field value is omitted, it will be interpreted as an omitted variable
+                // binding with the same name of the field.
+                let value = if self.match_token(it, TokenKind::Operator(':')) {
+                    it.next();
+                    self.expr(it)?
+                } else {
+                    let kind = ExprKind::Var(name.to_string());
+                    self.expr_arena.alloc(Expr::new(kind))
+                };
+
+                let mut field = ValueField::new(&name, value);
+                field.data_mut().append_comments_from_token(t);
+
+                Ok(ValueFieldOrSpread::ValueField(field))
+            }
+            _ => Err(ParseError::NotParsed),
+        }
     }
 
     fn pattern_field(
         &self,
         it: &mut TokenIterator<'t>,
-    ) -> Result<PatternField<'nd, 'tcx>, ParseError<'t>> {
-        let (name_token, name) = if let Some(t) = it.peek() {
-            if let TokenKind::Identifier(name) = t.kind() {
-                let t = it.next().unwrap();
-                (t, name.to_string())
-            } else {
-                return Err(ParseError::NotParsed);
-            }
+    ) -> Result<PatternFieldOrSpread<'nd, 'tcx>, ParseError<'t>> {
+        let start_token = if let Some(tok) = it.peek() {
+            tok
         } else {
             return Err(ParseError::NotParsed);
         };
 
-        // Variable pattern in field value can be omitted.
-        let value_pat = if self.match_token(it, TokenKind::Operator(':')) {
-            it.next();
-            self.pattern(it)?
-        } else {
-            let kind = PatternKind::Var(name.to_string());
-            self.pat_arena.alloc(Pattern::new(kind))
-        };
+        match start_token.kind() {
+            TokenKind::Spread => {
+                it.next();
 
-        let mut field = PatternField::new(&name, value_pat);
-        field.data_mut().append_comments_from_token(name_token);
+                // spread pattern
+                let name = if let TokenKind::Identifier(name) = self.peek_token(it)?.kind() {
+                    it.next();
+                    Some(name.to_string())
+                } else {
+                    None
+                };
 
-        Ok(field)
+                let spread = SpreadPattern::new(name);
+                Ok(PatternFieldOrSpread::Spread(spread))
+            }
+            TokenKind::Identifier(name) => {
+                let name = name.to_string();
+                let t = it.next().unwrap();
+
+                // field
+                // Variable pattern in field value can be omitted.
+                let value_pat = if self.match_token(it, TokenKind::Operator(':')) {
+                    it.next();
+                    self.pattern(it)?
+                } else {
+                    let kind = PatternKind::Var(name.to_string());
+                    self.pat_arena.alloc(Pattern::new(kind))
+                };
+
+                let mut field = PatternField::new(name, value_pat);
+                field.data_mut().append_comments_from_token(t);
+
+                Ok(PatternFieldOrSpread::PatternField(field))
+            }
+            _ => Err(ParseError::NotParsed),
+        }
     }
 
+    fn type_field(&self, it: &mut TokenIterator<'t>) -> Result<TypedField<'tcx>, ParseError<'t>> {
+        let start_token = if let Some(tok) = it.peek() {
+            tok
+        } else {
+            return Err(ParseError::NotParsed);
+        };
+
+        match start_token.kind() {
+            TokenKind::Identifier(name) => {
+                let name = name.to_string();
+                it.next();
+
+                // field
+                self.expect_token(it, TokenKind::Operator(':'))?;
+
+                let ty = self.type_specifier(it)?;
+                Ok(TypedField::new(name, ty))
+            }
+            _ => Err(ParseError::NotParsed),
+        }
+    }
     fn type_specifier(
         &self,
         it: &mut TokenIterator<'t>,
@@ -998,6 +1300,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 it.next();
 
                 self.tcx.tuple(&value_types)
+            }
+            TokenKind::Operator('{') => {
+                let fields = self.parse_elements(it, ('{', '}'), Self::type_field)?;
+                self.tcx.anon_struct_ty(fields)
             }
             TokenKind::Identifier(name) => {
                 it.next();
@@ -1123,11 +1429,17 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                     unreachable!("invalid tuple or group");
                 }
             }
+            TokenKind::Operator('{') => {
+                let fields = self.parse_elements(it, ('{', '}'), Self::pattern_field)?;
+                let struct_value = StructPattern::new(None, fields);
+                let kind = PatternKind::Struct(struct_value);
+                self.alloc_pat(kind, token)
+            }
             TokenKind::Identifier(name) => {
                 it.next();
                 if self.match_token(it, TokenKind::Operator('{')) {
                     let fields = self.parse_elements(it, ('{', '}'), Self::pattern_field)?;
-                    let struct_value = StructPattern::new(name, fields);
+                    let struct_value = StructPattern::new(Some(name.to_string()), fields);
                     let kind = PatternKind::Struct(struct_value);
                     self.alloc_pat(kind, token)
                 } else {
@@ -1162,14 +1474,13 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 PatternKind::Tuple(ps)
             }
             ExprKind::Struct(struct_value) => {
-                let mut fields = vec![];
+                let fields = self.value_fields_to_pattern_fields(struct_value.fields())?;
+                let struct_pat = if let Some(name) = struct_value.name() {
+                    StructPattern::new(Some(name.to_string()), fields)
+                } else {
+                    StructPattern::new(None, fields)
+                };
 
-                for field in struct_value.fields() {
-                    let field_pat = self.expr_to_pattern(field.value())?;
-                    fields.push(PatternField::new(field.name(), field_pat));
-                }
-
-                let struct_pat = StructPattern::new(struct_value.name(), fields);
                 PatternKind::Struct(struct_pat)
             }
             ExprKind::Minus(_)
@@ -1191,12 +1502,47 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             | ExprKind::Case { .. }
             | ExprKind::Puts(_) => {
                 return Err(ParseError::UnrecognizedPattern {
-                    src: format!("{:?}", expr),
+                    src: expr.to_string(),
                 })
             }
         };
 
         Ok(self.pat_arena.alloc(Pattern::new(kind)))
+    }
+
+    fn value_fields_to_pattern_fields(
+        &self,
+        value_fields: &[ValueFieldOrSpread<'nd, 'tcx>],
+    ) -> Result<Vec<PatternFieldOrSpread<'nd, 'tcx>>, ParseError<'t>> {
+        let mut fields = vec![];
+
+        for f in value_fields {
+            match f {
+                ValueFieldOrSpread::ValueField(field) => {
+                    let field_pat = self.expr_to_pattern(field.value())?;
+                    let field = PatternField::new(field.name().to_string(), field_pat);
+
+                    fields.push(PatternFieldOrSpread::PatternField(field));
+                }
+                ValueFieldOrSpread::Spread(spread) => {
+                    let spread_pat = if let Some(expr) = spread.operand {
+                        if let ExprKind::Var(name) = expr.kind() {
+                            SpreadPattern::new(Some(name.to_string()))
+                        } else {
+                            return Err(ParseError::UnrecognizedPattern {
+                                src: expr.to_string(),
+                            });
+                        }
+                    } else {
+                        SpreadPattern::new(None)
+                    };
+
+                    fields.push(PatternFieldOrSpread::Spread(spread_pat));
+                }
+            }
+        }
+
+        Ok(fields)
     }
 
     fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'nd, 'tcx> {
@@ -1431,7 +1777,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                     ExprKind::Call(CallExpr::new(name.clone(), args))
                 } else if self.match_token(it, TokenKind::Operator('{')) {
                     let fields = self.parse_elements(it, ('{', '}'), Self::value_field)?;
-                    let struct_value = StructValue::new(name, fields);
+                    let struct_value = StructValue::new(Some(name.to_string()), fields);
                     ExprKind::Struct(struct_value)
                 } else {
                     ExprKind::Var(name.clone())
@@ -1454,6 +1800,11 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             TokenKind::False => {
                 it.next();
                 ExprKind::Boolean(false)
+            }
+            TokenKind::Operator('{') => {
+                let fields = self.parse_elements(it, ('{', '}'), Self::value_field)?;
+                let struct_value = StructValue::new(None, fields);
+                ExprKind::Struct(struct_value)
             }
             TokenKind::Operator('(') => {
                 // tuple or grouping values.
