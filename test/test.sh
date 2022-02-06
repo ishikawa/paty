@@ -394,6 +394,12 @@ t1 = T { a: 100, b: 200, c: 300 }
 t2 = T { ...t1, c: 400 }
 t3 = T { ...t1, ...t2, a: 0, b: 1 }
 puts(t3)'
+assert '100' '
+case { a: 100, b: 200 }
+when { a, ... }
+  puts(a)
+end
+'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

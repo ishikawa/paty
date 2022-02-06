@@ -809,6 +809,9 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         match constructor {
             Constructor::Single => match ty {
                 Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
+                Type::AnonStruct(struct_ty) => {
+                    Fields::wildcards_from_tys(cx, struct_ty.fields().iter().map(|f| f.ty()))
+                }
                 Type::Struct(struct_ty) => {
                     Fields::wildcards_from_tys(cx, struct_ty.fields().iter().map(|f| f.ty()))
                 }
