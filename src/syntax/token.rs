@@ -148,7 +148,7 @@ fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .map(|s| TokenKind::Integer(format!("-{}", s)));
     let integer = pos_integer.or(neg_integer);
 
-    let operator1 = one_of("+-*/=(){},<>:.").map(TokenKind::Operator);
+    let operator1 = one_of("+-*/=(){},<>:.|").map(TokenKind::Operator);
     let operator2 = choice((
         just("..=").to(TokenKind::RangeIncluded),
         just("..<").to(TokenKind::RangeExcluded),

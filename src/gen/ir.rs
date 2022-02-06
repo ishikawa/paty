@@ -578,7 +578,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         PatternKind::Integer(_)
                         | PatternKind::Boolean(_)
                         | PatternKind::String(_)
-                        | PatternKind::Range { .. } => {
+                        | PatternKind::Range { .. }
+                        | PatternKind::Or(..) => {
                             unreachable!("Unsupported let pattern: `{}`", p.pattern().kind());
                         }
                     };
@@ -1237,6 +1238,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 None
             }
+            PatternKind::Or(..) => todo!(),
             PatternKind::Wildcard => None,
         }
     }
@@ -1307,7 +1309,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             PatternKind::Integer(_)
             | PatternKind::Boolean(_)
             | PatternKind::String(_)
-            | PatternKind::Range { .. } => {
+            | PatternKind::Range { .. }
+            | PatternKind::Or(..) => {
                 unreachable!("Unsupported let pattern: `{}`", pattern.kind());
             }
         };

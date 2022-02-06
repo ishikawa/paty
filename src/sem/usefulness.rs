@@ -939,6 +939,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
                 fields = Fields::from_iter(cx, sub_pats);
             }
+            PatternKind::Or(..) => todo!(),
         }
 
         DeconstructedPat::new(ctor, fields, pat_ty)

@@ -652,6 +652,7 @@ pub enum PatternKind<'nd, 'tcx> {
     Tuple(Vec<&'nd Pattern<'nd, 'tcx>>),
     Struct(StructPattern<'nd, 'tcx>),
     Var(String),
+    Or(Vec<&'nd Pattern<'nd, 'tcx>>),
     Wildcard,
 }
 
@@ -689,6 +690,17 @@ impl fmt::Display for PatternKind<'_, '_> {
             }
             PatternKind::Struct(struct_pat) => struct_pat.fmt(f),
             PatternKind::Var(name) => write!(f, "{}", name),
+            PatternKind::Or(patterns) => {
+                let mut it = patterns.iter().peekable();
+
+                while let Some(sub_pat) = it.next() {
+                    write!(f, "{}", sub_pat.kind())?;
+                    if it.peek().is_some() {
+                        write!(f, " | ")?;
+                    }
+                }
+                Ok(())
+            }
             PatternKind::Wildcard => write!(f, "_"),
         }
     }
@@ -1336,6 +1348,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
+        if it.peek().is_none() {
+            return Err(ParseError::NotParsed);
+        }
+
         let token = self.peek_token(it)?;
         let pat = match token.kind() {
             TokenKind::Integer(n) => {

@@ -751,7 +751,7 @@ fn analyze_let_pattern<'nd: 'tcx, 'tcx>(
         | PatternKind::String(_)
         | PatternKind::Tuple(_)
         | PatternKind::Struct(_) => {}
-        PatternKind::Range { .. } => {
+        PatternKind::Range { .. } | PatternKind::Or(..) => {
             unreachable!("Unsupported let pattern: `{}`", pat.kind());
         }
     }
@@ -939,6 +939,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
 
             vars.insert(binding);
         }
+        PatternKind::Or(..) => todo!(),
         PatternKind::Wildcard => {}
     };
 
@@ -982,6 +983,7 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
                 tcx.anon_struct_ty(typed_fields)
             }
         }
+        PatternKind::Or(..) => todo!(),
         PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }
 }
