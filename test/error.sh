@@ -176,6 +176,11 @@ assert 'named field `value` is defined more than once' "
   else
     puts(1)
   end"
+assert 'unreachable pattern: `{ a: _, b: 3 }`' '
+case { a: 1, b: 2 }
+when { a: x, ... } | { b: 3, ... }
+  puts(x)
+end'
 # binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
 case (10, 20, 30)

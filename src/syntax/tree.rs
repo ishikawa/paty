@@ -643,6 +643,12 @@ impl<'nd, 'tcx> Node for Pattern<'nd, 'tcx> {
     }
 }
 
+impl fmt::Display for Pattern<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
 #[derive(Debug)]
 pub enum PatternKind<'nd, 'tcx> {
     Integer(i64),

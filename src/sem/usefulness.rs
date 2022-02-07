@@ -1013,16 +1013,6 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         self.ty
     }
 
-    /// We keep track for each pattern if it was ever reachable during the analysis. This is used
-    /// with `unreachable_spans` to report unreachable subpatterns arising from or patterns.
-    pub fn set_reachable(&self) {
-        self.reachable.set(true)
-    }
-
-    pub fn is_reachable(&self) -> bool {
-        self.reachable.get()
-    }
-
     pub fn iter_fields<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p, 'tcx>> + 'a {
         self.fields.iter_patterns()
     }
@@ -1048,6 +1038,41 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             _ => self.fields.iter_patterns().collect(),
         }
     }
+
+    /// We keep track for each pattern if it was ever reachable during the analysis. This is used
+    /// with `unreachable_spans` to report unreachable subpatterns arising from or patterns.
+    pub fn set_reachable(&self) {
+        self.reachable.set(true)
+    }
+
+    pub fn is_reachable(&self) -> bool {
+        self.reachable.get()
+    }
+
+    /// Report the spans of subpatterns that were not reachable, if any.
+    pub fn unreachable_sub_pats(
+        &self,
+        cx: &MatchCheckContext<'p, 'tcx>,
+    ) -> Vec<&'p Pattern<'p, 'tcx>> {
+        let mut sub_pats = Vec::new();
+        self.collect_unreachable_spans(cx, &mut sub_pats);
+        sub_pats
+    }
+
+    fn collect_unreachable_spans(
+        &self,
+        cx: &MatchCheckContext<'p, 'tcx>,
+        sub_pats: &mut Vec<&'p Pattern<'p, 'tcx>>,
+    ) {
+        // We don't look at subpatterns if we already reported the whole pattern as unreachable.
+        if !self.is_reachable() {
+            sub_pats.push(self.to_pat(cx));
+        } else {
+            for p in self.iter_fields() {
+                p.collect_unreachable_spans(cx, sub_pats);
+            }
+        }
+    }
 }
 
 /// The arm of a match expression.
@@ -1061,9 +1086,11 @@ pub struct MatchArm<'p, 'tcx> {
 /// Indicates whether or not a given arm is reachable.
 #[derive(Debug, Clone)]
 
-pub enum Reachability {
+pub enum Reachability<'p, 'tcx> {
     /// The arm is reachable.
-    Reachable,
+    Reachable {
+        unreachable_sub_patterns: Vec<&'p Pattern<'p, 'tcx>>,
+    },
     /// The arm is unreachable.
     Unreachable,
 }
@@ -1072,7 +1099,7 @@ pub enum Reachability {
 
 pub struct UsefulnessReport<'p, 'tcx> {
     /// For each arm of the input, whether that arm is reachable after the arms above it.
-    pub arm_usefulness: Vec<(MatchArm<'p, 'tcx>, Reachability)>,
+    pub arm_usefulness: Vec<(MatchArm<'p, 'tcx>, Reachability<'p, 'tcx>)>,
     /// If the match is exhaustive, this is empty. If not, this contains witnesses for the lack of
     /// exhaustiveness.
     pub non_exhaustiveness_witnesses: Vec<DeconstructedPat<'p, 'tcx>>,
@@ -1394,7 +1421,11 @@ fn compute_match_usefulness<'p, 'tcx>(
                 matrix.push(v);
             }
             let reachability = if arm.pat.is_reachable() {
-                Reachability::Reachable
+                let pats = arm.pat.unreachable_sub_pats(cx);
+
+                Reachability::Reachable {
+                    unreachable_sub_patterns: pats,
+                }
             } else {
                 Reachability::Unreachable
             };
@@ -1456,6 +1487,30 @@ pub fn check_match<'tcx>(
 
     // unreachable pattern
     for (i, (arm, reachability)) in report.arm_usefulness.iter().enumerate() {
+        match reachability {
+            Reachability::Reachable {
+                unreachable_sub_patterns,
+            } => {
+                for sub_pat in unreachable_sub_patterns {
+                    errors.push(SemanticError::UnreachablePattern {
+                        pattern: sub_pat.to_string(),
+                    });
+                }
+            }
+            Reachability::Unreachable => {
+                if has_else && i == (report.arm_usefulness.len() - 1) {
+                    // "else"
+                    errors.push(SemanticError::UnreachableElseClause);
+                } else {
+                    let pat = arm.pat.to_pat(&cx);
+
+                    errors.push(SemanticError::UnreachablePattern {
+                        pattern: pat.kind().to_string(),
+                    });
+                }
+            }
+        }
+
         if matches!(reachability, Reachability::Unreachable) {
             if has_else && i == (report.arm_usefulness.len() - 1) {
                 // "else"
@@ -1464,7 +1519,7 @@ pub fn check_match<'tcx>(
                 let pat = arm.pat.to_pat(&cx);
 
                 errors.push(SemanticError::UnreachablePattern {
-                    pattern: pat.kind().to_string(),
+                    pattern: pat.to_string(),
                 });
             }
         }
