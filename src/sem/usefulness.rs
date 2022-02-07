@@ -791,7 +791,11 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         cx: &MatchCheckContext<'p, 'tcx>,
         fields: impl IntoIterator<Item = DeconstructedPat<'p, 'tcx>>,
     ) -> Self {
-        let fields: &[_] = cx.pattern_arena.alloc_extend(fields);
+        // Prevent the function from being called recursively. The arena
+        // allocator can't be invoked recursively.
+        let vs = fields.into_iter().collect::<Vec<_>>();
+        let fields: &[_] = cx.pattern_arena.alloc_extend(vs);
+
         Fields { fields }
     }
 
