@@ -680,7 +680,8 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
             let head_ty = head
                 .ty()
-                .unwrap_or_else(|| panic!("Untyped head expression for {:?}", head));
+                .unwrap_or_else(|| panic!("Untyped head expression for {:?}", head))
+                .bottom_ty();
             let mut expr_ty = None;
 
             for arm in arms {

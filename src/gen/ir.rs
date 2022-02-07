@@ -1217,7 +1217,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {
-                                let kind = ExprKind::Or(cond, sub_cond);
+                                let kind = ExprKind::And(cond, sub_cond);
                                 condition = Some(
                                     self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
                                 );

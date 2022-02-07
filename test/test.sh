@@ -381,6 +381,24 @@ D { bar: _, ... } = d
 D { foo, ... } = d
 D { baz, ... } = d
 puts(baz, foo)'
+assert '1
+2
+3' '
+struct T { a: int64, b: int64, c: int64 }
+def foo(t: T)
+  case t
+  when T { a: 1, b: 2, ... }
+    puts(1)
+  when T { a: 1, c: 3, ... }
+    puts(2)
+  else
+    puts(3)
+  end
+end
+foo(T { a: 1, b: 2, c: 0})
+foo(T { a: 1, b: 3, c: 3})
+foo(T { a: 3, b: 3, c: 3})
+'
 # anonymous struct
 assert '{ a: 1 }' 'puts({a: 1})'
 assert '{ b: true, m: "hello" }' 'puts({m: "hello", b: true})'
