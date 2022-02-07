@@ -939,7 +939,19 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
 
             vars.insert(binding);
         }
-        PatternKind::Or(..) => todo!(),
+        PatternKind::Or(sub_pats) => {
+            for sub_pat in sub_pats {
+                analyze_pattern(
+                    tcx,
+                    sub_pat,
+                    expected_ty,
+                    vars,
+                    functions,
+                    named_types,
+                    errors,
+                );
+            }
+        }
         PatternKind::Wildcard => {}
     };
 
@@ -983,7 +995,13 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
                 tcx.anon_struct_ty(typed_fields)
             }
         }
-        PatternKind::Or(..) => todo!(),
+        PatternKind::Or(sub_pats) => {
+            // TODO: Union type?
+            let sub_pat = sub_pats
+                .first()
+                .expect("or-pattern must have at least 2 elements.");
+            pattern_to_type(tcx, sub_pat)
+        }
         PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }
 }

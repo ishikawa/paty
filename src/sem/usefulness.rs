@@ -608,8 +608,6 @@ pub enum Constructor {
     /// The constructor for patterns that have a single constructor, like tuples, struct patterns
     /// and fixed-length arrays.
     Single,
-    /// Wildcard pattern.
-    Wildcard,
     /// Ranges of integer literal values (`2`, `2..=5` or `2..5`).
     IntRange(IntRange),
     /// String constant
@@ -623,6 +621,10 @@ pub enum Constructor {
     Missing {
         nonexhaustive_enum_missing_real_variants: bool,
     },
+    /// Wildcard pattern.
+    Wildcard,
+    /// Or-pattern.
+    Or,
 }
 
 impl<'tcx> Constructor {
@@ -662,7 +664,8 @@ impl<'tcx> Constructor {
             | Self::IntRange(_)
             | Self::Str(_)
             | Self::NonExhaustive
-            | Self::Missing { .. } => 0,
+            | Self::Missing { .. }
+            | Self::Or => 0,
         }
     }
 
@@ -709,7 +712,7 @@ impl<'tcx> Constructor {
                 .any(|other| range.is_covered_by(other)),
             // This constructor is never covered by anything else
             Self::NonExhaustive => false,
-            Self::Str(..) | Self::Wildcard | Self::Missing { .. } => {
+            Self::Str(..) | Self::Wildcard | Self::Missing { .. } | Self::Or => {
                 unreachable!("found unexpected ctor in all_ctors: {:?}", self)
             }
         }
@@ -819,6 +822,7 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
             | Constructor::NonExhaustive
             | Constructor::Wildcard
             | Constructor::Missing { .. } => Fields::empty(),
+            Constructor::Or => unreachable!("called `Fields::wildcards` on an `Or` ctor"),
         }
     }
 
@@ -939,7 +943,13 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
                 fields = Fields::from_iter(cx, sub_pats);
             }
-            PatternKind::Or(..) => todo!(),
+            PatternKind::Or(..) => {
+                ctor = Constructor::Or;
+                let pats = expand_or_pat(pat)
+                    .into_iter()
+                    .map(|pat| DeconstructedPat::from_pat(cx, pat));
+                fields = Fields::from_iter(cx, pats);
+            }
         }
 
         DeconstructedPat::new(ctor, fields, pat_ty)
@@ -983,6 +993,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
                 `Missing` should have been processed in `apply_constructors`"
             ),
+            Constructor::Or => unreachable!("can't convert to pattern: {:?}", self),
         };
 
         let pat = Pattern::new(kind);
@@ -1013,7 +1024,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     }
 
     pub fn is_or_pat(&self) -> bool {
-        false
+        matches!(self.ctor, Constructor::Or)
     }
 
     /// Specialize this pattern with a constructor.
@@ -1312,8 +1323,21 @@ fn is_useful<'p, 'tcx>(
 
     // If the first pattern is an or-pattern, expand it.
     let mut ret = Usefulness::new_not_useful(witness_preference);
-
-    {
+    if v.head().is_or_pat() {
+        // expanding or-pattern
+        // We try each or-pattern branch in turn.
+        let mut matrix = matrix.clone();
+        for v in v.expand_or_pat() {
+            let usefulness = is_useful(cx, &matrix, &v, witness_preference, is_under_guard, false);
+            ret.extend(usefulness);
+            // If pattern has a guard don't add it to the matrix.
+            if !is_under_guard {
+                // We push the already-seen patterns into the matrix in order to detect redundant
+                // branches like `Some(_) | Some(0)`.
+                matrix.push(v);
+            }
+        }
+    } else {
         let v_ctor = v.head().ctor();
 
         // We split the head constructor of `v`.
@@ -1519,6 +1543,23 @@ mod tests_int_range {
         assert_eq!(low, 0);
         assert_eq!(high, 18446744073709551615u128);
     }
+}
+
+/// Recursively expand this pattern into its subpatterns. Only useful for or-patterns.
+fn expand_or_pat<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>) -> Vec<&'p Pattern<'p, 'tcx>> {
+    fn expand<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>, vec: &mut Vec<&'p Pattern<'p, 'tcx>>) {
+        if let PatternKind::Or(pats) = pat.kind() {
+            for pat in pats {
+                expand(pat, vec);
+            }
+        } else {
+            vec.push(pat)
+        }
+    }
+
+    let mut pats = Vec::new();
+    expand(pat, &mut pats);
+    pats
 }
 
 #[cfg(test)]
