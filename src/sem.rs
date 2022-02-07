@@ -65,6 +65,11 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
             None
         }
     }
+
+    /// Returns an iterator which iterates bindings in this scope.
+    pub fn bindings_iter(&self) -> impl Iterator<Item = (&str, &Binding<'tcx>)> {
+        self.bindings.iter().map(|(k, v)| (k.as_str(), v))
+    }
 }
 
 // Analyze an AST and returns error if any.
@@ -941,16 +946,68 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             vars.insert(binding);
         }
         PatternKind::Or(sub_pats) => {
+            let mut bindings: Option<HashMap<String, &Type>> = None;
+
             for sub_pat in sub_pats {
+                // temporally introduce a new scope for a sub-pattern.
+                let mut sub_vars = Scope::from_parent(vars);
+
                 analyze_pattern(
                     tcx,
                     sub_pat,
                     expected_ty,
-                    vars,
+                    &mut sub_vars,
                     functions,
                     named_types,
                     errors,
                 );
+
+                // check new variables.
+                let mut new_bindings = HashMap::new();
+                for (name, b) in sub_vars.bindings_iter() {
+                    new_bindings.insert(name.to_string(), b.ty());
+                }
+
+                // all new variable must be bound in all sub-patterns.
+                if let Some(bindings) = &bindings {
+                    for (name, expected_ty) in bindings {
+                        if let Some(actual_ty) = new_bindings.get(name) {
+                            if !check_type(expected_ty, actual_ty, errors) {
+                                return;
+                            }
+                        } else {
+                            // bound variable not found in this sub-pattern.
+                            errors.push(SemanticError::UnboundVariableInSubPattern {
+                                name: name.to_string(),
+                            });
+                            return;
+                        }
+                    }
+                    // bi-directional check
+                    for (name, actual_ty) in &new_bindings {
+                        if let Some(expected_ty) = bindings.get(name) {
+                            if !check_type(expected_ty, actual_ty, errors) {
+                                return;
+                            }
+                        } else {
+                            // bound variable not found in this sub-pattern.
+                            errors.push(SemanticError::UnboundVariableInSubPattern {
+                                name: name.to_string(),
+                            });
+                            return;
+                        }
+                    }
+                }
+
+                bindings = Some(new_bindings);
+            }
+
+            // Add bindings introduced in sub-patterns.
+            if let Some(bindings) = bindings {
+                for (var_name, var_ty) in bindings {
+                    let binding = Binding::new(&var_name, var_ty);
+                    vars.insert(binding);
+                }
             }
         }
         PatternKind::Wildcard => {}

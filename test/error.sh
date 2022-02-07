@@ -178,8 +178,10 @@ assert 'named field `value` is defined more than once' "
   end"
 assert 'unreachable pattern: `{ a: _, b: 3 }`' '
 case { a: 1, b: 2 }
-when { a: x, ... } | { b: 3, ... }
-  puts(x)
+when { a: _, ... } | { b: 3, ... }
+  puts(0)
+else
+  puts(1)
 end'
 # binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
@@ -196,6 +198,11 @@ end"
 assert 'cannot find variable `_` in scope' "
 _ = 1
 puts(_)"
+assert 'variable `x` is not bound in all patterns' '
+case { a: 1, b: 2 }
+when { a: x, b: 0 } | { ... }
+  puts(x)
+end'
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
