@@ -185,12 +185,15 @@ def bar(n: int64)
     "11.."
   end
 end
-bar(0)
-bar(2)
-bar(3)
-bar(6)
-bar(10)
-bar(11)'
+def baz(n: int64)
+  puts(bar(n))
+end
+baz(0)
+baz(2)
+baz(3)
+baz(6)
+baz(10)
+baz(11)'
 # function overloading
 assert "30
 true

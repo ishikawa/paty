@@ -1217,7 +1217,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                         if let Some(cond) = condition {
                             if let Some(sub_cond) = sub_condition {
-                                let kind = ExprKind::And(cond, sub_cond);
+                                let kind = ExprKind::Or(cond, sub_cond);
                                 condition = Some(
                                     self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
                                 );
@@ -1238,7 +1238,23 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 None
             }
-            PatternKind::Or(..) => todo!(),
+            PatternKind::Or(sub_pats) => {
+                assert!(sub_pats.len() >= 2);
+
+                sub_pats.iter().fold(None, |acc, sub_pat| {
+                    let sub_cond = self._build_pattern(t_expr, sub_pat, program, stmts);
+
+                    match (acc, sub_cond) {
+                        (Some(acc), Some(sub_cond)) => {
+                            let kind = ExprKind::Or(acc, sub_cond);
+                            Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
+                        }
+                        (Some(acc), None) => Some(acc),
+                        (None, Some(sub_cond)) => Some(sub_cond),
+                        (None, None) => None,
+                    }
+                })
+            }
             PatternKind::Wildcard => None,
         }
     }
