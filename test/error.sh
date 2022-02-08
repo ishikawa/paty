@@ -247,6 +247,12 @@ case { a: 100, b: false }
 when { a: x, b: false } | { a: _, b: x }
   puts(x)
 end'
+assert 'expected type `int64`, found `boolean`' '
+struct T { value: int64 }
+case { a: T { value: 100 }, b: false }
+when { a: T { value: x }, b: false } | { a: _, b: x }
+  puts(x)
+end'
 # tuple
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "

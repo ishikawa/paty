@@ -711,7 +711,12 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                     unify_expr_type(expected, arm.body(), errors);
                 }
 
-                expr_ty = Some(arm.body().ty().unwrap());
+                if let Some(body_ty) = arm.body().ty() {
+                    expr_ty = Some(body_ty)
+                } else {
+                    // The type of body can't be inferred.
+                    expr_ty = Some(tcx.undetermined());
+                }
             }
 
             if let Some(else_body) = else_body {
@@ -732,7 +737,6 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             }
 
             // Usefulness check
-
             if let Err(err) = usefulness::check_match(head_ty, arms, else_body.is_some()) {
                 errors.extend(err);
             }
@@ -794,7 +798,7 @@ fn analyze_pattern_struct_fields<'nd: 'tcx, 'tcx>(
                         analyze_pattern(
                             tcx,
                             field.pattern(),
-                            f.ty(),
+                            f.ty().bottom_ty(),
                             vars,
                             functions,
                             named_types,
@@ -973,7 +977,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
 
                 // all new variable must be bound in all sub-patterns.
                 if let Some(bindings) = &bindings {
-                    for (name, _) in bindings {
+                    for name in bindings.keys() {
                         var_names.insert(name);
                     }
 

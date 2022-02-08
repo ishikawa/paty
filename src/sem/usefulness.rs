@@ -814,12 +814,13 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         constructor: &Constructor,
     ) -> Self {
         match constructor {
-            Constructor::Single => match ty {
+            Constructor::Single => match ty.bottom_ty() {
                 Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
-                Type::Struct(struct_ty) => {
-                    Fields::wildcards_from_tys(cx, struct_ty.fields().iter().map(|f| f.ty()))
-                }
-                _ => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
+                Type::Struct(struct_ty) => Fields::wildcards_from_tys(
+                    cx,
+                    struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
+                ),
+                ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
             Constructor::IntRange(..)
             | Constructor::Str(..)
@@ -861,7 +862,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         DeconstructedPat {
             ctor,
             fields,
-            ty,
+            ty: ty.bottom_ty(),
             reachable: Cell::new(false),
         }
     }
@@ -881,7 +882,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     }
 
     pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
-        let pat_ty = pat.expect_ty();
+        let pat_ty = pat.expect_ty().bottom_ty();
 
         let ctor;
         let fields;
@@ -1344,7 +1345,7 @@ fn is_useful<'p, 'tcx>(
         return ret;
     }
 
-    let ty = v.head().ty();
+    let ty = v.head().ty().bottom_ty();
     let pcx = PatContext {
         cx,
         ty,
