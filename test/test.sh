@@ -194,6 +194,22 @@ baz(3)
 baz(6)
 baz(10)
 baz(11)'
+assert '100
+200
+3' '
+struct T { a: int64, b: int64 }
+
+def foo(t: { t: T })
+  case t
+  when { t: T { a, b: 1 } } | { t: T { a, b: 2 } }
+    a
+  when { t: T { a: _, b }}
+    b
+  end
+end
+{ t: T { a: 100, b: 1 } }.foo().puts()
+{ t: T { a: 200, b: 2 } }.foo().puts()
+{ t: T { a: 300, b: 3 } }.foo().puts()'
 # function overloading
 assert "30
 true
@@ -397,8 +413,7 @@ def foo(t: T)
 end
 foo(T { a: 1, b: 2, c: 0})
 foo(T { a: 1, b: 3, c: 3})
-foo(T { a: 3, b: 3, c: 3})
-'
+foo(T { a: 3, b: 3, c: 3})'
 # anonymous struct
 assert '{ a: 1 }' 'puts({a: 1})'
 assert '{ b: true, m: "hello" }' 'puts({m: "hello", b: true})'
