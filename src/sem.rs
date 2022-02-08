@@ -964,37 +964,31 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
 
                 // check new variables.
                 let mut new_bindings = HashMap::new();
+                let mut var_names = HashSet::new();
+
                 for (name, b) in sub_vars.bindings_iter() {
                     new_bindings.insert(name.to_string(), b.ty());
+                    var_names.insert(name);
                 }
 
                 // all new variable must be bound in all sub-patterns.
                 if let Some(bindings) = &bindings {
-                    for (name, expected_ty) in bindings {
-                        if let Some(actual_ty) = new_bindings.get(name) {
-                            if !check_type(expected_ty, actual_ty, errors) {
-                                return;
-                            }
-                        } else {
-                            // bound variable not found in this sub-pattern.
-                            errors.push(SemanticError::UnboundVariableInSubPattern {
-                                name: name.to_string(),
-                            });
-                            return;
-                        }
+                    for (name, _) in bindings {
+                        var_names.insert(name);
                     }
-                    // bi-directional check
-                    for (name, actual_ty) in &new_bindings {
-                        if let Some(expected_ty) = bindings.get(name) {
-                            if !check_type(expected_ty, actual_ty, errors) {
-                                return;
+
+                    for name in var_names {
+                        match (bindings.get(name), new_bindings.get(name)) {
+                            (None, Some(_)) | (Some(_), None) => {
+                                // bound variable not found in this sub-pattern.
+                                errors.push(SemanticError::UnboundVariableInSubPattern {
+                                    name: name.to_string(),
+                                });
                             }
-                        } else {
-                            // bound variable not found in this sub-pattern.
-                            errors.push(SemanticError::UnboundVariableInSubPattern {
-                                name: name.to_string(),
-                            });
-                            return;
+                            (Some(expected_ty), Some(actual_ty)) => {
+                                check_type(expected_ty, actual_ty, errors);
+                            }
+                            (None, None) => unreachable!(),
                         }
                     }
                 }

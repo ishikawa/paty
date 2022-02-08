@@ -203,6 +203,12 @@ case { a: 1, b: 2 }
 when { a: x, b: 0 } | { ... }
   puts(x)
 end'
+assert 'variable `value` is not bound in all patterns' '
+struct T { value: int64 }
+case { a: T { value: 1 }, b: T { value: 2 } }
+when { a: T { value }, b: T { value: 0 } } | { a: _, b: _ }
+  puts(x)
+end'
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
@@ -236,6 +242,11 @@ Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "case (1,)
 when (1,)
   puts(1)
 end"
+assert 'expected type `int64`, found `boolean`' '
+case { a: 100, b: false }
+when { a: x, b: false } | { a: _, b: x }
+  puts(x)
+end'
 # tuple
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "
