@@ -1187,24 +1187,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         }
                     }
 
-                    // no condition
-                    if pattern_fields.is_empty() {
-                        return None;
-                    }
-
-                    let first_field = pattern_fields[0];
-                    let kind = ExprKind::FieldAccess {
-                        operand: inc_used(t_expr),
-                        name: first_field.name().to_string(),
-                    };
-                    let operand = self
-                        .expr_arena
-                        .alloc(Expr::new(kind, first_field.pattern().expect_ty()));
-
-                    let mut condition =
-                        self._build_pattern(operand, first_field.pattern(), program, stmts);
-
-                    for pat_field in pattern_fields.iter().skip(1) {
+                    pattern_fields.iter().fold(None, |cond, pat_field| {
                         let kind = ExprKind::FieldAccess {
                             operand: inc_used(t_expr),
                             name: pat_field.name().to_string(),
@@ -1212,22 +1195,19 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         let operand = self
                             .expr_arena
                             .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-                        let sub_condition =
+                        let sub_cond =
                             self._build_pattern(operand, pat_field.pattern(), program, stmts);
 
-                        if let Some(cond) = condition {
-                            if let Some(sub_cond) = sub_condition {
+                        match (cond, sub_cond) {
+                            (Some(cond), Some(sub_cond)) => {
                                 let kind = ExprKind::And(cond, sub_cond);
-                                condition = Some(
-                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
-                                );
+                                Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
                             }
-                        } else {
-                            condition = sub_condition;
+                            (Some(cond), None) => Some(cond),
+                            (None, Some(sub_cond)) => Some(sub_cond),
+                            (None, None) => None,
                         }
-                    }
-
-                    condition
+                    })
                 }
             }
             PatternKind::Var(name) => {
@@ -1241,15 +1221,15 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             PatternKind::Or(sub_pats) => {
                 assert!(sub_pats.len() >= 2);
 
-                sub_pats.iter().fold(None, |acc, sub_pat| {
+                sub_pats.iter().fold(None, |cond, sub_pat| {
                     let sub_cond = self._build_pattern(t_expr, sub_pat, program, stmts);
 
-                    match (acc, sub_cond) {
-                        (Some(acc), Some(sub_cond)) => {
-                            let kind = ExprKind::Or(acc, sub_cond);
+                    match (cond, sub_cond) {
+                        (Some(cond), Some(sub_cond)) => {
+                            let kind = ExprKind::Or(cond, sub_cond);
                             Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
                         }
-                        (Some(acc), None) => Some(acc),
+                        (Some(cond), None) => Some(cond),
                         (None, Some(sub_cond)) => Some(sub_cond),
                         (None, None) => None,
                     }
