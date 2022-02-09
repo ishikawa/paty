@@ -1154,61 +1154,61 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     unreachable!(
                         "Empty struct must be zero-sized type. It should be handled above."
                     );
-                } else {
-                    // Split fields into pattern fields and a spread.
-                    let mut pattern_fields = vec![];
-                    let mut spread_pat = None;
-
-                    for f in struct_pat.fields() {
-                        match f {
-                            syntax::PatternFieldOrSpread::PatternField(pf) => {
-                                pattern_fields.push(pf);
-                            }
-                            syntax::PatternFieldOrSpread::Spread(spread) => {
-                                spread_pat = Some(spread);
-                            }
-                        }
-                    }
-                    if let Some(spread_pat) = spread_pat {
-                        if let Some(spread_name) = spread_pat.name() {
-                            let spread_ty = spread_pat.expect_ty();
-                            program.add_decl_type(spread_ty);
-
-                            let struct_ty = spread_pat.expect_struct_ty();
-                            let values = self.struct_values(struct_ty, t_expr);
-                            let struct_value = self
-                                .expr_arena
-                                .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
-
-                            stmts.push(Stmt::VarDef {
-                                name: spread_name.to_string(),
-                                init: inc_used(struct_value),
-                            });
-                        }
-                    }
-
-                    pattern_fields.iter().fold(None, |cond, pat_field| {
-                        let kind = ExprKind::FieldAccess {
-                            operand: inc_used(t_expr),
-                            name: pat_field.name().to_string(),
-                        };
-                        let operand = self
-                            .expr_arena
-                            .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-                        let sub_cond =
-                            self._build_pattern(operand, pat_field.pattern(), program, stmts);
-
-                        match (cond, sub_cond) {
-                            (Some(cond), Some(sub_cond)) => {
-                                let kind = ExprKind::And(cond, sub_cond);
-                                Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
-                            }
-                            (Some(cond), None) => Some(cond),
-                            (None, Some(sub_cond)) => Some(sub_cond),
-                            (None, None) => None,
-                        }
-                    })
                 }
+
+                // Split fields into pattern fields and a spread.
+                let mut pattern_fields = vec![];
+                let mut spread_pat = None;
+
+                for f in struct_pat.fields() {
+                    match f {
+                        syntax::PatternFieldOrSpread::PatternField(pf) => {
+                            pattern_fields.push(pf);
+                        }
+                        syntax::PatternFieldOrSpread::Spread(spread) => {
+                            spread_pat = Some(spread);
+                        }
+                    }
+                }
+                if let Some(spread_pat) = spread_pat {
+                    if let Some(spread_name) = spread_pat.name() {
+                        let spread_ty = spread_pat.expect_ty();
+                        program.add_decl_type(spread_ty);
+
+                        let struct_ty = spread_pat.expect_struct_ty();
+                        let values = self.struct_values(struct_ty, t_expr);
+                        let struct_value = self
+                            .expr_arena
+                            .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
+
+                        stmts.push(Stmt::VarDef {
+                            name: spread_name.to_string(),
+                            init: inc_used(struct_value),
+                        });
+                    }
+                }
+
+                pattern_fields.iter().fold(None, |cond, pat_field| {
+                    let kind = ExprKind::FieldAccess {
+                        operand: inc_used(t_expr),
+                        name: pat_field.name().to_string(),
+                    };
+                    let operand = self
+                        .expr_arena
+                        .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+                    let sub_cond =
+                        self._build_pattern(operand, pat_field.pattern(), program, stmts);
+
+                    match (cond, sub_cond) {
+                        (Some(cond), Some(sub_cond)) => {
+                            let kind = ExprKind::And(cond, sub_cond);
+                            Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
+                        }
+                        (Some(cond), None) => Some(cond),
+                        (None, Some(sub_cond)) => Some(sub_cond),
+                        (None, None) => None,
+                    }
+                })
             }
             PatternKind::Var(name) => {
                 stmts.push(Stmt::VarDef {
