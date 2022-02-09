@@ -1166,6 +1166,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             pattern_fields.push(pf);
                         }
                         syntax::PatternFieldOrSpread::Spread(spread) => {
+                            assert!(spread_pat.is_none());
                             spread_pat = Some(spread);
                         }
                     }

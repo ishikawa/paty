@@ -209,6 +209,30 @@ case { a: T { value: 1 }, b: T { value: 2 } }
 when { a: T { value }, b: T { value: 0 } } | { a: _, b: _ }
   puts(x)
 end'
+assert 'spread pattern can appear only once: `...`' '
+case { a: 100, b: 200, c: 300 }
+when { a, ..., ... }
+  puts(a)
+end'
+assert 'spread pattern can appear only once: `...y`' '
+case { a: 100, b: 200, c: 300 }
+when { a, ...x, ...y }
+  puts(a)
+end'
+assert 'spread pattern can appear only once: `...y`' '
+struct T { a: int64, b: int64, c: int64 }
+t = T { a: 100, b: 200, c: 300 }
+case t
+when T { a, ...x, ...y }
+  puts(a)
+end'
+assert 'spread pattern can appear only once: `...`' '
+struct T { a: int64, b: int64, c: int64 }
+t = T { a: 100, b: 200, c: 300 }
+case { t }
+when { t: T { ...x, ... } }
+  puts(x)
+end'
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
@@ -272,10 +296,5 @@ foo(100)'
 assert 'identifier `a` is bound more than once in the same pattern' '
 case { a: 100, b: 200, c: 300 }
 when { a, ...a }
-  puts(a)
-end'
-assert 'spread pattern can appear only once' '
-case { a: 100, b: 200, c: 300 }
-when { a, ...x, ...y }
   puts(a)
 end'
