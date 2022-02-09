@@ -1024,13 +1024,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     .map(|arm| {
                         // Build an condition and variable declarations from the pattern
                         let mut branch_stmts = vec![];
-                        let condition = self._build_pattern(
-                            t_head,
-                            None,
-                            arm.pattern(),
-                            program,
-                            &mut branch_stmts,
-                        );
+                        let condition =
+                            self._build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
                         let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
 
                         branch_stmts.push(Stmt::Phi {
@@ -1169,7 +1164,6 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     fn _build_pattern(
         &mut self,
         target_expr: &'a Expr<'a, 'tcx>,
-        target_cond: Option<&'a Expr<'a, 'tcx>>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
@@ -1245,7 +1239,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         index: i,
                     };
                     let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
-                    let sub_cond = self._build_pattern(operand, cond, pat, program, stmts);
+                    let sub_cond = self._build_pattern(operand, pat, program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1307,7 +1301,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .expr_arena
                         .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
                     let sub_cond =
-                        self._build_pattern(operand, cond, pat_field.pattern(), program, stmts);
+                        self._build_pattern(operand, pat_field.pattern(), program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1332,7 +1326,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 assert!(sub_pats.len() >= 2);
 
                 sub_pats.iter().fold(None, |cond, sub_pat| {
-                    let sub_cond = self._build_pattern(target_expr, cond, sub_pat, program, stmts);
+                    let sub_cond = self._build_pattern(target_expr, sub_pat, program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
