@@ -218,7 +218,7 @@ impl fmt::Display for Stmt<'_, '_> {
             Stmt::TmpVarDef { var, init, pruned } => {
                 write!(
                     f,
-                    "t{} (used: {}, pruned: {}) = {:?}",
+                    "t{} (used: {}, pruned: {}) = {}",
                     var.index,
                     var.used.get(),
                     pruned.get(),
@@ -226,10 +226,10 @@ impl fmt::Display for Stmt<'_, '_> {
                 )?;
             }
             Stmt::VarDef { name, init } => {
-                write!(f, "{} = {:?}", name, init)?;
+                write!(f, "{} = {}", name, init)?;
             }
             Stmt::Ret(expr) => {
-                write!(f, "return {:?}", expr)?;
+                write!(f, "return {}", expr)?;
             }
             Stmt::Phi { var, value, pruned } => {
                 write!(
@@ -245,7 +245,7 @@ impl fmt::Display for Stmt<'_, '_> {
                 write!(f, "t{} (used: {}) = ", ret.index, ret.used.get())?;
                 writeln!(f, "cond {{")?;
                 for branch in branches {
-                    writeln!(f, "  {:?}", branch)?;
+                    writeln!(f, "  {}", branch)?;
                 }
                 write!(f, "}}")?;
             }
@@ -258,6 +258,21 @@ impl fmt::Display for Stmt<'_, '_> {
 pub struct Branch<'a, 'tcx> {
     pub condition: Option<&'a Expr<'a, 'tcx>>,
     pub body: Vec<Stmt<'a, 'tcx>>,
+}
+
+impl fmt::Display for Branch<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(condition) = self.condition {
+            write!(f, "({}) => ", condition)?;
+        }
+
+        let mut it = self.body.iter().peekable();
+        writeln!(f, "{{")?;
+        while let Some(stmt) = it.next() {
+            writeln!(f, "  {}", stmt)?;
+        }
+        write!(f, "}}")
+    }
 }
 
 #[derive(Debug)]
@@ -340,6 +355,12 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     }
 }
 
+impl fmt::Display for Expr<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CallingConvention<'tcx> {
     /// C lang
@@ -391,12 +412,107 @@ pub enum ExprKind<'a, 'tcx> {
     Var(Var<'tcx>),
 }
 
+impl fmt::Display for ExprKind<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExprKind::Minus(a) => write!(f, "-{}", a),
+            ExprKind::Not(a) => write!(f, "!{}", a),
+            ExprKind::Add(a, b) => write!(f, "{} + {}", a, b),
+            ExprKind::Sub(a, b) => write!(f, "{} - {}", a, b),
+            ExprKind::Mul(a, b) => write!(f, "{} * {}", a, b),
+            ExprKind::Div(a, b) => write!(f, "{} / {}", a, b),
+            ExprKind::Eq(a, b) => write!(f, "{} == {}", a, b),
+            ExprKind::Ne(a, b) => write!(f, "{} != {}", a, b),
+            ExprKind::Lt(a, b) => write!(f, "{} < {}", a, b),
+            ExprKind::Le(a, b) => write!(f, "{} <= {}", a, b),
+            ExprKind::Gt(a, b) => write!(f, "{} > {}", a, b),
+            ExprKind::Ge(a, b) => write!(f, "{} >= {}", a, b),
+            ExprKind::And(a, b) => write!(f, "{} && {}", a, b),
+            ExprKind::Or(a, b) => write!(f, "{} || {}", a, b),
+            ExprKind::Call { name, args, .. } => {
+                write!(f, "{}", name)?;
+                write!(f, "(")?;
+                let mut it = args.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            ExprKind::Printf(args) => {
+                write!(f, "@printf(")?;
+                let mut it = args.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            ExprKind::Int64(i) => i.fmt(f),
+            ExprKind::Bool(b) => b.fmt(f),
+            ExprKind::Str(s) => s.fmt(f),
+            ExprKind::Tuple(fs) => {
+                write!(f, "(")?;
+                let mut it = fs.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            ExprKind::StructValue(fs) => {
+                let mut it = fs.iter().peekable();
+                let empty = it.peek().is_none();
+
+                write!(f, "{{")?;
+                if !empty {
+                    write!(f, " ")?;
+                }
+                while let Some((name, value)) = it.next() {
+                    write!(f, "{}: {}", name, value)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                if !empty {
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
+            }
+            ExprKind::IndexAccess { operand, index } => write!(f, "{}.{}", operand, index),
+            ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
+            ExprKind::TmpVar(var) => var.fmt(f),
+            ExprKind::Var(var) => var.fmt(f),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum FormatSpec<'a, 'tcx> {
     Value(&'a Expr<'a, 'tcx>),
     /// Show value as `"{value}"`
     Quoted(&'a Expr<'a, 'tcx>),
     Str(&'static str),
+}
+
+impl fmt::Display for FormatSpec<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FormatSpec::Value(expr) => expr.fmt(f),
+            FormatSpec::Quoted(expr) => {
+                write!(f, "\"")?;
+                expr.fmt(f)?;
+                write!(f, "\"")
+            }
+            FormatSpec::Str(s) => write!(f, "{}", s.escape_unicode()),
+        }
+    }
 }
 
 pub struct Builder<'a, 'tcx> {
