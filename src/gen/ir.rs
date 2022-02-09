@@ -1115,39 +1115,26 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     unreachable!(
                         "Empty tuple must be zero-sized type. It should be handled above."
                     );
-                } else {
+                }
+
+                sub_pats.iter().enumerate().fold(None, |cond, (i, pat)| {
                     let kind = ExprKind::IndexAccess {
                         operand: inc_used(t_expr),
-                        index: 0,
+                        index: i,
                     };
-                    let operand = self
-                        .expr_arena
-                        .alloc(Expr::new(kind, sub_pats[0].expect_ty()));
+                    let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
+                    let sub_cond = self._build_pattern(operand, pat, program, stmts);
 
-                    let mut condition = self._build_pattern(operand, sub_pats[0], program, stmts);
-
-                    for (i, pat) in sub_pats.iter().enumerate().skip(1) {
-                        let kind = ExprKind::IndexAccess {
-                            operand: inc_used(t_expr),
-                            index: i,
-                        };
-                        let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
-                        let sub_condition = self._build_pattern(operand, pat, program, stmts);
-
-                        if let Some(cond) = condition {
-                            if let Some(sub_cond) = sub_condition {
-                                let kind = ExprKind::And(cond, sub_cond);
-                                condition = Some(
-                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
-                                );
-                            }
-                        } else {
-                            condition = sub_condition;
+                    match (cond, sub_cond) {
+                        (Some(cond), Some(sub_cond)) => {
+                            let kind = ExprKind::And(cond, sub_cond);
+                            Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
                         }
+                        (Some(cond), None) => Some(cond),
+                        (None, Some(sub_cond)) => Some(sub_cond),
+                        (None, None) => None,
                     }
-
-                    condition
-                }
+                })
             }
             PatternKind::Struct(struct_pat) => {
                 if struct_pat.fields().len() == 0 {
