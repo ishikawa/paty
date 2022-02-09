@@ -908,8 +908,13 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     .map(|arm| {
                         // Build an condition and variable declarations from the pattern
                         let mut branch_stmts = vec![];
-                        let condition =
-                            self._build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
+                        let condition = self._build_pattern(
+                            t_head,
+                            None,
+                            arm.pattern(),
+                            program,
+                            &mut branch_stmts,
+                        );
                         let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
 
                         branch_stmts.push(Stmt::Phi {
@@ -1047,7 +1052,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     // Returns `None` for no condition.
     fn _build_pattern(
         &mut self,
-        t_expr: &'a Expr<'a, 'tcx>,
+        target_expr: &'a Expr<'a, 'tcx>,
+        target_cond: Option<&'a Expr<'a, 'tcx>>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
@@ -1060,16 +1066,16 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         match pat.kind() {
             PatternKind::Integer(n) => {
                 let value = self.int64(*n);
-                let eq = ExprKind::Eq(inc_used(t_expr), value);
+                let eq = ExprKind::Eq(inc_used(target_expr), value);
 
                 let expr = self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()));
                 Some(expr)
             }
             PatternKind::Boolean(b) => {
                 let expr = if *b {
-                    inc_used(t_expr)
+                    inc_used(target_expr)
                 } else {
-                    let expr = ExprKind::Not(inc_used(t_expr));
+                    let expr = ExprKind::Not(inc_used(target_expr));
                     self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
                 };
                 Some(expr)
@@ -1081,7 +1087,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Call {
                     name: "strcmp".to_string(),
                     cc: CallingConvention::C,
-                    args: vec![inc_used(t_expr), value],
+                    args: vec![inc_used(target_expr), value],
                 };
                 let strcmp = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
 
@@ -1095,11 +1101,11 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let lo = self.int64(*lo);
                 let hi = self.int64(*hi);
 
-                let lhs = ExprKind::Ge(inc_used(t_expr), lo);
+                let lhs = ExprKind::Ge(inc_used(target_expr), lo);
 
                 let rhs = match end {
-                    syntax::RangeEnd::Included => ExprKind::Le(inc_used(t_expr), hi),
-                    syntax::RangeEnd::Excluded => ExprKind::Lt(inc_used(t_expr), hi),
+                    syntax::RangeEnd::Included => ExprKind::Le(inc_used(target_expr), hi),
+                    syntax::RangeEnd::Excluded => ExprKind::Lt(inc_used(target_expr), hi),
                 };
 
                 let kind = ExprKind::And(
@@ -1119,11 +1125,11 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 sub_pats.iter().enumerate().fold(None, |cond, (i, pat)| {
                     let kind = ExprKind::IndexAccess {
-                        operand: inc_used(t_expr),
+                        operand: inc_used(target_expr),
                         index: i,
                     };
                     let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
-                    let sub_cond = self._build_pattern(operand, pat, program, stmts);
+                    let sub_cond = self._build_pattern(operand, cond, pat, program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1164,7 +1170,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         program.add_decl_type(spread_ty);
 
                         let struct_ty = spread_pat.expect_struct_ty();
-                        let values = self.struct_values(struct_ty, t_expr);
+                        let values = self.struct_values(struct_ty, target_expr);
                         let struct_value = self
                             .expr_arena
                             .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
@@ -1178,14 +1184,14 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 pattern_fields.iter().fold(None, |cond, pat_field| {
                     let kind = ExprKind::FieldAccess {
-                        operand: inc_used(t_expr),
+                        operand: inc_used(target_expr),
                         name: pat_field.name().to_string(),
                     };
                     let operand = self
                         .expr_arena
                         .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
                     let sub_cond =
-                        self._build_pattern(operand, pat_field.pattern(), program, stmts);
+                        self._build_pattern(operand, cond, pat_field.pattern(), program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1201,7 +1207,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             PatternKind::Var(name) => {
                 stmts.push(Stmt::VarDef {
                     name: name.clone(),
-                    init: inc_used(t_expr),
+                    init: inc_used(target_expr),
                 });
 
                 None
@@ -1210,7 +1216,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 assert!(sub_pats.len() >= 2);
 
                 sub_pats.iter().fold(None, |cond, sub_pat| {
-                    let sub_cond = self._build_pattern(t_expr, sub_pat, program, stmts);
+                    let sub_cond = self._build_pattern(target_expr, cond, sub_pat, program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
