@@ -212,6 +212,16 @@ pub enum Stmt<'a, 'tcx> {
     Ret(&'a Expr<'a, 'tcx>),
 }
 
+impl<'a, 'tcx> Stmt<'a, 'tcx> {
+    pub fn phi(var: &'a TmpVar<'a, 'tcx>, value: &'a Expr<'a, 'tcx>) -> Self {
+        Self::Phi {
+            var,
+            value,
+            pruned: Cell::new(false),
+        }
+    }
+}
+
 impl fmt::Display for Stmt<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -266,9 +276,8 @@ impl fmt::Display for Branch<'_, '_> {
             write!(f, "({}) => ", condition)?;
         }
 
-        let mut it = self.body.iter().peekable();
         writeln!(f, "{{")?;
-        while let Some(stmt) = it.next() {
+        for stmt in &self.body {
             writeln!(f, "  {}", stmt)?;
         }
         write!(f, "}}")
@@ -1026,13 +1035,9 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         let mut branch_stmts = vec![];
                         let condition =
                             self._build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
-                        let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
 
-                        branch_stmts.push(Stmt::Phi {
-                            var: t,
-                            value: inc_used(ret),
-                            pruned: Cell::new(false),
-                        });
+                        let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
+                        branch_stmts.push(Stmt::phi(t, inc_used(ret)));
 
                         Branch {
                             condition,
@@ -1043,12 +1048,9 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
+
                     let ret = self._build_expr(else_body, program, &mut branch_stmts);
-                    branch_stmts.push(Stmt::Phi {
-                        var: t,
-                        value: inc_used(ret),
-                        pruned: Cell::new(false),
-                    });
+                    branch_stmts.push(Stmt::phi(t, inc_used(ret)));
 
                     let branch = Branch {
                         condition: None,
