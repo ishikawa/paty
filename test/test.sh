@@ -212,7 +212,7 @@ assert '100
 struct T { a: int64, b: int64 }
 def foo(t: T)
   case t
-  when T { a: 1, b: a } | { a, b: _ }
+  when T { a: 1, b: a } | T { a, b: _ }
     a
   end
 end
