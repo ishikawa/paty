@@ -161,10 +161,10 @@ impl fmt::Display for Var<'_> {
 
 #[derive(Debug)]
 pub struct TmpVar<'a, 'tcx> {
-    pub index: usize,
-    pub ty: &'tcx Type<'tcx>,
-    pub used: Cell<usize>,
-    pub immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
+    index: usize,
+    ty: &'tcx Type<'tcx>,
+    used: Cell<usize>,
+    immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
 }
 
 impl<'a, 'tcx> TmpVar<'a, 'tcx> {
@@ -176,6 +176,26 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
             immediate: Cell::new(None),
         }
     }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
+    }
+
+    pub fn used(&self) -> usize {
+        self.used.get()
+    }
+
+    pub fn immediate(&self) -> Option<&'a Expr<'a, 'tcx>> {
+        self.immediate.get()
+    }
+
+    pub fn inc_used(&self) {
+        self.used.set(self.used.get() + 1);
+    }
 }
 
 impl fmt::Display for TmpVar<'_, '_> {
@@ -185,13 +205,55 @@ impl fmt::Display for TmpVar<'_, '_> {
 }
 
 #[derive(Debug)]
+pub struct TmpVarDef<'a, 'tcx> {
+    var: &'a TmpVar<'a, 'tcx>,
+    init: &'a Expr<'a, 'tcx>,
+    pruned: Cell<bool>,
+    // `true` if this variable can be updated.
+    assignable: bool,
+}
+
+impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
+    pub fn new(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>, assignable: bool) -> Self {
+        Self {
+            var,
+            init,
+            assignable,
+            pruned: Cell::new(false),
+        }
+    }
+
+    pub fn var(&self) -> &'a TmpVar<'a, 'tcx> {
+        self.var
+    }
+
+    pub fn init(&self) -> &'a Expr<'a, 'tcx> {
+        self.init
+    }
+
+    pub fn pruned(&self) -> bool {
+        self.pruned.get()
+    }
+}
+
+impl fmt::Display for TmpVarDef<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "t{} (used: {}, pruned: {}, assignable: {}) = {}",
+            self.var.index,
+            self.var.used.get(),
+            self.pruned.get(),
+            self.assignable,
+            self.init,
+        )
+    }
+}
+
+#[derive(Debug)]
 pub enum Stmt<'a, 'tcx> {
     // TODO: Can we unify TmpVar(Def) and Var(Def)?
-    TmpVarDef {
-        var: &'a TmpVar<'a, 'tcx>,
-        init: &'a Expr<'a, 'tcx>,
-        pruned: Cell<bool>,
-    },
+    TmpVarDef(TmpVarDef<'a, 'tcx>),
     VarDef {
         name: String,
         init: &'a Expr<'a, 'tcx>,
@@ -213,6 +275,14 @@ pub enum Stmt<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Stmt<'a, 'tcx> {
+    pub fn tmp_var_def(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self::TmpVarDef(TmpVarDef::new(var, init, false))
+    }
+
+    pub fn assignable_tmp_var_def(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self::TmpVarDef(TmpVarDef::new(var, init, true))
+    }
+
     pub fn phi(var: &'a TmpVar<'a, 'tcx>, value: &'a Expr<'a, 'tcx>) -> Self {
         Self::Phi {
             var,
@@ -225,42 +295,26 @@ impl<'a, 'tcx> Stmt<'a, 'tcx> {
 impl fmt::Display for Stmt<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Stmt::TmpVarDef { var, init, pruned } => {
-                write!(
-                    f,
-                    "t{} (used: {}, pruned: {}) = {}",
-                    var.index,
-                    var.used.get(),
-                    pruned.get(),
-                    init
-                )?;
-            }
-            Stmt::VarDef { name, init } => {
-                write!(f, "{} = {}", name, init)?;
-            }
-            Stmt::Ret(expr) => {
-                write!(f, "return {}", expr)?;
-            }
-            Stmt::Phi { var, value, pruned } => {
-                write!(
-                    f,
-                    "phi(t{} (used: {}, pruned: {}) = {:?})",
-                    var.index,
-                    var.used.get(),
-                    pruned.get(),
-                    value
-                )?;
-            }
+            Stmt::TmpVarDef(def) => def.fmt(f),
+            Stmt::VarDef { name, init } => write!(f, "{} = {}", name, init),
+            Stmt::Ret(expr) => write!(f, "return {}", expr),
+            Stmt::Phi { var, value, pruned } => write!(
+                f,
+                "phi(t{} (used: {}, pruned: {}) = {:?})",
+                var.index,
+                var.used.get(),
+                pruned.get(),
+                value
+            ),
             Stmt::Cond { var: ret, branches } => {
                 write!(f, "t{} (used: {}) = ", ret.index, ret.used.get())?;
                 writeln!(f, "cond {{")?;
                 for branch in branches {
                     writeln!(f, "  {}", branch)?;
                 }
-                write!(f, "}}")?;
+                write!(f, "}}")
             }
         }
-        Ok(())
     }
 }
 
@@ -331,6 +385,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::FieldAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => true,
+            ExprKind::TmpVarAssign { .. } => false,
         }
     }
 
@@ -353,6 +408,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Or(a, b) => a.has_side_effect() || b.has_side_effect(),
             ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| sub_expr.has_side_effect()),
             ExprKind::StructValue(fs) => fs.iter().any(|(_, sub_expr)| sub_expr.has_side_effect()),
+            ExprKind::TmpVarAssign { var: _, init } => init.has_side_effect(),
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
@@ -419,6 +475,10 @@ pub enum ExprKind<'a, 'tcx> {
     },
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(Var<'tcx>),
+    TmpVarAssign {
+        var: &'a TmpVar<'a, 'tcx>,
+        init: &'a Expr<'a, 'tcx>,
+    },
 }
 
 impl fmt::Display for ExprKind<'_, '_> {
@@ -498,6 +558,11 @@ impl fmt::Display for ExprKind<'_, '_> {
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
             ExprKind::TmpVar(var) => var.fmt(f),
             ExprKind::Var(var) => var.fmt(f),
+            ExprKind::TmpVarAssign { var, init } => {
+                var.fmt(f)?;
+                write!(f, " = ")?;
+                init.fmt(f)
+            }
         }
     }
 }
@@ -600,11 +665,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         let t = self.next_temp_var(expr.ty());
-        let stmt = Stmt::TmpVarDef {
-            var: t,
-            init: expr,
-            pruned: Cell::new(false),
-        };
+        let stmt = Stmt::tmp_var_def(t, expr);
         stmts.push(stmt);
 
         let kind = ExprKind::TmpVar(t);
@@ -619,11 +680,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) -> &'a Expr<'a, 'tcx> {
         let expr = self.expr_arena.alloc(Expr::new(kind, expr_ty));
         let t = self.next_temp_var(expr.ty());
-        let stmt = Stmt::TmpVarDef {
-            var: t,
-            init: expr,
-            pruned: Cell::new(false),
-        };
+        let stmt = Stmt::tmp_var_def(t, expr);
         stmts.push(stmt);
 
         let kind = ExprKind::TmpVar(t);
@@ -1034,8 +1091,13 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         // Build an condition and variable declarations from the pattern
                         let mut branch_stmts = vec![];
 
-                        let condition =
-                            self.build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
+                        let condition = self.build_pattern(
+                            t_head,
+                            arm.pattern(),
+                            program,
+                            stmts,
+                            &mut branch_stmts,
+                        );
 
                         let ret = self.build_expr(arm.body(), program, &mut branch_stmts);
                         branch_stmts.push(Stmt::phi(t, inc_used(ret)));
@@ -1169,6 +1231,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         target_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
+        outer_stmts: &mut Vec<Stmt<'a, 'tcx>>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
         // zero-sized type is always matched with a value.
@@ -1242,7 +1305,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         index: i,
                     };
                     let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
-                    let sub_cond = self.build_pattern(operand, pat, program, stmts);
+                    let sub_cond = self.build_pattern(operand, pat, program, outer_stmts, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1303,7 +1366,13 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     let operand = self
                         .expr_arena
                         .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-                    let sub_cond = self.build_pattern(operand, pat_field.pattern(), program, stmts);
+                    let sub_cond = self.build_pattern(
+                        operand,
+                        pat_field.pattern(),
+                        program,
+                        outer_stmts,
+                        stmts,
+                    );
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1326,14 +1395,37 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             PatternKind::Or(sub_pats) => {
                 assert!(sub_pats.len() >= 2);
+                let bool_ty = self.tcx.boolean();
 
                 sub_pats.iter().fold(None, |cond, sub_pat| {
-                    let sub_cond = self.build_pattern(target_expr, sub_pat, program, stmts);
+                    let mut sub_cond =
+                        self.build_pattern(target_expr, sub_pat, program, outer_stmts, stmts);
+
+                    if let Some(sub_cond_expr) = sub_cond {
+                        let t = self.next_temp_var(bool_ty);
+                        let stmt = Stmt::assignable_tmp_var_def(t, self.bool(false));
+
+                        outer_stmts.push(stmt);
+
+                        t.inc_used();
+                        let assign = self.expr_arena.alloc(Expr::new(
+                            ExprKind::TmpVarAssign {
+                                var: t,
+                                init: self.bool(true),
+                            },
+                            bool_ty,
+                        ));
+
+                        sub_cond = Some(
+                            self.expr_arena
+                                .alloc(Expr::new(ExprKind::And(sub_cond_expr, assign), bool_ty)),
+                        );
+                    }
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
                             let kind = ExprKind::Or(cond, sub_cond);
-                            Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
+                            Some(self.expr_arena.alloc(Expr::new(kind, bool_ty)))
                         }
                         (Some(cond), None) => Some(cond),
                         (None, Some(sub_cond)) => Some(sub_cond),
@@ -1461,15 +1553,15 @@ impl<'a, 'tcx> Optimizer {
 
     fn optimize_stmt(&mut self, stmt: &Stmt<'a, 'tcx>) {
         match stmt {
-            Stmt::TmpVarDef { var, init, pruned } => {
-                if var.used.get() == 1 || init.can_be_immediate() {
+            Stmt::TmpVarDef(def) => {
+                if !def.assignable && (def.var.used.get() == 1 || def.init.can_be_immediate()) {
                     // This temporary variable is used only once, so it could be
                     // replaced with the expression.
-                    var.immediate.set(Some(init));
-                    pruned.set(true);
+                    def.var.immediate.set(Some(def.init));
+                    def.pruned.set(true);
                     return;
                 }
-                self.optimize_expr(init);
+                self.optimize_expr(def.init);
             }
             Stmt::VarDef { init, .. } => {
                 self.optimize_expr(init);
@@ -1548,6 +1640,9 @@ impl<'a, 'tcx> Optimizer {
                     self.optimize_expr(value);
                 }
             }
+            ExprKind::TmpVarAssign { var: _, init } => {
+                self.optimize_expr(init);
+            }
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
@@ -1563,7 +1658,7 @@ impl<'a, 'tcx> Optimizer {
 
 fn inc_used<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
     if let ExprKind::TmpVar(t) = expr.kind() {
-        t.used.set(t.used.get() + 1);
+        t.inc_used()
     }
 
     expr

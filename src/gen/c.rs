@@ -147,7 +147,7 @@ impl<'a, 'tcx> Emitter {
         for param in &fun.params {
             // Emit code to ignore unused variable.
             if let Parameter::TmpVar(t) = param {
-                if t.used.get() == 0 {
+                if t.used() == 0 {
                     code.push_str(&format!("(void){};\n", tmp_var(t)));
                 }
             }
@@ -161,20 +161,20 @@ impl<'a, 'tcx> Emitter {
 
     fn emit_stmt(&mut self, stmt: &Stmt<'a, 'tcx>, code: &mut String) {
         match stmt {
-            Stmt::TmpVarDef { var, init, pruned } => {
-                if !pruned.get() && !init.ty().is_zero_sized() {
+            Stmt::TmpVarDef(def) => {
+                if !def.pruned() && !def.init().ty().is_zero_sized() {
                     // If a temporary variable is not referenced from anywhere,
                     // we don't emit an assignment statement.
-                    if var.used.get() > 0 {
-                        code.push_str(&c_type(init.ty()));
+                    if def.var().used() > 0 {
+                        code.push_str(&c_type(def.init().ty()));
                         code.push(' ');
-                        code.push_str(&tmp_var(var));
+                        code.push_str(&tmp_var(def.var()));
                         code.push_str(" = ");
                     }
 
                     // Emit init statement if needed
-                    if var.used.get() > 0 || init.has_side_effect() {
-                        self.emit_expr(init, code);
+                    if def.var().used() > 0 || def.init().has_side_effect() {
+                        self.emit_expr(def.init(), code);
                         code.push_str(";\n");
                     }
                 }
@@ -199,7 +199,7 @@ impl<'a, 'tcx> Emitter {
             }
             Stmt::Phi { var, value, pruned } => {
                 if !pruned.get() {
-                    if var.used.get() > 0 {
+                    if var.used() > 0 {
                         code.push_str(&tmp_var(var));
                         code.push_str(" = ");
                     }
@@ -208,8 +208,8 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             Stmt::Cond { branches, var } => {
-                if var.used.get() > 0 {
-                    code.push_str(&c_type(var.ty));
+                if var.used() > 0 {
+                    code.push_str(&c_type(var.ty()));
                     code.push(' ');
                     code.push_str(&tmp_var(var));
                     code.push_str(";\n");
@@ -518,20 +518,27 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(&format!(".{}", name));
             }
             ExprKind::TmpVar(t) => {
-                if let Some(expr) = t.immediate.get() {
+                if let Some(expr) = t.immediate() {
                     self.emit_expr(expr, code);
                 } else {
                     code.push_str(&tmp_var(t));
                 }
             }
             ExprKind::Var(var) => code.push_str(var.name()),
+            ExprKind::TmpVarAssign { var: t, init } => {
+                code.push('(');
+                code.push_str(&tmp_var(t));
+                code.push_str(" = ");
+                self.emit_expr(init, code);
+                code.push(')');
+            }
         }
     }
 }
 
 fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
     if let ExprKind::TmpVar(t) = expr.kind() {
-        if let Some(expr) = t.immediate.get() {
+        if let Some(expr) = t.immediate() {
             return expr;
         }
     }
@@ -539,7 +546,7 @@ fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
 }
 
 fn tmp_var(t: &TmpVar) -> String {
-    format!("_t{}", t.index)
+    format!("_t{}", t.index())
 }
 
 fn c_type(ty: &Type) -> String {
