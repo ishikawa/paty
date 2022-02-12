@@ -557,10 +557,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         for top_level in ast {
             match top_level {
                 syntax::TopLevel::Declaration(decl) => {
-                    self._build_decl(decl, &mut program, &mut stmts);
+                    self.build_decl(decl, &mut program, &mut stmts);
                 }
                 syntax::TopLevel::Stmt(stmt) => {
-                    self._build_stmt(stmt, &mut program, &mut stmts);
+                    self.build_stmt(stmt, &mut program, &mut stmts);
                 }
             }
         }
@@ -659,7 +659,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
-    fn _build_decl(
+    fn build_decl(
         &mut self,
         decl: &syntax::Declaration<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
@@ -715,7 +715,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 // return
                 let mut ret = None;
                 for stmt in syntax_fun.body() {
-                    ret = self._build_stmt(stmt, program, &mut body_stmts);
+                    ret = self.build_stmt(stmt, program, &mut body_stmts);
                 }
                 if let Some(ret) = ret {
                     body_stmts.push(Stmt::Ret(inc_used(ret)));
@@ -743,7 +743,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    fn _build_stmt(
+    fn build_stmt(
         &mut self,
         stmt: &syntax::Stmt<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
@@ -751,19 +751,19 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) -> Option<&'a Expr<'a, 'tcx>> {
         match stmt.kind() {
             syntax::StmtKind::Let { pattern, rhs } => {
-                let init = self._build_expr(rhs, program, stmts);
+                let init = self.build_expr(rhs, program, stmts);
                 self._build_let_pattern(pattern, init, program, stmts);
 
                 None
             }
             syntax::StmtKind::Expr(expr) => {
-                let value = self._build_expr(expr, program, stmts);
+                let value = self.build_expr(expr, program, stmts);
                 Some(value)
             }
         }
     }
 
-    fn _build_expr(
+    fn build_expr(
         &mut self,
         expr: &'nd syntax::Expr<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
@@ -792,7 +792,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let mut values = vec![];
 
                 for sub in sub_exprs {
-                    let value = self._build_expr(sub, program, stmts);
+                    let value = self.build_expr(sub, program, stmts);
                     values.push(inc_used(value));
                 }
 
@@ -816,7 +816,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     match field_or_spread {
                         syntax::ValueFieldOrSpread::ValueField(field) => {
                             if !initialized_fields.contains(&field.name()) {
-                                let value = self._build_expr(field.value(), program, stmts);
+                                let value = self.build_expr(field.value(), program, stmts);
                                 value_fields.push((field.name().to_string(), inc_used(value)));
                                 initialized_fields.insert(field.name());
                             }
@@ -835,7 +835,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                                 }
 
                                 let spread_value = built_spread_value
-                                    .unwrap_or_else(|| self._build_expr(operand, program, stmts));
+                                    .unwrap_or_else(|| self.build_expr(operand, program, stmts));
 
                                 let kind = ExprKind::FieldAccess {
                                     name: field.name().to_string(),
@@ -856,91 +856,91 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Minus(a) => {
-                let a = self._build_expr(a, program, stmts);
+                let a = self.build_expr(a, program, stmts);
                 let kind = ExprKind::Minus(inc_used(a));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Add(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Add(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Sub(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Sub(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Mul(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Mul(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Div(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Div(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Eq(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Eq(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Ne(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Ne(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Lt(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Lt(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Gt(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Gt(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Le(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Le(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Ge(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Ge(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::And(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::And(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Or(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Or(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
@@ -950,7 +950,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::IndexAccess(operand, index) => {
-                let operand = self._build_expr(operand, program, stmts);
+                let operand = self.build_expr(operand, program, stmts);
                 let kind = ExprKind::IndexAccess {
                     operand: inc_used(operand),
                     index: *index,
@@ -959,7 +959,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::FieldAccess(operand, name) => {
-                let operand = self._build_expr(operand, program, stmts);
+                let operand = self.build_expr(operand, program, stmts);
                 let kind = ExprKind::FieldAccess {
                     operand: inc_used(operand),
                     name: name.to_string(),
@@ -989,7 +989,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .arguments()
                         .iter()
                         .map(|a| {
-                            let a = self._build_expr(a, program, stmts);
+                            let a = self.build_expr(a, program, stmts);
                             inc_used(a)
                         })
                         .collect(),
@@ -1005,8 +1005,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let mut it = args.iter().peekable();
 
                 while let Some(arg) = it.next() {
-                    let a = self._build_expr(arg, program, stmts);
-                    self._printf_format(a, program, stmts, &mut format_specs, false);
+                    let a = self.build_expr(arg, program, stmts);
+                    self.printf_format(a, program, stmts, &mut format_specs, false);
 
                     // separated by a space
                     if it.peek().is_some() {
@@ -1025,7 +1025,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 else_body,
             } => {
                 let t = self.next_temp_var(expr.ty().unwrap());
-                let t_head = self._build_expr(head, program, stmts);
+                let t_head = self.build_expr(head, program, stmts);
 
                 // Construct "if-else" statement from each branches.
                 let mut branches = arms
@@ -1033,10 +1033,11 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     .map(|arm| {
                         // Build an condition and variable declarations from the pattern
                         let mut branch_stmts = vec![];
-                        let condition =
-                            self._build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
 
-                        let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
+                        let condition =
+                            self.build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
+
+                        let ret = self.build_expr(arm.body(), program, &mut branch_stmts);
                         branch_stmts.push(Stmt::phi(t, inc_used(ret)));
 
                         Branch {
@@ -1049,7 +1050,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
 
-                    let ret = self._build_expr(else_body, program, &mut branch_stmts);
+                    let ret = self.build_expr(else_body, program, &mut branch_stmts);
                     branch_stmts.push(Stmt::phi(t, inc_used(ret)));
 
                     let branch = Branch {
@@ -1074,7 +1075,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    fn _printf_format(
+    fn printf_format(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
         program: &mut Program<'a, 'tcx>,
@@ -1104,7 +1105,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     };
 
                     let ir_expr = self.push_expr_kind(kind, sub_ty, stmts);
-                    self._printf_format(ir_expr, program, stmts, specs, true);
+                    self.printf_format(ir_expr, program, stmts, specs, true);
 
                     if it.peek().is_some() {
                         specs.push(FormatSpec::Str(", "));
@@ -1117,14 +1118,14 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     specs.push(FormatSpec::Value(self.const_string(name)));
                     specs.push(FormatSpec::Str(" "));
                 }
-                self._printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
+                self.printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
             }
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
     }
 
-    fn _printf_format_typed_fields(
+    fn printf_format_typed_fields(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
         fields: &[TypedField<'tcx>],
@@ -1149,7 +1150,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             };
 
             let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
-            self._printf_format(ir_expr, program, stmts, specs, true);
+            self.printf_format(ir_expr, program, stmts, specs, true);
 
             if it.peek().is_some() {
                 specs.push(FormatSpec::Str(", "));
@@ -1163,7 +1164,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     }
 
     // Returns `None` for no condition.
-    fn _build_pattern(
+    fn build_pattern(
         &mut self,
         target_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
@@ -1241,7 +1242,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         index: i,
                     };
                     let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
-                    let sub_cond = self._build_pattern(operand, pat, program, stmts);
+                    let sub_cond = self.build_pattern(operand, pat, program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1302,8 +1303,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     let operand = self
                         .expr_arena
                         .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-                    let sub_cond =
-                        self._build_pattern(operand, pat_field.pattern(), program, stmts);
+                    let sub_cond = self.build_pattern(operand, pat_field.pattern(), program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1328,7 +1328,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 assert!(sub_pats.len() >= 2);
 
                 sub_pats.iter().fold(None, |cond, sub_pat| {
-                    let sub_cond = self._build_pattern(target_expr, sub_pat, program, stmts);
+                    let sub_cond = self.build_pattern(target_expr, sub_pat, program, stmts);
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {

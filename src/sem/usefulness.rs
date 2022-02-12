@@ -1541,6 +1541,23 @@ pub fn check_match<'tcx>(
     }
 }
 
+/// Recursively expand this pattern into its subpatterns. Only useful for or-patterns.
+fn expand_or_pat<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>) -> Vec<&'p Pattern<'p, 'tcx>> {
+    fn expand<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>, vec: &mut Vec<&'p Pattern<'p, 'tcx>>) {
+        if let PatternKind::Or(pats) = pat.kind() {
+            for pat in pats {
+                expand(pat, vec);
+            }
+        } else {
+            vec.push(pat)
+        }
+    }
+
+    let mut pats = Vec::new();
+    expand(pat, &mut pats);
+    pats
+}
+
 #[cfg(test)]
 mod tests_int_range {
     use super::*;
@@ -1603,23 +1620,6 @@ mod tests_int_range {
         assert_eq!(low, 0);
         assert_eq!(high, 18446744073709551615u128);
     }
-}
-
-/// Recursively expand this pattern into its subpatterns. Only useful for or-patterns.
-fn expand_or_pat<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>) -> Vec<&'p Pattern<'p, 'tcx>> {
-    fn expand<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>, vec: &mut Vec<&'p Pattern<'p, 'tcx>>) {
-        if let PatternKind::Or(pats) = pat.kind() {
-            for pat in pats {
-                expand(pat, vec);
-            }
-        } else {
-            vec.push(pat)
-        }
-    }
-
-    let mut pats = Vec::new();
-    expand(pat, &mut pats);
-    pats
 }
 
 #[cfg(test)]
