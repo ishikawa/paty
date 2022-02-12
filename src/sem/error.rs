@@ -83,4 +83,6 @@ pub enum SemanticError<'tcx> {
     EmptySpreadExpression,
     #[error("value of `{ty}` cannot be spread")]
     InvalidSpreadOperand { ty: &'tcx Type<'tcx> },
+    #[error("variable `{name}` is not bound in all patterns")]
+    UnboundVariableInSubPattern { name: String },
 }

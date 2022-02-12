@@ -643,6 +643,12 @@ impl<'nd, 'tcx> Node for Pattern<'nd, 'tcx> {
     }
 }
 
+impl fmt::Display for Pattern<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
 #[derive(Debug)]
 pub enum PatternKind<'nd, 'tcx> {
     Integer(i64),
@@ -652,6 +658,7 @@ pub enum PatternKind<'nd, 'tcx> {
     Tuple(Vec<&'nd Pattern<'nd, 'tcx>>),
     Struct(StructPattern<'nd, 'tcx>),
     Var(String),
+    Or(Vec<&'nd Pattern<'nd, 'tcx>>),
     Wildcard,
 }
 
@@ -689,6 +696,17 @@ impl fmt::Display for PatternKind<'_, '_> {
             }
             PatternKind::Struct(struct_pat) => struct_pat.fmt(f),
             PatternKind::Var(name) => write!(f, "{}", name),
+            PatternKind::Or(patterns) => {
+                let mut it = patterns.iter().peekable();
+
+                while let Some(sub_pat) = it.next() {
+                    write!(f, "{}", sub_pat.kind())?;
+                    if it.peek().is_some() {
+                        write!(f, " | ")?;
+                    }
+                }
+                Ok(())
+            }
             PatternKind::Wildcard => write!(f, "_"),
         }
     }
@@ -1336,6 +1354,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
+        if it.peek().is_none() {
+            return Err(ParseError::NotParsed);
+        }
+
         let token = self.peek_token(it)?;
         let pat = match token.kind() {
             TokenKind::Integer(n) => {
@@ -1451,7 +1473,26 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             }
         };
 
-        Ok(pat)
+        // Or-pattern?
+        let mut sub_pats = vec![pat];
+
+        while let Some(t) = it.peek() {
+            if let TokenKind::Operator('|') = t.kind() {
+                it.next();
+                sub_pats.push(self.pattern(it)?);
+            } else {
+                break;
+            }
+        }
+
+        if sub_pats.len() > 1 {
+            let kind = PatternKind::Or(sub_pats);
+            let or_pat = self.pat_arena.alloc(Pattern::new(kind));
+
+            Ok(or_pat)
+        } else {
+            Ok(pat)
+        }
     }
 
     fn expr_to_pattern(

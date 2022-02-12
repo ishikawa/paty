@@ -65,6 +65,11 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
             None
         }
     }
+
+    /// Returns an iterator which iterates bindings in this scope.
+    pub fn bindings_iter(&self) -> impl Iterator<Item = (&str, &Binding<'tcx>)> {
+        self.bindings.iter().map(|(k, v)| (k.as_str(), v))
+    }
 }
 
 // Analyze an AST and returns error if any.
@@ -680,7 +685,8 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
             let head_ty = head
                 .ty()
-                .unwrap_or_else(|| panic!("Untyped head expression for {:?}", head));
+                .unwrap_or_else(|| panic!("Untyped head expression for {:?}", head))
+                .bottom_ty();
             let mut expr_ty = None;
 
             for arm in arms {
@@ -705,7 +711,12 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                     unify_expr_type(expected, arm.body(), errors);
                 }
 
-                expr_ty = Some(arm.body().ty().unwrap());
+                if let Some(body_ty) = arm.body().ty() {
+                    expr_ty = Some(body_ty)
+                } else {
+                    // The type of body can't be inferred.
+                    expr_ty = Some(tcx.undetermined());
+                }
             }
 
             if let Some(else_body) = else_body {
@@ -726,7 +737,6 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             }
 
             // Usefulness check
-
             if let Err(err) = usefulness::check_match(head_ty, arms, else_body.is_some()) {
                 errors.extend(err);
             }
@@ -751,7 +761,7 @@ fn analyze_let_pattern<'nd: 'tcx, 'tcx>(
         | PatternKind::String(_)
         | PatternKind::Tuple(_)
         | PatternKind::Struct(_) => {}
-        PatternKind::Range { .. } => {
+        PatternKind::Range { .. } | PatternKind::Or(..) => {
             unreachable!("Unsupported let pattern: `{}`", pat.kind());
         }
     }
@@ -788,7 +798,7 @@ fn analyze_pattern_struct_fields<'nd: 'tcx, 'tcx>(
                         analyze_pattern(
                             tcx,
                             field.pattern(),
-                            f.ty(),
+                            f.ty().bottom_ty(),
                             vars,
                             functions,
                             named_types,
@@ -909,6 +919,15 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 return;
             };
 
+            // Named struct and unnamed struct
+            if struct_ty.name() != struct_pat.name() {
+                errors.push(SemanticError::MismatchedType {
+                    expected: expected_ty,
+                    actual: pattern_to_type(tcx, pat),
+                });
+                return;
+            }
+
             if !unify_pat_type(expected_ty, pat, errors) {
                 return;
             }
@@ -938,6 +957,65 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             let binding = Binding::new(name, pat.expect_ty());
 
             vars.insert(binding);
+        }
+        PatternKind::Or(sub_pats) => {
+            let mut bindings: Option<HashMap<String, &Type>> = None;
+
+            for sub_pat in sub_pats {
+                // temporally introduce a new scope for a sub-pattern.
+                let mut sub_vars = Scope::from_parent(vars);
+
+                analyze_pattern(
+                    tcx,
+                    sub_pat,
+                    expected_ty,
+                    &mut sub_vars,
+                    functions,
+                    named_types,
+                    errors,
+                );
+
+                // check new variables.
+                let mut new_bindings = HashMap::new();
+                let mut var_names = HashSet::new();
+
+                for (name, b) in sub_vars.bindings_iter() {
+                    new_bindings.insert(name.to_string(), b.ty());
+                    var_names.insert(name);
+                }
+
+                // all new variable must be bound in all sub-patterns.
+                if let Some(bindings) = &bindings {
+                    for name in bindings.keys() {
+                        var_names.insert(name);
+                    }
+
+                    for name in var_names {
+                        match (bindings.get(name), new_bindings.get(name)) {
+                            (None, Some(_)) | (Some(_), None) => {
+                                // bound variable not found in this sub-pattern.
+                                errors.push(SemanticError::UnboundVariableInSubPattern {
+                                    name: name.to_string(),
+                                });
+                            }
+                            (Some(expected_ty), Some(actual_ty)) => {
+                                check_type(expected_ty, actual_ty, errors);
+                            }
+                            (None, None) => unreachable!(),
+                        }
+                    }
+                }
+
+                bindings = Some(new_bindings);
+            }
+
+            // Add bindings introduced in sub-patterns.
+            if let Some(bindings) = bindings {
+                for (var_name, var_ty) in bindings {
+                    let binding = Binding::new(&var_name, var_ty);
+                    vars.insert(binding);
+                }
+            }
         }
         PatternKind::Wildcard => {}
     };
@@ -981,6 +1059,13 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
             } else {
                 tcx.anon_struct_ty(typed_fields)
             }
+        }
+        PatternKind::Or(sub_pats) => {
+            // TODO: Union type?
+            let sub_pat = sub_pats
+                .first()
+                .expect("or-pattern must have at least 2 elements.");
+            pattern_to_type(tcx, sub_pat)
         }
         PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }

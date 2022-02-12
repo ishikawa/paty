@@ -52,16 +52,6 @@ assert 30 "puts(20 * 3 / 2)"
 assert 40 "puts(10 + 20 * 3 / 2)"
 assert 45 "puts((10 + 20) * 3 / 2)"
 assert -75 "puts(-(10 + 20 * 3) + 5 - 10)"
-# pattern match (case)
-assert 3 "
-  case 3
-  when 1
-    puts(1)
-  when 0..=2
-    puts(2)
-  else
-    puts(3)
-  end"
 # variable
 assert 5 "
   five = 5
@@ -100,6 +90,15 @@ assert 30 "
   # comment 4
   puts(foo(10, 20))"
 # pattern match (case)
+assert 3 "
+  case 3
+  when 1
+    puts(1)
+  when 0..=2
+    puts(2)
+  else
+    puts(3)
+  end"
 assert 3 "
   n = case 3
   when 1
@@ -168,6 +167,89 @@ def foo(b: boolean)
 end
 puts(foo(true))
 puts(foo(false))'
+assert "{ a: 100 }
+{ a: 55 }" '
+def foo(b: boolean)
+  case b
+  when true
+    { a: 100 }
+  when false
+    { a: 55 }
+  end
+end
+puts(foo(true))
+puts(foo(false))'
+# or-pattern
+assert '0..=2
+0..=2
+3..<10
+3..<10
+10
+11..' '
+def bar(n: int64)
+  case n
+  when 0 | 1 | 2
+    "0..=2"
+  when 3 | 4..<10
+    "3..<10"
+  when 10
+    "10"
+  else
+    "11.."
+  end
+end
+def baz(n: int64)
+  puts(bar(n))
+end
+baz(0)
+baz(2)
+baz(3)
+baz(6)
+baz(10)
+baz(11)'
+assert '100
+200' '
+struct T { a: int64, b: int64 }
+def foo(t: T)
+  case t
+  when T { a: 1, b: a } | T { a, b: _ }
+    a
+  end
+end
+foo(T { a: 1, b: 100 }).puts()
+foo(T { a: 200, b: 100 }).puts()'
+assert '100
+200
+3' '
+struct T { a: int64, b: int64 }
+
+def foo(t: { t: T })
+  case t
+  when { t: T { a, b: 1 } } | { t: T { a, b: 2 } }
+    a
+  when { t: T { a: _, b }}
+    b
+  end
+end
+{ t: T { a: 100, b: 1 } }.foo().puts()
+{ t: T { a: 200, b: 2 } }.foo().puts()
+{ t: T { a: 300, b: 3 } }.foo().puts()'
+assert '100
+200
+3' '
+struct T { a: int64, b: int64 }
+
+def foo(t: { t: T })
+  case t
+  when { t: T { a, b: 1 } | T { a, b: 2 } }
+    a
+  when { t: T { a: _, b }}
+    b
+  end
+end
+{ t: T { a: 100, b: 1 } }.foo().puts()
+{ t: T { a: 200, b: 2 } }.foo().puts()
+{ t: T { a: 300, b: 3 } }.foo().puts()'
 # function overloading
 assert "30
 true
@@ -355,6 +437,23 @@ D { bar: _, ... } = d
 D { foo, ... } = d
 D { baz, ... } = d
 puts(baz, foo)'
+assert '1
+2
+3' '
+struct T { a: int64, b: int64, c: int64 }
+def foo(t: T)
+  case t
+  when T { a: 1, b: 2, ... }
+    puts(1)
+  when T { a: 1, c: 3, ... }
+    puts(2)
+  else
+    puts(3)
+  end
+end
+foo(T { a: 1, b: 2, c: 0})
+foo(T { a: 1, b: 3, c: 3})
+foo(T { a: 3, b: 3, c: 3})'
 # anonymous struct
 assert '{ a: 1 }' 'puts({a: 1})'
 assert '{ b: true, m: "hello" }' 'puts({m: "hello", b: true})'
@@ -413,7 +512,7 @@ end'
 assert '1 3' '
 struct T { a: int64, b: int64, c: int64 }
 t1 = T { a: 1, b: 2, c: 3 }
-{ a, ...x } = t1
+T { a, ...x } = t1
 puts(a, x.c)'
 assert 'T { a: 50, b: 10, c: 40 }' '
 struct T {

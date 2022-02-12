@@ -147,7 +147,7 @@ impl<'a, 'tcx> Emitter {
         for param in &fun.params {
             // Emit code to ignore unused variable.
             if let Parameter::TmpVar(t) = param {
-                if t.used.get() == 0 {
+                if t.used() == 0 {
                     code.push_str(&format!("(void){};\n", tmp_var(t)));
                 }
             }
@@ -161,31 +161,31 @@ impl<'a, 'tcx> Emitter {
 
     fn emit_stmt(&mut self, stmt: &Stmt<'a, 'tcx>, code: &mut String) {
         match stmt {
-            Stmt::TmpVarDef { var, init, pruned } => {
-                if !pruned.get() && !init.ty().is_zero_sized() {
+            Stmt::TmpVarDef(def) => {
+                if !def.pruned() && !def.init().ty().is_zero_sized() {
                     // If a temporary variable is not referenced from anywhere,
                     // we don't emit an assignment statement.
-                    if var.used.get() > 0 {
-                        code.push_str(&c_type(init.ty()));
+                    if def.var().used() > 0 {
+                        code.push_str(&c_type(def.init().ty()));
                         code.push(' ');
-                        code.push_str(&tmp_var(var));
+                        code.push_str(&tmp_var(def.var()));
                         code.push_str(" = ");
                     }
 
                     // Emit init statement if needed
-                    if var.used.get() > 0 || init.has_side_effect() {
-                        self.emit_expr(init, code);
+                    if def.var().used() > 0 || def.init().has_side_effect() {
+                        self.emit_expr(def.init(), code);
                         code.push_str(";\n");
                     }
                 }
             }
-            Stmt::VarDef { name, init } => {
-                if !init.ty().is_zero_sized() {
-                    code.push_str(&c_type(init.ty()));
+            Stmt::VarDef(def) => {
+                if !def.init().ty().is_zero_sized() {
+                    code.push_str(&c_type(def.init().ty()));
                     code.push(' ');
-                    code.push_str(name);
+                    code.push_str(def.name());
                     code.push_str(" = ");
-                    self.emit_expr(init, code);
+                    self.emit_expr(def.init(), code);
                     code.push_str(";\n");
                 }
             }
@@ -199,7 +199,7 @@ impl<'a, 'tcx> Emitter {
             }
             Stmt::Phi { var, value, pruned } => {
                 if !pruned.get() {
-                    if var.used.get() > 0 {
+                    if var.used() > 0 {
                         code.push_str(&tmp_var(var));
                         code.push_str(" = ");
                     }
@@ -208,10 +208,15 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             Stmt::Cond { branches, var } => {
-                if var.used.get() > 0 {
-                    code.push_str(&c_type(var.ty));
+                if var.used() > 0 {
+                    code.push_str(&c_type(var.ty()));
                     code.push(' ');
                     code.push_str(&tmp_var(var));
+
+                    // Initialize with zero value.
+                    code.push_str(" = ");
+                    code.push_str(zero_value(var.ty()));
+
                     code.push_str(";\n");
                 }
 
@@ -328,6 +333,46 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(lhs, code);
                 code.push_str(" || ");
                 self.emit_expr(rhs, code);
+                code.push(')');
+            }
+            ExprKind::CondAndAssign { cond, var } => {
+                let mut emitted = false;
+
+                code.push('(');
+                if let Some(cond) = cond {
+                    self.emit_expr(cond, code);
+                    emitted = true;
+                }
+
+                if var.used() > 0 {
+                    if emitted {
+                        code.push_str(" && ");
+                    }
+                    code.push('(');
+                    code.push_str(&tmp_var(var));
+                    code.push_str(" = true");
+                    code.push(')');
+                    emitted = true;
+                }
+
+                if !emitted {
+                    code.push_str("true");
+                }
+                code.push(')');
+            }
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => {
+                code.push('(');
+                code.push('(');
+                self.emit_expr(cond, code);
+                code.push(')');
+                code.push_str(" ? ");
+                self.emit_expr(then_value, code);
+                code.push_str(" : ");
+                self.emit_expr(else_value, code);
                 code.push(')');
             }
             ExprKind::Call { name, args, cc } => {
@@ -518,7 +563,7 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(&format!(".{}", name));
             }
             ExprKind::TmpVar(t) => {
-                if let Some(expr) = t.immediate.get() {
+                if let Some(expr) = t.immediate() {
                     self.emit_expr(expr, code);
                 } else {
                     code.push_str(&tmp_var(t));
@@ -531,7 +576,7 @@ impl<'a, 'tcx> Emitter {
 
 fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
     if let ExprKind::TmpVar(t) = expr.kind() {
-        if let Some(expr) = t.immediate.get() {
+        if let Some(expr) = t.immediate() {
             return expr;
         }
     }
@@ -539,7 +584,7 @@ fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
 }
 
 fn tmp_var(t: &TmpVar) -> String {
-    format!("_t{}", t.index)
+    format!("_t{}", t.index())
 }
 
 fn c_type(ty: &Type) -> String {
@@ -554,6 +599,17 @@ fn c_type(ty: &Type) -> String {
             format!("struct _{}", buffer)
         }
         Type::Named(named_ty) => c_type(named_ty.expect_ty()),
+        Type::Undetermined => unreachable!("untyped code"),
+    }
+}
+
+// Anything in C can be initialised with = 0; this initializes
+// numeric elements to zero and pointers null.
+fn zero_value(ty: &Type) -> &'static str {
+    match ty {
+        Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => "0",
+        Type::Tuple(_) | Type::Struct(_) => "{0}",
+        Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
     }
 }

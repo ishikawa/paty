@@ -161,10 +161,10 @@ impl fmt::Display for Var<'_> {
 
 #[derive(Debug)]
 pub struct TmpVar<'a, 'tcx> {
-    pub index: usize,
-    pub ty: &'tcx Type<'tcx>,
-    pub used: Cell<usize>,
-    pub immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
+    index: usize,
+    ty: &'tcx Type<'tcx>,
+    used: Cell<usize>,
+    immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
 }
 
 impl<'a, 'tcx> TmpVar<'a, 'tcx> {
@@ -176,6 +176,26 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
             immediate: Cell::new(None),
         }
     }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
+    }
+
+    pub fn used(&self) -> usize {
+        self.used.get()
+    }
+
+    pub fn immediate(&self) -> Option<&'a Expr<'a, 'tcx>> {
+        self.immediate.get()
+    }
+
+    pub fn inc_used(&self) {
+        self.used.set(self.used.get() + 1);
+    }
 }
 
 impl fmt::Display for TmpVar<'_, '_> {
@@ -185,17 +205,82 @@ impl fmt::Display for TmpVar<'_, '_> {
 }
 
 #[derive(Debug)]
+pub struct TmpVarDef<'a, 'tcx> {
+    var: &'a TmpVar<'a, 'tcx>,
+    init: &'a Expr<'a, 'tcx>,
+    pruned: Cell<bool>,
+    // `true` if this variable can be updated.
+    assignable: bool,
+}
+
+impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
+    pub fn new(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>, assignable: bool) -> Self {
+        Self {
+            var,
+            init,
+            assignable,
+            pruned: Cell::new(false),
+        }
+    }
+
+    pub fn var(&self) -> &'a TmpVar<'a, 'tcx> {
+        self.var
+    }
+
+    pub fn init(&self) -> &'a Expr<'a, 'tcx> {
+        self.init
+    }
+
+    pub fn pruned(&self) -> bool {
+        self.pruned.get()
+    }
+}
+
+impl fmt::Display for TmpVarDef<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "t{} (used: {}, pruned: {}, assignable: {}) = {}",
+            self.var.index,
+            self.var.used.get(),
+            self.pruned.get(),
+            self.assignable,
+            self.init,
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct VarDef<'a, 'tcx> {
+    name: String,
+    init: &'a Expr<'a, 'tcx>,
+}
+
+impl<'a, 'tcx> VarDef<'a, 'tcx> {
+    pub fn new(name: String, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self { name, init }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn init(&self) -> &'a Expr<'a, 'tcx> {
+        self.init
+    }
+}
+
+impl fmt::Display for VarDef<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} = {}", self.name, self.init)
+    }
+}
+
+#[derive(Debug)]
 pub enum Stmt<'a, 'tcx> {
     // TODO: Can we unify TmpVar(Def) and Var(Def)?
-    TmpVarDef {
-        var: &'a TmpVar<'a, 'tcx>,
-        init: &'a Expr<'a, 'tcx>,
-        pruned: Cell<bool>,
-    },
-    VarDef {
-        name: String,
-        init: &'a Expr<'a, 'tcx>,
-    },
+    TmpVarDef(TmpVarDef<'a, 'tcx>),
+    VarDef(VarDef<'a, 'tcx>),
     Cond {
         /// The index of temporary variable which holds the result.
         var: &'a TmpVar<'a, 'tcx>,
@@ -212,45 +297,47 @@ pub enum Stmt<'a, 'tcx> {
     Ret(&'a Expr<'a, 'tcx>),
 }
 
+impl<'a, 'tcx> Stmt<'a, 'tcx> {
+    pub fn tmp_var_def(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self::TmpVarDef(TmpVarDef::new(var, init, false))
+    }
+
+    pub fn assignable_tmp_var_def(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self::TmpVarDef(TmpVarDef::new(var, init, true))
+    }
+
+    pub fn phi(var: &'a TmpVar<'a, 'tcx>, value: &'a Expr<'a, 'tcx>) -> Self {
+        Self::Phi {
+            var,
+            value,
+            pruned: Cell::new(false),
+        }
+    }
+}
+
 impl fmt::Display for Stmt<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Stmt::TmpVarDef { var, init, pruned } => {
-                write!(
-                    f,
-                    "t{} (used: {}, pruned: {}) = {:?}",
-                    var.index,
-                    var.used.get(),
-                    pruned.get(),
-                    init
-                )?;
-            }
-            Stmt::VarDef { name, init } => {
-                write!(f, "{} = {:?}", name, init)?;
-            }
-            Stmt::Ret(expr) => {
-                write!(f, "return {:?}", expr)?;
-            }
-            Stmt::Phi { var, value, pruned } => {
-                write!(
-                    f,
-                    "phi(t{} (used: {}, pruned: {}) = {:?})",
-                    var.index,
-                    var.used.get(),
-                    pruned.get(),
-                    value
-                )?;
-            }
+            Stmt::TmpVarDef(def) => def.fmt(f),
+            Stmt::VarDef(def) => def.fmt(f),
+            Stmt::Ret(expr) => write!(f, "return {}", expr),
+            Stmt::Phi { var, value, pruned } => write!(
+                f,
+                "phi(t{} (used: {}, pruned: {}) = {:?})",
+                var.index,
+                var.used.get(),
+                pruned.get(),
+                value
+            ),
             Stmt::Cond { var: ret, branches } => {
                 write!(f, "t{} (used: {}) = ", ret.index, ret.used.get())?;
                 writeln!(f, "cond {{")?;
                 for branch in branches {
-                    writeln!(f, "  {:?}", branch)?;
+                    writeln!(f, "  {}", branch)?;
                 }
-                write!(f, "}}")?;
+                write!(f, "}}")
             }
         }
-        Ok(())
     }
 }
 
@@ -258,6 +345,20 @@ impl fmt::Display for Stmt<'_, '_> {
 pub struct Branch<'a, 'tcx> {
     pub condition: Option<&'a Expr<'a, 'tcx>>,
     pub body: Vec<Stmt<'a, 'tcx>>,
+}
+
+impl fmt::Display for Branch<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(condition) = self.condition {
+            write!(f, "({}) => ", condition)?;
+        }
+
+        writeln!(f, "{{")?;
+        for stmt in &self.body {
+            writeln!(f, "  {}", stmt)?;
+        }
+        write!(f, "}}")
+    }
 }
 
 #[derive(Debug)]
@@ -295,7 +396,8 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Gt(_, _)
             | ExprKind::Ge(_, _)
             | ExprKind::And(_, _)
-            | ExprKind::Or(_, _) => false,
+            | ExprKind::Or(_, _)
+            | ExprKind::CondValue { .. } => false,
             ExprKind::Tuple(_)
             | ExprKind::StructValue(_)
             | ExprKind::Call { .. }
@@ -307,6 +409,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::FieldAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => true,
+            ExprKind::CondAndAssign { .. } => false,
         }
     }
 
@@ -327,8 +430,24 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Ge(a, b)
             | ExprKind::And(a, b)
             | ExprKind::Or(a, b) => a.has_side_effect() || b.has_side_effect(),
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => {
+                cond.has_side_effect()
+                    || then_value.has_side_effect()
+                    || else_value.has_side_effect()
+            }
             ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| sub_expr.has_side_effect()),
             ExprKind::StructValue(fs) => fs.iter().any(|(_, sub_expr)| sub_expr.has_side_effect()),
+            ExprKind::CondAndAssign { var: _, cond } => {
+                if let Some(cond) = cond {
+                    cond.has_side_effect()
+                } else {
+                    true
+                }
+            }
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
@@ -337,6 +456,12 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => false,
         }
+    }
+}
+
+impl fmt::Display for Expr<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
     }
 }
 
@@ -369,6 +494,16 @@ pub enum ExprKind<'a, 'tcx> {
         cc: CallingConvention<'tcx>,
         args: Vec<&'a Expr<'a, 'tcx>>,
     },
+    CondValue {
+        cond: &'a Expr<'a, 'tcx>,
+        then_value: &'a Expr<'a, 'tcx>,
+        else_value: &'a Expr<'a, 'tcx>,
+    },
+    /// Evaluate `cond` expression and assign a temporary variable with `true`.
+    CondAndAssign {
+        cond: Option<&'a Expr<'a, 'tcx>>,
+        var: &'a TmpVar<'a, 'tcx>,
+    },
 
     // Built-in procedures
     Printf(Vec<FormatSpec<'a, 'tcx>>),
@@ -391,12 +526,119 @@ pub enum ExprKind<'a, 'tcx> {
     Var(Var<'tcx>),
 }
 
+impl fmt::Display for ExprKind<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExprKind::Minus(a) => write!(f, "-{}", a),
+            ExprKind::Not(a) => write!(f, "!{}", a),
+            ExprKind::Add(a, b) => write!(f, "{} + {}", a, b),
+            ExprKind::Sub(a, b) => write!(f, "{} - {}", a, b),
+            ExprKind::Mul(a, b) => write!(f, "{} * {}", a, b),
+            ExprKind::Div(a, b) => write!(f, "{} / {}", a, b),
+            ExprKind::Eq(a, b) => write!(f, "{} == {}", a, b),
+            ExprKind::Ne(a, b) => write!(f, "{} != {}", a, b),
+            ExprKind::Lt(a, b) => write!(f, "{} < {}", a, b),
+            ExprKind::Le(a, b) => write!(f, "{} <= {}", a, b),
+            ExprKind::Gt(a, b) => write!(f, "{} > {}", a, b),
+            ExprKind::Ge(a, b) => write!(f, "{} >= {}", a, b),
+            ExprKind::And(a, b) => write!(f, "{} && {}", a, b),
+            ExprKind::Or(a, b) => write!(f, "{} || {}", a, b),
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => write!(f, "{} ? {} : {}", cond, then_value, else_value),
+            ExprKind::CondAndAssign { var, cond } => {
+                if let Some(cond) = cond {
+                    write!(f, "{} && {} = true", cond, var)
+                } else {
+                    write!(f, "{} = true", var)
+                }
+            }
+            ExprKind::Call { name, args, .. } => {
+                write!(f, "{}", name)?;
+                write!(f, "(")?;
+                let mut it = args.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            ExprKind::Printf(args) => {
+                write!(f, "@printf(")?;
+                let mut it = args.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            ExprKind::Int64(i) => i.fmt(f),
+            ExprKind::Bool(b) => b.fmt(f),
+            ExprKind::Str(s) => s.fmt(f),
+            ExprKind::Tuple(fs) => {
+                write!(f, "(")?;
+                let mut it = fs.iter().peekable();
+                while let Some(a) = it.next() {
+                    write!(f, "{}", a)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            ExprKind::StructValue(fs) => {
+                let mut it = fs.iter().peekable();
+                let empty = it.peek().is_none();
+
+                write!(f, "{{")?;
+                if !empty {
+                    write!(f, " ")?;
+                }
+                while let Some((name, value)) = it.next() {
+                    write!(f, "{}: {}", name, value)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                if !empty {
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
+            }
+            ExprKind::IndexAccess { operand, index } => write!(f, "{}.{}", operand, index),
+            ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
+            ExprKind::TmpVar(var) => var.fmt(f),
+            ExprKind::Var(var) => var.fmt(f),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum FormatSpec<'a, 'tcx> {
     Value(&'a Expr<'a, 'tcx>),
     /// Show value as `"{value}"`
     Quoted(&'a Expr<'a, 'tcx>),
     Str(&'static str),
+}
+
+impl fmt::Display for FormatSpec<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FormatSpec::Value(expr) => expr.fmt(f),
+            FormatSpec::Quoted(expr) => {
+                write!(f, "\"")?;
+                expr.fmt(f)?;
+                write!(f, "\"")
+            }
+            FormatSpec::Str(s) => write!(f, "{}", s.escape_unicode()),
+        }
+    }
 }
 
 pub struct Builder<'a, 'tcx> {
@@ -432,10 +674,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         for top_level in ast {
             match top_level {
                 syntax::TopLevel::Declaration(decl) => {
-                    self._build_decl(decl, &mut program, &mut stmts);
+                    self.build_decl(decl, &mut program, &mut stmts);
                 }
                 syntax::TopLevel::Stmt(stmt) => {
-                    self._build_stmt(stmt, &mut program, &mut stmts);
+                    self.build_stmt(stmt, &mut program, &mut stmts);
                 }
             }
         }
@@ -475,11 +717,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         let t = self.next_temp_var(expr.ty());
-        let stmt = Stmt::TmpVarDef {
-            var: t,
-            init: expr,
-            pruned: Cell::new(false),
-        };
+        let stmt = Stmt::tmp_var_def(t, expr);
         stmts.push(stmt);
 
         let kind = ExprKind::TmpVar(t);
@@ -494,11 +732,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) -> &'a Expr<'a, 'tcx> {
         let expr = self.expr_arena.alloc(Expr::new(kind, expr_ty));
         let t = self.next_temp_var(expr.ty());
-        let stmt = Stmt::TmpVarDef {
-            var: t,
-            init: expr,
-            pruned: Cell::new(false),
-        };
+        let stmt = Stmt::tmp_var_def(t, expr);
         stmts.push(stmt);
 
         let kind = ExprKind::TmpVar(t);
@@ -534,7 +768,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
-    fn _build_decl(
+    fn build_decl(
         &mut self,
         decl: &syntax::Declaration<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
@@ -578,7 +812,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         PatternKind::Integer(_)
                         | PatternKind::Boolean(_)
                         | PatternKind::String(_)
-                        | PatternKind::Range { .. } => {
+                        | PatternKind::Range { .. }
+                        | PatternKind::Or(..) => {
                             unreachable!("Unsupported let pattern: `{}`", p.pattern().kind());
                         }
                     };
@@ -589,7 +824,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 // return
                 let mut ret = None;
                 for stmt in syntax_fun.body() {
-                    ret = self._build_stmt(stmt, program, &mut body_stmts);
+                    ret = self.build_stmt(stmt, program, &mut body_stmts);
                 }
                 if let Some(ret) = ret {
                     body_stmts.push(Stmt::Ret(inc_used(ret)));
@@ -617,7 +852,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    fn _build_stmt(
+    fn build_stmt(
         &mut self,
         stmt: &syntax::Stmt<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
@@ -625,19 +860,19 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) -> Option<&'a Expr<'a, 'tcx>> {
         match stmt.kind() {
             syntax::StmtKind::Let { pattern, rhs } => {
-                let init = self._build_expr(rhs, program, stmts);
+                let init = self.build_expr(rhs, program, stmts);
                 self._build_let_pattern(pattern, init, program, stmts);
 
                 None
             }
             syntax::StmtKind::Expr(expr) => {
-                let value = self._build_expr(expr, program, stmts);
+                let value = self.build_expr(expr, program, stmts);
                 Some(value)
             }
         }
     }
 
-    fn _build_expr(
+    fn build_expr(
         &mut self,
         expr: &'nd syntax::Expr<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
@@ -666,7 +901,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let mut values = vec![];
 
                 for sub in sub_exprs {
-                    let value = self._build_expr(sub, program, stmts);
+                    let value = self.build_expr(sub, program, stmts);
                     values.push(inc_used(value));
                 }
 
@@ -690,7 +925,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     match field_or_spread {
                         syntax::ValueFieldOrSpread::ValueField(field) => {
                             if !initialized_fields.contains(&field.name()) {
-                                let value = self._build_expr(field.value(), program, stmts);
+                                let value = self.build_expr(field.value(), program, stmts);
                                 value_fields.push((field.name().to_string(), inc_used(value)));
                                 initialized_fields.insert(field.name());
                             }
@@ -709,7 +944,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                                 }
 
                                 let spread_value = built_spread_value
-                                    .unwrap_or_else(|| self._build_expr(operand, program, stmts));
+                                    .unwrap_or_else(|| self.build_expr(operand, program, stmts));
 
                                 let kind = ExprKind::FieldAccess {
                                     name: field.name().to_string(),
@@ -730,91 +965,91 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Minus(a) => {
-                let a = self._build_expr(a, program, stmts);
+                let a = self.build_expr(a, program, stmts);
                 let kind = ExprKind::Minus(inc_used(a));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Add(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Add(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Sub(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Sub(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Mul(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Mul(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Div(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Div(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Eq(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Eq(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Ne(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Ne(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Lt(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Lt(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Gt(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Gt(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Le(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Le(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Ge(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Ge(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::And(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::And(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Or(a, b) => {
-                let a = self._build_expr(a, program, stmts);
-                let b = self._build_expr(b, program, stmts);
+                let a = self.build_expr(a, program, stmts);
+                let b = self.build_expr(b, program, stmts);
                 let kind = ExprKind::Or(inc_used(a), inc_used(b));
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
@@ -824,7 +1059,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::IndexAccess(operand, index) => {
-                let operand = self._build_expr(operand, program, stmts);
+                let operand = self.build_expr(operand, program, stmts);
                 let kind = ExprKind::IndexAccess {
                     operand: inc_used(operand),
                     index: *index,
@@ -833,7 +1068,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::FieldAccess(operand, name) => {
-                let operand = self._build_expr(operand, program, stmts);
+                let operand = self.build_expr(operand, program, stmts);
                 let kind = ExprKind::FieldAccess {
                     operand: inc_used(operand),
                     name: name.to_string(),
@@ -863,7 +1098,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                         .arguments()
                         .iter()
                         .map(|a| {
-                            let a = self._build_expr(a, program, stmts);
+                            let a = self.build_expr(a, program, stmts);
                             inc_used(a)
                         })
                         .collect(),
@@ -879,8 +1114,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let mut it = args.iter().peekable();
 
                 while let Some(arg) = it.next() {
-                    let a = self._build_expr(arg, program, stmts);
-                    self._printf_format(a, program, stmts, &mut format_specs, false);
+                    let a = self.build_expr(arg, program, stmts);
+                    self.printf_format(a, program, stmts, &mut format_specs, false);
 
                     // separated by a space
                     if it.peek().is_some() {
@@ -899,7 +1134,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 else_body,
             } => {
                 let t = self.next_temp_var(expr.ty().unwrap());
-                let t_head = self._build_expr(head, program, stmts);
+                let t_head = self.build_expr(head, program, stmts);
 
                 // Construct "if-else" statement from each branches.
                 let mut branches = arms
@@ -907,15 +1142,17 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     .map(|arm| {
                         // Build an condition and variable declarations from the pattern
                         let mut branch_stmts = vec![];
-                        let condition =
-                            self._build_pattern(t_head, arm.pattern(), program, &mut branch_stmts);
-                        let ret = self._build_expr(arm.body(), program, &mut branch_stmts);
 
-                        branch_stmts.push(Stmt::Phi {
-                            var: t,
-                            value: inc_used(ret),
-                            pruned: Cell::new(false),
-                        });
+                        let condition = self.build_pattern(
+                            t_head,
+                            arm.pattern(),
+                            program,
+                            stmts,
+                            &mut branch_stmts,
+                        );
+
+                        let ret = self.build_expr(arm.body(), program, &mut branch_stmts);
+                        branch_stmts.push(Stmt::phi(t, inc_used(ret)));
 
                         Branch {
                             condition,
@@ -926,12 +1163,9 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
-                    let ret = self._build_expr(else_body, program, &mut branch_stmts);
-                    branch_stmts.push(Stmt::Phi {
-                        var: t,
-                        value: inc_used(ret),
-                        pruned: Cell::new(false),
-                    });
+
+                    let ret = self.build_expr(else_body, program, &mut branch_stmts);
+                    branch_stmts.push(Stmt::phi(t, inc_used(ret)));
 
                     let branch = Branch {
                         condition: None,
@@ -939,11 +1173,12 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     };
                     branches.push(branch);
                 } else if !branches.is_empty() {
-                    // No explicit `else` arm for this `case` expression. However,
-                    // the last arm of every `case` expression which was passed through usefulness check can
-                    // be `else` arm.
-                    let i = branches.len() - 1;
-                    branches[i].condition = None;
+                    // No explicit `else` arm for this `case` expression.
+
+                    // TODO: the last arm of every `case` expression which was passed through usefulness
+                    // check can be just a `else` arm if the condition doesn't contain any CFV.
+                    //let i = branches.len() - 1;
+                    //branches[i].condition = None;
                 }
 
                 let stmt = Stmt::Cond { branches, var: t };
@@ -955,7 +1190,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    fn _printf_format(
+    fn printf_format(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
         program: &mut Program<'a, 'tcx>,
@@ -985,7 +1220,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     };
 
                     let ir_expr = self.push_expr_kind(kind, sub_ty, stmts);
-                    self._printf_format(ir_expr, program, stmts, specs, true);
+                    self.printf_format(ir_expr, program, stmts, specs, true);
 
                     if it.peek().is_some() {
                         specs.push(FormatSpec::Str(", "));
@@ -998,14 +1233,14 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     specs.push(FormatSpec::Value(self.const_string(name)));
                     specs.push(FormatSpec::Str(" "));
                 }
-                self._printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
+                self.printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
             }
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
     }
 
-    fn _printf_format_typed_fields(
+    fn printf_format_typed_fields(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
         fields: &[TypedField<'tcx>],
@@ -1030,7 +1265,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             };
 
             let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
-            self._printf_format(ir_expr, program, stmts, specs, true);
+            self.printf_format(ir_expr, program, stmts, specs, true);
 
             if it.peek().is_some() {
                 specs.push(FormatSpec::Str(", "));
@@ -1044,11 +1279,12 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     }
 
     // Returns `None` for no condition.
-    fn _build_pattern(
+    fn build_pattern(
         &mut self,
-        t_expr: &'a Expr<'a, 'tcx>,
+        target_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
+        outer_stmts: &mut Vec<Stmt<'a, 'tcx>>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
         // zero-sized type is always matched with a value.
@@ -1059,16 +1295,16 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         match pat.kind() {
             PatternKind::Integer(n) => {
                 let value = self.int64(*n);
-                let eq = ExprKind::Eq(inc_used(t_expr), value);
+                let eq = ExprKind::Eq(inc_used(target_expr), value);
 
                 let expr = self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()));
                 Some(expr)
             }
             PatternKind::Boolean(b) => {
                 let expr = if *b {
-                    inc_used(t_expr)
+                    inc_used(target_expr)
                 } else {
-                    let expr = ExprKind::Not(inc_used(t_expr));
+                    let expr = ExprKind::Not(inc_used(target_expr));
                     self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
                 };
                 Some(expr)
@@ -1080,7 +1316,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Call {
                     name: "strcmp".to_string(),
                     cc: CallingConvention::C,
-                    args: vec![inc_used(t_expr), value],
+                    args: vec![inc_used(target_expr), value],
                 };
                 let strcmp = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
 
@@ -1094,11 +1330,11 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let lo = self.int64(*lo);
                 let hi = self.int64(*hi);
 
-                let lhs = ExprKind::Ge(inc_used(t_expr), lo);
+                let lhs = ExprKind::Ge(inc_used(target_expr), lo);
 
                 let rhs = match end {
-                    syntax::RangeEnd::Included => ExprKind::Le(inc_used(t_expr), hi),
-                    syntax::RangeEnd::Excluded => ExprKind::Lt(inc_used(t_expr), hi),
+                    syntax::RangeEnd::Included => ExprKind::Le(inc_used(target_expr), hi),
+                    syntax::RangeEnd::Excluded => ExprKind::Lt(inc_used(target_expr), hi),
                 };
 
                 let kind = ExprKind::And(
@@ -1114,130 +1350,188 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     unreachable!(
                         "Empty tuple must be zero-sized type. It should be handled above."
                     );
-                } else {
-                    let kind = ExprKind::IndexAccess {
-                        operand: inc_used(t_expr),
-                        index: 0,
-                    };
-                    let operand = self
-                        .expr_arena
-                        .alloc(Expr::new(kind, sub_pats[0].expect_ty()));
-
-                    let mut condition = self._build_pattern(operand, sub_pats[0], program, stmts);
-
-                    for (i, pat) in sub_pats.iter().enumerate().skip(1) {
-                        let kind = ExprKind::IndexAccess {
-                            operand: inc_used(t_expr),
-                            index: i,
-                        };
-                        let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
-                        let sub_condition = self._build_pattern(operand, pat, program, stmts);
-
-                        if let Some(cond) = condition {
-                            if let Some(sub_cond) = sub_condition {
-                                let kind = ExprKind::And(cond, sub_cond);
-                                condition = Some(
-                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
-                                );
-                            }
-                        } else {
-                            condition = sub_condition;
-                        }
-                    }
-
-                    condition
                 }
+
+                sub_pats.iter().enumerate().fold(None, |cond, (i, pat)| {
+                    let kind = ExprKind::IndexAccess {
+                        operand: inc_used(target_expr),
+                        index: i,
+                    };
+                    let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
+                    let sub_cond = self.build_pattern(operand, pat, program, outer_stmts, stmts);
+
+                    match (cond, sub_cond) {
+                        (Some(cond), Some(sub_cond)) => {
+                            let kind = ExprKind::And(cond, sub_cond);
+                            Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
+                        }
+                        (Some(cond), None) => Some(cond),
+                        (None, Some(sub_cond)) => Some(sub_cond),
+                        (None, None) => None,
+                    }
+                })
             }
             PatternKind::Struct(struct_pat) => {
                 if struct_pat.fields().len() == 0 {
                     unreachable!(
                         "Empty struct must be zero-sized type. It should be handled above."
                     );
-                } else {
-                    // Split fields into pattern fields and a spread.
-                    let mut pattern_fields = vec![];
-                    let mut spread_pat = None;
+                }
 
-                    for f in struct_pat.fields() {
-                        match f {
-                            syntax::PatternFieldOrSpread::PatternField(pf) => {
-                                pattern_fields.push(pf);
-                            }
-                            syntax::PatternFieldOrSpread::Spread(spread) => {
-                                spread_pat = Some(spread);
-                            }
+                // Split fields into pattern fields and a spread.
+                let mut pattern_fields = vec![];
+                let mut spread_pat = None;
+
+                for f in struct_pat.fields() {
+                    match f {
+                        syntax::PatternFieldOrSpread::PatternField(pf) => {
+                            pattern_fields.push(pf);
+                        }
+                        syntax::PatternFieldOrSpread::Spread(spread) => {
+                            assert!(spread_pat.is_none());
+                            spread_pat = Some(spread);
                         }
                     }
-                    if let Some(spread_pat) = spread_pat {
-                        if let Some(spread_name) = spread_pat.name() {
-                            let spread_ty = spread_pat.expect_ty();
-                            program.add_decl_type(spread_ty);
+                }
+                if let Some(spread_pat) = spread_pat {
+                    if let Some(spread_name) = spread_pat.name() {
+                        let spread_ty = spread_pat.expect_ty();
+                        program.add_decl_type(spread_ty);
 
-                            let struct_ty = spread_pat.expect_struct_ty();
-                            let values = self.struct_values(struct_ty, t_expr);
-                            let struct_value = self
-                                .expr_arena
-                                .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
+                        let struct_ty = spread_pat.expect_struct_ty();
+                        let values = self.struct_values(struct_ty, target_expr);
+                        let struct_value = self
+                            .expr_arena
+                            .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
 
-                            stmts.push(Stmt::VarDef {
-                                name: spread_name.to_string(),
-                                init: inc_used(struct_value),
-                            });
-                        }
+                        stmts.push(Stmt::VarDef(VarDef::new(
+                            spread_name.to_string(),
+                            inc_used(struct_value),
+                        )));
                     }
+                }
 
-                    // no condition
-                    if pattern_fields.is_empty() {
-                        return None;
-                    }
-
-                    let first_field = pattern_fields[0];
+                pattern_fields.iter().fold(None, |cond, pat_field| {
                     let kind = ExprKind::FieldAccess {
-                        operand: inc_used(t_expr),
-                        name: first_field.name().to_string(),
+                        operand: inc_used(target_expr),
+                        name: pat_field.name().to_string(),
                     };
                     let operand = self
                         .expr_arena
-                        .alloc(Expr::new(kind, first_field.pattern().expect_ty()));
+                        .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
+                    let sub_cond = self.build_pattern(
+                        operand,
+                        pat_field.pattern(),
+                        program,
+                        outer_stmts,
+                        stmts,
+                    );
 
-                    let mut condition =
-                        self._build_pattern(operand, first_field.pattern(), program, stmts);
-
-                    for pat_field in pattern_fields.iter().skip(1) {
-                        let kind = ExprKind::FieldAccess {
-                            operand: inc_used(t_expr),
-                            name: pat_field.name().to_string(),
-                        };
-                        let operand = self
-                            .expr_arena
-                            .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-                        let sub_condition =
-                            self._build_pattern(operand, pat_field.pattern(), program, stmts);
-
-                        if let Some(cond) = condition {
-                            if let Some(sub_cond) = sub_condition {
-                                let kind = ExprKind::And(cond, sub_cond);
-                                condition = Some(
-                                    self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())),
-                                );
-                            }
-                        } else {
-                            condition = sub_condition;
+                    match (cond, sub_cond) {
+                        (Some(cond), Some(sub_cond)) => {
+                            let kind = ExprKind::And(cond, sub_cond);
+                            Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
                         }
+                        (Some(cond), None) => Some(cond),
+                        (None, Some(sub_cond)) => Some(sub_cond),
+                        (None, None) => None,
                     }
-
-                    condition
-                }
+                })
             }
             PatternKind::Var(name) => {
-                stmts.push(Stmt::VarDef {
-                    name: name.clone(),
-                    init: inc_used(t_expr),
-                });
+                stmts.push(Stmt::VarDef(VarDef::new(
+                    name.clone(),
+                    inc_used(target_expr),
+                )));
 
                 None
             }
+            PatternKind::Or(sub_pats) => {
+                assert!(sub_pats.len() >= 2);
+                let bool_ty = self.tcx.boolean();
+
+                sub_pats.iter().fold(None, |cond, sub_pat| {
+                    // control flow variable
+                    let cfv = self.next_temp_var(bool_ty);
+                    outer_stmts.push(Stmt::assignable_tmp_var_def(cfv, self.bool(false)));
+
+                    let mut inner_stmts = vec![];
+                    let mut sub_cond = self.build_pattern(
+                        target_expr,
+                        sub_pat,
+                        program,
+                        outer_stmts,
+                        &mut inner_stmts,
+                    );
+
+                    self.merge_var_decl_stmts(cfv, stmts, &inner_stmts);
+
+                    sub_cond = Some(self.expr_arena.alloc(Expr::new(
+                        ExprKind::CondAndAssign {
+                            cond: sub_cond,
+                            var: cfv,
+                        },
+                        bool_ty,
+                    )));
+
+                    match (cond, sub_cond) {
+                        (Some(cond), Some(sub_cond)) => {
+                            let kind = ExprKind::Or(cond, sub_cond);
+                            Some(self.expr_arena.alloc(Expr::new(kind, bool_ty)))
+                        }
+                        (Some(cond), None) => Some(cond),
+                        (None, Some(sub_cond)) => Some(sub_cond),
+                        (None, None) => None,
+                    }
+                })
+            }
             PatternKind::Wildcard => None,
+        }
+    }
+
+    fn merge_var_decl_stmts(
+        &self,
+        cfv: &'a TmpVar<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        inner_stmts: &[Stmt<'a, 'tcx>],
+    ) {
+        for stmt in inner_stmts {
+            if let Stmt::VarDef(def) = stmt {
+                let v = stmts.iter().enumerate().find_map(|(i, x)| {
+                    if let Stmt::VarDef(x_def) = x {
+                        if x_def.name() == def.name() {
+                            return Some((i, x_def.init()));
+                        }
+                    }
+                    None
+                });
+
+                if let Some((i, else_value)) = v {
+                    let cfv_expr = Expr::new(ExprKind::TmpVar(cfv), cfv.ty());
+                    let init = Expr::new(
+                        ExprKind::CondValue {
+                            cond: inc_used(self.expr_arena.alloc(cfv_expr)),
+                            then_value: inc_used(def.init()),
+                            else_value: inc_used(else_value),
+                        },
+                        def.init().ty(),
+                    );
+                    let new_var_def = Stmt::VarDef(VarDef::new(
+                        def.name().to_string(),
+                        self.expr_arena.alloc(init),
+                    ));
+
+                    stmts.push(new_var_def);
+                    stmts.swap_remove(i);
+                } else {
+                    stmts.push(Stmt::VarDef(VarDef::new(
+                        def.name().to_string(),
+                        def.init(),
+                    )));
+                }
+            } else {
+                unreachable!("stmt must be var def: {}", stmt);
+            }
         }
     }
 
@@ -1250,10 +1544,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) {
         match pattern.kind() {
             PatternKind::Var(name) => {
-                let stmt = Stmt::VarDef {
-                    name: name.to_string(),
-                    init: inc_used(init),
-                };
+                let stmt = Stmt::VarDef(VarDef::new(name.to_string(), inc_used(init)));
                 stmts.push(stmt);
             }
             PatternKind::Wildcard => {
@@ -1295,10 +1586,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                                     .expr_arena
                                     .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
 
-                                stmts.push(Stmt::VarDef {
-                                    name: spread_name.to_string(),
-                                    init: inc_used(struct_value),
-                                });
+                                stmts.push(Stmt::VarDef(VarDef::new(
+                                    spread_name.to_string(),
+                                    inc_used(struct_value),
+                                )));
                             }
                         }
                     }
@@ -1307,7 +1598,8 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             PatternKind::Integer(_)
             | PatternKind::Boolean(_)
             | PatternKind::String(_)
-            | PatternKind::Range { .. } => {
+            | PatternKind::Range { .. }
+            | PatternKind::Or(..) => {
                 unreachable!("Unsupported let pattern: `{}`", pattern.kind());
             }
         };
@@ -1356,18 +1648,24 @@ impl<'a, 'tcx> Optimizer {
 
     fn optimize_stmt(&mut self, stmt: &Stmt<'a, 'tcx>) {
         match stmt {
-            Stmt::TmpVarDef { var, init, pruned } => {
-                if var.used.get() == 1 || init.can_be_immediate() {
+            Stmt::TmpVarDef(def) => {
+                if def.assignable {
+                    // We can remove a definition of a temporary variable which is assigned
+                    // but never referred. To do this, however, we have to remove the assignment
+                    // expression.
+                    if def.var.used.get() == 0 {
+                        def.pruned.set(true);
+                    }
+                } else if def.var.used.get() == 1 || def.init.can_be_immediate() {
                     // This temporary variable is used only once, so it could be
                     // replaced with the expression.
-                    var.immediate.set(Some(init));
-                    pruned.set(true);
-                    return;
+                    def.var.immediate.set(Some(def.init));
+                    def.pruned.set(true);
                 }
-                self.optimize_expr(init);
+                self.optimize_expr(def.init);
             }
-            Stmt::VarDef { init, .. } => {
-                self.optimize_expr(init);
+            Stmt::VarDef(def) => {
+                self.optimize_expr(def.init());
             }
             Stmt::Ret(expr) => {
                 self.optimize_expr(expr);
@@ -1421,6 +1719,15 @@ impl<'a, 'tcx> Optimizer {
                 self.optimize_expr(lhs);
                 self.optimize_expr(rhs);
             }
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => {
+                self.optimize_expr(cond);
+                self.optimize_expr(then_value);
+                self.optimize_expr(else_value);
+            }
             ExprKind::Call { args, .. } => {
                 for arg in args {
                     self.optimize_expr(arg);
@@ -1443,6 +1750,11 @@ impl<'a, 'tcx> Optimizer {
                     self.optimize_expr(value);
                 }
             }
+            ExprKind::CondAndAssign { var: _, cond } => {
+                if let Some(cond) = cond {
+                    self.optimize_expr(cond);
+                }
+            }
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
@@ -1458,7 +1770,7 @@ impl<'a, 'tcx> Optimizer {
 
 fn inc_used<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
     if let ExprKind::TmpVar(t) = expr.kind() {
-        t.used.set(t.used.get() + 1);
+        t.inc_used()
     }
 
     expr

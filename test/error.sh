@@ -176,6 +176,13 @@ assert 'named field `value` is defined more than once' "
   else
     puts(1)
   end"
+assert 'unreachable pattern: `{ a: _, b: 3 }`' '
+case { a: 1, b: 2 }
+when { a: _, ... } | { b: 3, ... }
+  puts(0)
+else
+  puts(1)
+end'
 # binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
 case (10, 20, 30)
@@ -191,6 +198,41 @@ end"
 assert 'cannot find variable `_` in scope' "
 _ = 1
 puts(_)"
+assert 'variable `x` is not bound in all patterns' '
+case { a: 1, b: 2 }
+when { a: x, b: 0 } | { ... }
+  puts(x)
+end'
+assert 'variable `value` is not bound in all patterns' '
+struct T { value: int64 }
+case { a: T { value: 1 }, b: T { value: 2 } }
+when { a: T { value }, b: T { value: 0 } } | { a: _, b: _ }
+  puts(x)
+end'
+assert 'spread pattern can appear only once: `...`' '
+case { a: 100, b: 200, c: 300 }
+when { a, ..., ... }
+  puts(a)
+end'
+assert 'spread pattern can appear only once: `...y`' '
+case { a: 100, b: 200, c: 300 }
+when { a, ...x, ...y }
+  puts(a)
+end'
+assert 'spread pattern can appear only once: `...y`' '
+struct T { a: int64, b: int64, c: int64 }
+t = T { a: 100, b: 200, c: 300 }
+case t
+when T { a, ...x, ...y }
+  puts(a)
+end'
+assert 'spread pattern can appear only once: `...`' '
+struct T { a: int64, b: int64, c: int64 }
+t = T { a: 100, b: 200, c: 300 }
+case { t }
+when { t: T { ...x, ... } }
+  puts(x)
+end'
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
 def foo(n: int64)
@@ -224,6 +266,17 @@ Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "case (1,)
 when (1,)
   puts(1)
 end"
+assert 'expected type `int64`, found `boolean`' '
+case { a: 100, b: false }
+when { a: x, b: false } | { a: _, b: x }
+  puts(x)
+end'
+assert 'expected type `int64`, found `boolean`' '
+struct T { value: int64 }
+case { a: T { value: 100 }, b: false }
+when { a: T { value: x }, b: false } | { a: _, b: x }
+  puts(x)
+end'
 # tuple
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "
@@ -245,8 +298,13 @@ case { a: 100, b: 200, c: 300 }
 when { a, ...a }
   puts(a)
 end'
-assert 'spread pattern can appear only once' '
-case { a: 100, b: 200, c: 300 }
-when { a, ...x, ...y }
-  puts(a)
+# or-pattern
+assert 'expected type `struct T { a: int64 }`, found `{ a: int64 }`' '
+struct T { a: int64 }
+t = T { a: 0 }
+case t
+when T { a: 0 } | T { a: 1 } | { a: 2 }
+  puts(0)
+else
+  puts(1)
 end'

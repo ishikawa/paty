@@ -608,8 +608,6 @@ pub enum Constructor {
     /// The constructor for patterns that have a single constructor, like tuples, struct patterns
     /// and fixed-length arrays.
     Single,
-    /// Wildcard pattern.
-    Wildcard,
     /// Ranges of integer literal values (`2`, `2..=5` or `2..5`).
     IntRange(IntRange),
     /// String constant
@@ -623,6 +621,10 @@ pub enum Constructor {
     Missing {
         nonexhaustive_enum_missing_real_variants: bool,
     },
+    /// Wildcard pattern.
+    Wildcard,
+    /// Or-pattern.
+    Or,
 }
 
 impl<'tcx> Constructor {
@@ -662,7 +664,8 @@ impl<'tcx> Constructor {
             | Self::IntRange(_)
             | Self::Str(_)
             | Self::NonExhaustive
-            | Self::Missing { .. } => 0,
+            | Self::Missing { .. }
+            | Self::Or => 0,
         }
     }
 
@@ -709,7 +712,7 @@ impl<'tcx> Constructor {
                 .any(|other| range.is_covered_by(other)),
             // This constructor is never covered by anything else
             Self::NonExhaustive => false,
-            Self::Str(..) | Self::Wildcard | Self::Missing { .. } => {
+            Self::Str(..) | Self::Wildcard | Self::Missing { .. } | Self::Or => {
                 unreachable!("found unexpected ctor in all_ctors: {:?}", self)
             }
         }
@@ -788,7 +791,11 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         cx: &MatchCheckContext<'p, 'tcx>,
         fields: impl IntoIterator<Item = DeconstructedPat<'p, 'tcx>>,
     ) -> Self {
-        let fields: &[_] = cx.pattern_arena.alloc_extend(fields);
+        // Prevent the function from being called recursively. The arena
+        // allocator can't be invoked recursively.
+        let vs = fields.into_iter().collect::<Vec<_>>();
+        let fields: &[_] = cx.pattern_arena.alloc_extend(vs);
+
         Fields { fields }
     }
 
@@ -807,18 +814,20 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         constructor: &Constructor,
     ) -> Self {
         match constructor {
-            Constructor::Single => match ty {
+            Constructor::Single => match ty.bottom_ty() {
                 Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
-                Type::Struct(struct_ty) => {
-                    Fields::wildcards_from_tys(cx, struct_ty.fields().iter().map(|f| f.ty()))
-                }
-                _ => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
+                Type::Struct(struct_ty) => Fields::wildcards_from_tys(
+                    cx,
+                    struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
+                ),
+                ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
             Constructor::IntRange(..)
             | Constructor::Str(..)
             | Constructor::NonExhaustive
             | Constructor::Wildcard
             | Constructor::Missing { .. } => Fields::empty(),
+            Constructor::Or => unreachable!("called `Fields::wildcards` on an `Or` ctor"),
         }
     }
 
@@ -853,7 +862,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         DeconstructedPat {
             ctor,
             fields,
-            ty,
+            ty: ty.bottom_ty(),
             reachable: Cell::new(false),
         }
     }
@@ -873,7 +882,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     }
 
     pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
-        let pat_ty = pat.expect_ty();
+        let pat_ty = pat.expect_ty().bottom_ty();
 
         let ctor;
         let fields;
@@ -939,6 +948,13 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
                 fields = Fields::from_iter(cx, sub_pats);
             }
+            PatternKind::Or(..) => {
+                ctor = Constructor::Or;
+                let pats = expand_or_pat(pat)
+                    .into_iter()
+                    .map(|pat| DeconstructedPat::from_pat(cx, pat));
+                fields = Fields::from_iter(cx, pats);
+            }
         }
 
         DeconstructedPat::new(ctor, fields, pat_ty)
@@ -982,6 +998,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
                 `Missing` should have been processed in `apply_constructors`"
             ),
+            Constructor::Or => unreachable!("can't convert to pattern: {:?}", self),
         };
 
         let pat = Pattern::new(kind);
@@ -997,22 +1014,12 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         self.ty
     }
 
-    /// We keep track for each pattern if it was ever reachable during the analysis. This is used
-    /// with `unreachable_spans` to report unreachable subpatterns arising from or patterns.
-    pub fn set_reachable(&self) {
-        self.reachable.set(true)
-    }
-
-    pub fn is_reachable(&self) -> bool {
-        self.reachable.get()
-    }
-
     pub fn iter_fields<'a>(&'a self) -> impl Iterator<Item = &'p DeconstructedPat<'p, 'tcx>> + 'a {
         self.fields.iter_patterns()
     }
 
     pub fn is_or_pat(&self) -> bool {
-        false
+        matches!(self.ctor, Constructor::Or)
     }
 
     /// Specialize this pattern with a constructor.
@@ -1032,6 +1039,41 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             _ => self.fields.iter_patterns().collect(),
         }
     }
+
+    /// We keep track for each pattern if it was ever reachable during the analysis. This is used
+    /// with `unreachable_spans` to report unreachable subpatterns arising from or patterns.
+    pub fn set_reachable(&self) {
+        self.reachable.set(true)
+    }
+
+    pub fn is_reachable(&self) -> bool {
+        self.reachable.get()
+    }
+
+    /// Report the spans of subpatterns that were not reachable, if any.
+    pub fn unreachable_sub_pats(
+        &self,
+        cx: &MatchCheckContext<'p, 'tcx>,
+    ) -> Vec<&'p Pattern<'p, 'tcx>> {
+        let mut sub_pats = Vec::new();
+        self.collect_unreachable_spans(cx, &mut sub_pats);
+        sub_pats
+    }
+
+    fn collect_unreachable_spans(
+        &self,
+        cx: &MatchCheckContext<'p, 'tcx>,
+        sub_pats: &mut Vec<&'p Pattern<'p, 'tcx>>,
+    ) {
+        // We don't look at subpatterns if we already reported the whole pattern as unreachable.
+        if !self.is_reachable() {
+            sub_pats.push(self.to_pat(cx));
+        } else {
+            for p in self.iter_fields() {
+                p.collect_unreachable_spans(cx, sub_pats);
+            }
+        }
+    }
 }
 
 /// The arm of a match expression.
@@ -1045,9 +1087,11 @@ pub struct MatchArm<'p, 'tcx> {
 /// Indicates whether or not a given arm is reachable.
 #[derive(Debug, Clone)]
 
-pub enum Reachability {
+pub enum Reachability<'p, 'tcx> {
     /// The arm is reachable.
-    Reachable,
+    Reachable {
+        unreachable_sub_patterns: Vec<&'p Pattern<'p, 'tcx>>,
+    },
     /// The arm is unreachable.
     Unreachable,
 }
@@ -1056,7 +1100,7 @@ pub enum Reachability {
 
 pub struct UsefulnessReport<'p, 'tcx> {
     /// For each arm of the input, whether that arm is reachable after the arms above it.
-    pub arm_usefulness: Vec<(MatchArm<'p, 'tcx>, Reachability)>,
+    pub arm_usefulness: Vec<(MatchArm<'p, 'tcx>, Reachability<'p, 'tcx>)>,
     /// If the match is exhaustive, this is empty. If not, this contains witnesses for the lack of
     /// exhaustiveness.
     pub non_exhaustiveness_witnesses: Vec<DeconstructedPat<'p, 'tcx>>,
@@ -1301,7 +1345,7 @@ fn is_useful<'p, 'tcx>(
         return ret;
     }
 
-    let ty = v.head().ty();
+    let ty = v.head().ty().bottom_ty();
     let pcx = PatContext {
         cx,
         ty,
@@ -1311,8 +1355,21 @@ fn is_useful<'p, 'tcx>(
 
     // If the first pattern is an or-pattern, expand it.
     let mut ret = Usefulness::new_not_useful(witness_preference);
-
-    {
+    if v.head().is_or_pat() {
+        // expanding or-pattern
+        // We try each or-pattern branch in turn.
+        let mut matrix = matrix.clone();
+        for v in v.expand_or_pat() {
+            let usefulness = is_useful(cx, &matrix, &v, witness_preference, is_under_guard, false);
+            ret.extend(usefulness);
+            // If pattern has a guard don't add it to the matrix.
+            if !is_under_guard {
+                // We push the already-seen patterns into the matrix in order to detect redundant
+                // branches like `Some(_) | Some(0)`.
+                matrix.push(v);
+            }
+        }
+    } else {
         let v_ctor = v.head().ctor();
 
         // We split the head constructor of `v`.
@@ -1365,7 +1422,11 @@ fn compute_match_usefulness<'p, 'tcx>(
                 matrix.push(v);
             }
             let reachability = if arm.pat.is_reachable() {
-                Reachability::Reachable
+                let pats = arm.pat.unreachable_sub_pats(cx);
+
+                Reachability::Reachable {
+                    unreachable_sub_patterns: pats,
+                }
             } else {
                 Reachability::Unreachable
             };
@@ -1427,6 +1488,30 @@ pub fn check_match<'tcx>(
 
     // unreachable pattern
     for (i, (arm, reachability)) in report.arm_usefulness.iter().enumerate() {
+        match reachability {
+            Reachability::Reachable {
+                unreachable_sub_patterns,
+            } => {
+                for sub_pat in unreachable_sub_patterns {
+                    errors.push(SemanticError::UnreachablePattern {
+                        pattern: sub_pat.to_string(),
+                    });
+                }
+            }
+            Reachability::Unreachable => {
+                if has_else && i == (report.arm_usefulness.len() - 1) {
+                    // "else"
+                    errors.push(SemanticError::UnreachableElseClause);
+                } else {
+                    let pat = arm.pat.to_pat(&cx);
+
+                    errors.push(SemanticError::UnreachablePattern {
+                        pattern: pat.kind().to_string(),
+                    });
+                }
+            }
+        }
+
         if matches!(reachability, Reachability::Unreachable) {
             if has_else && i == (report.arm_usefulness.len() - 1) {
                 // "else"
@@ -1435,7 +1520,7 @@ pub fn check_match<'tcx>(
                 let pat = arm.pat.to_pat(&cx);
 
                 errors.push(SemanticError::UnreachablePattern {
-                    pattern: pat.kind().to_string(),
+                    pattern: pat.to_string(),
                 });
             }
         }
@@ -1454,6 +1539,23 @@ pub fn check_match<'tcx>(
     } else {
         Err(errors)
     }
+}
+
+/// Recursively expand this pattern into its subpatterns. Only useful for or-patterns.
+fn expand_or_pat<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>) -> Vec<&'p Pattern<'p, 'tcx>> {
+    fn expand<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>, vec: &mut Vec<&'p Pattern<'p, 'tcx>>) {
+        if let PatternKind::Or(pats) = pat.kind() {
+            for pat in pats {
+                expand(pat, vec);
+            }
+        } else {
+            vec.push(pat)
+        }
+    }
+
+    let mut pats = Vec::new();
+    expand(pat, &mut pats);
+    pats
 }
 
 #[cfg(test)]
