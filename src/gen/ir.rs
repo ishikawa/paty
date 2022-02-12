@@ -251,13 +251,36 @@ impl fmt::Display for TmpVarDef<'_, '_> {
 }
 
 #[derive(Debug)]
+pub struct VarDef<'a, 'tcx> {
+    name: String,
+    init: &'a Expr<'a, 'tcx>,
+}
+
+impl<'a, 'tcx> VarDef<'a, 'tcx> {
+    pub fn new(name: String, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self { name, init }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn init(&self) -> &'a Expr<'a, 'tcx> {
+        self.init
+    }
+}
+
+impl fmt::Display for VarDef<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} = {}", self.name, self.init)
+    }
+}
+
+#[derive(Debug)]
 pub enum Stmt<'a, 'tcx> {
     // TODO: Can we unify TmpVar(Def) and Var(Def)?
     TmpVarDef(TmpVarDef<'a, 'tcx>),
-    VarDef {
-        name: String,
-        init: &'a Expr<'a, 'tcx>,
-    },
+    VarDef(VarDef<'a, 'tcx>),
     Cond {
         /// The index of temporary variable which holds the result.
         var: &'a TmpVar<'a, 'tcx>,
@@ -296,7 +319,7 @@ impl fmt::Display for Stmt<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Stmt::TmpVarDef(def) => def.fmt(f),
-            Stmt::VarDef { name, init } => write!(f, "{} = {}", name, init),
+            Stmt::VarDef(def) => def.fmt(f),
             Stmt::Ret(expr) => write!(f, "return {}", expr),
             Stmt::Phi { var, value, pruned } => write!(
                 f,
@@ -373,7 +396,8 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Gt(_, _)
             | ExprKind::Ge(_, _)
             | ExprKind::And(_, _)
-            | ExprKind::Or(_, _) => false,
+            | ExprKind::Or(_, _)
+            | ExprKind::CondValue { .. } => false,
             ExprKind::Tuple(_)
             | ExprKind::StructValue(_)
             | ExprKind::Call { .. }
@@ -406,6 +430,15 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Ge(a, b)
             | ExprKind::And(a, b)
             | ExprKind::Or(a, b) => a.has_side_effect() || b.has_side_effect(),
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => {
+                cond.has_side_effect()
+                    || then_value.has_side_effect()
+                    || else_value.has_side_effect()
+            }
             ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| sub_expr.has_side_effect()),
             ExprKind::StructValue(fs) => fs.iter().any(|(_, sub_expr)| sub_expr.has_side_effect()),
             ExprKind::TmpVarAssign { var: _, init } => init.has_side_effect(),
@@ -450,6 +483,11 @@ pub enum ExprKind<'a, 'tcx> {
     Ge(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     And(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     Or(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    CondValue {
+        cond: &'a Expr<'a, 'tcx>,
+        then_value: &'a Expr<'a, 'tcx>,
+        else_value: &'a Expr<'a, 'tcx>,
+    },
     Call {
         name: String,
         cc: CallingConvention<'tcx>,
@@ -498,6 +536,11 @@ impl fmt::Display for ExprKind<'_, '_> {
             ExprKind::Ge(a, b) => write!(f, "{} >= {}", a, b),
             ExprKind::And(a, b) => write!(f, "{} && {}", a, b),
             ExprKind::Or(a, b) => write!(f, "{} || {}", a, b),
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => write!(f, "{} ? {} : {}", cond, then_value, else_value),
             ExprKind::Call { name, args, .. } => {
                 write!(f, "{}", name)?;
                 write!(f, "(")?;
@@ -1351,10 +1394,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             .expr_arena
                             .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
 
-                        stmts.push(Stmt::VarDef {
-                            name: spread_name.to_string(),
-                            init: inc_used(struct_value),
-                        });
+                        stmts.push(Stmt::VarDef(VarDef::new(
+                            spread_name.to_string(),
+                            inc_used(struct_value),
+                        )));
                     }
                 }
 
@@ -1386,10 +1429,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 })
             }
             PatternKind::Var(name) => {
-                stmts.push(Stmt::VarDef {
-                    name: name.clone(),
-                    init: inc_used(target_expr),
-                });
+                stmts.push(Stmt::VarDef(VarDef::new(
+                    name.clone(),
+                    inc_used(target_expr),
+                )));
 
                 None
             }
@@ -1400,11 +1443,18 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 sub_pats.iter().fold(None, |cond, sub_pat| {
                     // control flow variable
                     let cfv = self.next_temp_var(bool_ty);
-                    let stmt = Stmt::assignable_tmp_var_def(cfv, self.bool(false));
-                    outer_stmts.push(stmt);
+                    outer_stmts.push(Stmt::assignable_tmp_var_def(cfv, self.bool(false)));
 
-                    let mut sub_cond =
-                        self.build_pattern(target_expr, sub_pat, program, outer_stmts, stmts);
+                    let mut inner_stmts = vec![];
+                    let mut sub_cond = self.build_pattern(
+                        target_expr,
+                        sub_pat,
+                        program,
+                        outer_stmts,
+                        &mut inner_stmts,
+                    );
+
+                    self.merge_var_decl_stmts(cfv, stmts, &inner_stmts);
 
                     if let Some(sub_cond_expr) = sub_cond {
                         cfv.inc_used();
@@ -1437,6 +1487,51 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
+    fn merge_var_decl_stmts(
+        &self,
+        cfv: &'a TmpVar<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        inner_stmts: &[Stmt<'a, 'tcx>],
+    ) {
+        for stmt in inner_stmts {
+            if let Stmt::VarDef(def) = stmt {
+                let (i, else_value) = stmts
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, x)| {
+                        if let Stmt::VarDef(x_def) = x {
+                            if x_def.name() == def.name() {
+                                return Some((Some(i), x_def.init()));
+                            }
+                        }
+                        None
+                    })
+                    .unwrap_or_else(|| (None, def.init()));
+
+                let cfv_expr = Expr::new(ExprKind::TmpVar(cfv), cfv.ty());
+                let init = Expr::new(
+                    ExprKind::CondValue {
+                        cond: self.expr_arena.alloc(cfv_expr),
+                        then_value: def.init(),
+                        else_value,
+                    },
+                    def.init().ty(),
+                );
+                let new_var_def = Stmt::VarDef(VarDef::new(
+                    def.name().to_string(),
+                    self.expr_arena.alloc(init),
+                ));
+
+                stmts.push(new_var_def);
+                if let Some(i) = i {
+                    stmts.swap_remove(i);
+                }
+            } else {
+                unreachable!("stmt must be var def: {}", stmt);
+            }
+        }
+    }
+
     fn _build_let_pattern(
         &mut self,
         pattern: &'nd syntax::Pattern<'nd, 'tcx>,
@@ -1446,10 +1541,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) {
         match pattern.kind() {
             PatternKind::Var(name) => {
-                let stmt = Stmt::VarDef {
-                    name: name.to_string(),
-                    init: inc_used(init),
-                };
+                let stmt = Stmt::VarDef(VarDef::new(name.to_string(), inc_used(init)));
                 stmts.push(stmt);
             }
             PatternKind::Wildcard => {
@@ -1491,10 +1583,10 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                                     .expr_arena
                                     .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
 
-                                stmts.push(Stmt::VarDef {
-                                    name: spread_name.to_string(),
-                                    init: inc_used(struct_value),
-                                });
+                                stmts.push(Stmt::VarDef(VarDef::new(
+                                    spread_name.to_string(),
+                                    inc_used(struct_value),
+                                )));
                             }
                         }
                     }
@@ -1566,8 +1658,8 @@ impl<'a, 'tcx> Optimizer {
                 }
                 self.optimize_expr(def.init);
             }
-            Stmt::VarDef { init, .. } => {
-                self.optimize_expr(init);
+            Stmt::VarDef(def) => {
+                self.optimize_expr(def.init());
             }
             Stmt::Ret(expr) => {
                 self.optimize_expr(expr);
@@ -1620,6 +1712,15 @@ impl<'a, 'tcx> Optimizer {
             | ExprKind::Or(lhs, rhs) => {
                 self.optimize_expr(lhs);
                 self.optimize_expr(rhs);
+            }
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => {
+                self.optimize_expr(cond);
+                self.optimize_expr(then_value);
+                self.optimize_expr(else_value);
             }
             ExprKind::Call { args, .. } => {
                 for arg in args {

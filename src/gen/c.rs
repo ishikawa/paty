@@ -179,13 +179,13 @@ impl<'a, 'tcx> Emitter {
                     }
                 }
             }
-            Stmt::VarDef { name, init } => {
-                if !init.ty().is_zero_sized() {
-                    code.push_str(&c_type(init.ty()));
+            Stmt::VarDef(def) => {
+                if !def.init().ty().is_zero_sized() {
+                    code.push_str(&c_type(def.init().ty()));
                     code.push(' ');
-                    code.push_str(name);
+                    code.push_str(def.name());
                     code.push_str(" = ");
-                    self.emit_expr(init, code);
+                    self.emit_expr(def.init(), code);
                     code.push_str(";\n");
                 }
             }
@@ -328,6 +328,21 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(lhs, code);
                 code.push_str(" || ");
                 self.emit_expr(rhs, code);
+                code.push(')');
+            }
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => {
+                code.push('(');
+                code.push('(');
+                self.emit_expr(cond, code);
+                code.push(')');
+                code.push_str(" ? ");
+                self.emit_expr(then_value, code);
+                code.push_str(" : ");
+                self.emit_expr(else_value, code);
                 code.push(')');
             }
             ExprKind::Call { name, args, cc } => {
