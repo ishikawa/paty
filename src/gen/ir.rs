@@ -1398,19 +1398,19 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 let bool_ty = self.tcx.boolean();
 
                 sub_pats.iter().fold(None, |cond, sub_pat| {
+                    // control flow variable
+                    let cfv = self.next_temp_var(bool_ty);
+                    let stmt = Stmt::assignable_tmp_var_def(cfv, self.bool(false));
+                    outer_stmts.push(stmt);
+
                     let mut sub_cond =
                         self.build_pattern(target_expr, sub_pat, program, outer_stmts, stmts);
 
                     if let Some(sub_cond_expr) = sub_cond {
-                        let t = self.next_temp_var(bool_ty);
-                        let stmt = Stmt::assignable_tmp_var_def(t, self.bool(false));
-
-                        outer_stmts.push(stmt);
-
-                        t.inc_used();
+                        cfv.inc_used();
                         let assign = self.expr_arena.alloc(Expr::new(
                             ExprKind::TmpVarAssign {
-                                var: t,
+                                var: cfv,
                                 init: self.bool(true),
                             },
                             bool_ty,
@@ -1554,12 +1554,15 @@ impl<'a, 'tcx> Optimizer {
     fn optimize_stmt(&mut self, stmt: &Stmt<'a, 'tcx>) {
         match stmt {
             Stmt::TmpVarDef(def) => {
-                if !def.assignable && (def.var.used.get() == 1 || def.init.can_be_immediate()) {
+                if def.assignable {
+                    if def.var.used.get() == 0 {
+                        def.pruned.set(true);
+                    }
+                } else if def.var.used.get() == 1 || def.init.can_be_immediate() {
                     // This temporary variable is used only once, so it could be
                     // replaced with the expression.
                     def.var.immediate.set(Some(def.init));
                     def.pruned.set(true);
-                    return;
                 }
                 self.optimize_expr(def.init);
             }
