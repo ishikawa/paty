@@ -512,7 +512,7 @@ end'
 assert '1 3' '
 struct T { a: int64, b: int64, c: int64 }
 t1 = T { a: 1, b: 2, c: 3 }
-{ a, ...x } = t1
+T { a, ...x } = t1
 puts(a, x.c)'
 assert 'T { a: 50, b: 10, c: 40 }' '
 struct T {

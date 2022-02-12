@@ -298,3 +298,13 @@ case { a: 100, b: 200, c: 300 }
 when { a, ...a }
   puts(a)
 end'
+# or-pattern
+assert 'expected type `struct T { a: int64 }`, found `{ a: int64 }`' '
+struct T { a: int64 }
+t = T { a: 0 }
+case t
+when T { a: 0 } | T { a: 1 } | { a: 2 }
+  puts(0)
+else
+  puts(1)
+end'

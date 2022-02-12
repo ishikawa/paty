@@ -919,6 +919,15 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 return;
             };
 
+            // Named struct and unnamed struct
+            if struct_ty.name() != struct_pat.name() {
+                errors.push(SemanticError::MismatchedType {
+                    expected: expected_ty,
+                    actual: pattern_to_type(tcx, pat),
+                });
+                return;
+            }
+
             if !unify_pat_type(expected_ty, pat, errors) {
                 return;
             }
