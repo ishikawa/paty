@@ -212,6 +212,11 @@ impl<'a, 'tcx> Emitter {
                     code.push_str(&c_type(var.ty()));
                     code.push(' ');
                     code.push_str(&tmp_var(var));
+
+                    // Initialize with zero value.
+                    code.push_str(" = ");
+                    code.push_str(zero_value(var.ty()));
+
                     code.push_str(";\n");
                 }
 
@@ -328,6 +333,31 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(lhs, code);
                 code.push_str(" || ");
                 self.emit_expr(rhs, code);
+                code.push(')');
+            }
+            ExprKind::CondAndAssign { cond, var } => {
+                let mut emitted = false;
+
+                code.push('(');
+                if let Some(cond) = cond {
+                    self.emit_expr(cond, code);
+                    emitted = true;
+                }
+
+                if var.used() > 0 {
+                    if emitted {
+                        code.push_str(" && ");
+                    }
+                    code.push('(');
+                    code.push_str(&tmp_var(var));
+                    code.push_str(" = true");
+                    code.push(')');
+                    emitted = true;
+                }
+
+                if !emitted {
+                    code.push_str("true");
+                }
                 code.push(')');
             }
             ExprKind::CondValue {
@@ -540,13 +570,6 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             ExprKind::Var(var) => code.push_str(var.name()),
-            ExprKind::TmpVarAssign { var: t, init } => {
-                code.push('(');
-                code.push_str(&tmp_var(t));
-                code.push_str(" = ");
-                self.emit_expr(init, code);
-                code.push(')');
-            }
         }
     }
 }
@@ -576,6 +599,17 @@ fn c_type(ty: &Type) -> String {
             format!("struct _{}", buffer)
         }
         Type::Named(named_ty) => c_type(named_ty.expect_ty()),
+        Type::Undetermined => unreachable!("untyped code"),
+    }
+}
+
+// Anything in C can be initialised with = 0; this initializes
+// numeric elements to zero and pointers null.
+fn zero_value(ty: &Type) -> &'static str {
+    match ty {
+        Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => "0",
+        Type::Tuple(_) | Type::Struct(_) => "{0}",
+        Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
     }
 }

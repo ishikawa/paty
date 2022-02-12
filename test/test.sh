@@ -167,6 +167,19 @@ def foo(b: boolean)
 end
 puts(foo(true))
 puts(foo(false))'
+assert "{ a: 100 }
+{ a: 55 }" '
+def foo(b: boolean)
+  case b
+  when true
+    { a: 100 }
+  when false
+    { a: 55 }
+  end
+end
+puts(foo(true))
+puts(foo(false))'
+# or-pattern
 assert '0..=2
 0..=2
 3..<10
@@ -194,6 +207,17 @@ baz(3)
 baz(6)
 baz(10)
 baz(11)'
+assert '100
+200' '
+struct T { a: int64, b: int64 }
+def foo(t: T)
+  case t
+  when T { a: 1, b: a } | { a, b: _ }
+    a
+  end
+end
+foo(T { a: 1, b: 100 }).puts()
+foo(T { a: 200, b: 100 }).puts()'
 assert '100
 200
 3' '

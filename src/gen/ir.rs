@@ -409,7 +409,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::FieldAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => true,
-            ExprKind::TmpVarAssign { .. } => false,
+            ExprKind::CondAndAssign { .. } => false,
         }
     }
 
@@ -441,7 +441,13 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             }
             ExprKind::Tuple(fs) => fs.iter().any(|sub_expr| sub_expr.has_side_effect()),
             ExprKind::StructValue(fs) => fs.iter().any(|(_, sub_expr)| sub_expr.has_side_effect()),
-            ExprKind::TmpVarAssign { var: _, init } => init.has_side_effect(),
+            ExprKind::CondAndAssign { var: _, cond } => {
+                if let Some(cond) = cond {
+                    cond.has_side_effect()
+                } else {
+                    true
+                }
+            }
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
@@ -483,15 +489,20 @@ pub enum ExprKind<'a, 'tcx> {
     Ge(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     And(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     Or(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
+    Call {
+        name: String,
+        cc: CallingConvention<'tcx>,
+        args: Vec<&'a Expr<'a, 'tcx>>,
+    },
     CondValue {
         cond: &'a Expr<'a, 'tcx>,
         then_value: &'a Expr<'a, 'tcx>,
         else_value: &'a Expr<'a, 'tcx>,
     },
-    Call {
-        name: String,
-        cc: CallingConvention<'tcx>,
-        args: Vec<&'a Expr<'a, 'tcx>>,
+    /// Evaluate `cond` expression and assign a temporary variable with `true`.
+    CondAndAssign {
+        cond: Option<&'a Expr<'a, 'tcx>>,
+        var: &'a TmpVar<'a, 'tcx>,
     },
 
     // Built-in procedures
@@ -513,10 +524,6 @@ pub enum ExprKind<'a, 'tcx> {
     },
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(Var<'tcx>),
-    TmpVarAssign {
-        var: &'a TmpVar<'a, 'tcx>,
-        init: &'a Expr<'a, 'tcx>,
-    },
 }
 
 impl fmt::Display for ExprKind<'_, '_> {
@@ -541,6 +548,13 @@ impl fmt::Display for ExprKind<'_, '_> {
                 then_value,
                 else_value,
             } => write!(f, "{} ? {} : {}", cond, then_value, else_value),
+            ExprKind::CondAndAssign { var, cond } => {
+                if let Some(cond) = cond {
+                    write!(f, "{} && {} = true", cond, var)
+                } else {
+                    write!(f, "{} = true", var)
+                }
+            }
             ExprKind::Call { name, args, .. } => {
                 write!(f, "{}", name)?;
                 write!(f, "(")?;
@@ -601,11 +615,6 @@ impl fmt::Display for ExprKind<'_, '_> {
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
             ExprKind::TmpVar(var) => var.fmt(f),
             ExprKind::Var(var) => var.fmt(f),
-            ExprKind::TmpVarAssign { var, init } => {
-                var.fmt(f)?;
-                write!(f, " = ")?;
-                init.fmt(f)
-            }
         }
     }
 }
@@ -1164,11 +1173,12 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                     };
                     branches.push(branch);
                 } else if !branches.is_empty() {
-                    // No explicit `else` arm for this `case` expression. However,
-                    // the last arm of every `case` expression which was passed through usefulness check can
-                    // be `else` arm.
-                    let i = branches.len() - 1;
-                    branches[i].condition = None;
+                    // No explicit `else` arm for this `case` expression.
+
+                    // TODO: the last arm of every `case` expression which was passed through usefulness
+                    // check can be just a `else` arm if the condition doesn't contain any CFV.
+                    //let i = branches.len() - 1;
+                    //branches[i].condition = None;
                 }
 
                 let stmt = Stmt::Cond { branches, var: t };
@@ -1456,21 +1466,13 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
 
                     self.merge_var_decl_stmts(cfv, stmts, &inner_stmts);
 
-                    if let Some(sub_cond_expr) = sub_cond {
-                        cfv.inc_used();
-                        let assign = self.expr_arena.alloc(Expr::new(
-                            ExprKind::TmpVarAssign {
-                                var: cfv,
-                                init: self.bool(true),
-                            },
-                            bool_ty,
-                        ));
-
-                        sub_cond = Some(
-                            self.expr_arena
-                                .alloc(Expr::new(ExprKind::And(sub_cond_expr, assign), bool_ty)),
-                        );
-                    }
+                    sub_cond = Some(self.expr_arena.alloc(Expr::new(
+                        ExprKind::CondAndAssign {
+                            cond: sub_cond,
+                            var: cfv,
+                        },
+                        bool_ty,
+                    )));
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
@@ -1495,36 +1497,37 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
     ) {
         for stmt in inner_stmts {
             if let Stmt::VarDef(def) = stmt {
-                let (i, else_value) = stmts
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, x)| {
-                        if let Stmt::VarDef(x_def) = x {
-                            if x_def.name() == def.name() {
-                                return Some((Some(i), x_def.init()));
-                            }
+                let v = stmts.iter().enumerate().find_map(|(i, x)| {
+                    if let Stmt::VarDef(x_def) = x {
+                        if x_def.name() == def.name() {
+                            return Some((i, x_def.init()));
                         }
-                        None
-                    })
-                    .unwrap_or_else(|| (None, def.init()));
+                    }
+                    None
+                });
 
-                let cfv_expr = Expr::new(ExprKind::TmpVar(cfv), cfv.ty());
-                let init = Expr::new(
-                    ExprKind::CondValue {
-                        cond: self.expr_arena.alloc(cfv_expr),
-                        then_value: def.init(),
-                        else_value,
-                    },
-                    def.init().ty(),
-                );
-                let new_var_def = Stmt::VarDef(VarDef::new(
-                    def.name().to_string(),
-                    self.expr_arena.alloc(init),
-                ));
+                if let Some((i, else_value)) = v {
+                    let cfv_expr = Expr::new(ExprKind::TmpVar(cfv), cfv.ty());
+                    let init = Expr::new(
+                        ExprKind::CondValue {
+                            cond: inc_used(self.expr_arena.alloc(cfv_expr)),
+                            then_value: inc_used(def.init()),
+                            else_value: inc_used(else_value),
+                        },
+                        def.init().ty(),
+                    );
+                    let new_var_def = Stmt::VarDef(VarDef::new(
+                        def.name().to_string(),
+                        self.expr_arena.alloc(init),
+                    ));
 
-                stmts.push(new_var_def);
-                if let Some(i) = i {
+                    stmts.push(new_var_def);
                     stmts.swap_remove(i);
+                } else {
+                    stmts.push(Stmt::VarDef(VarDef::new(
+                        def.name().to_string(),
+                        def.init(),
+                    )));
                 }
             } else {
                 unreachable!("stmt must be var def: {}", stmt);
@@ -1647,6 +1650,9 @@ impl<'a, 'tcx> Optimizer {
         match stmt {
             Stmt::TmpVarDef(def) => {
                 if def.assignable {
+                    // We can remove a definition of a temporary variable which is assigned
+                    // but never referred. To do this, however, we have to remove the assignment
+                    // expression.
                     if def.var.used.get() == 0 {
                         def.pruned.set(true);
                     }
@@ -1744,8 +1750,10 @@ impl<'a, 'tcx> Optimizer {
                     self.optimize_expr(value);
                 }
             }
-            ExprKind::TmpVarAssign { var: _, init } => {
-                self.optimize_expr(init);
+            ExprKind::CondAndAssign { var: _, cond } => {
+                if let Some(cond) = cond {
+                    self.optimize_expr(cond);
+                }
             }
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
