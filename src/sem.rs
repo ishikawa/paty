@@ -189,16 +189,12 @@ fn expect_assignable_type<'tcx>(
     actual: &'tcx Type<'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
-    if !is_assignable_type(actual, expected) {
+    if !actual.is_assignable_to(expected) {
         errors.push(SemanticError::MismatchedType { expected, actual });
         false
     } else {
         true
     }
-}
-
-fn is_assignable_type<'tcx>(expected: &'tcx Type<'tcx>, actual: &'tcx Type<'tcx>) -> bool {
-    actual == expected
 }
 
 fn resolve_type<'tcx>(
@@ -278,7 +274,7 @@ fn analyze_decl<'nd: 'tcx, 'tcx>(
 
         match (inferred_retty, fun.retty()) {
             (Some(inferred_retty), Some(retty)) => {
-                if !is_assignable_type(retty, inferred_retty) {
+                if !inferred_retty.is_assignable_to(retty) {
                     errors.push(SemanticError::MismatchedReturnType {
                         signature: fun.signature(),
                         expected: retty,
@@ -613,12 +609,12 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             });
         }
         syntax::ExprKind::Call(call_expr) => {
-            let name = call_expr.name();
-            let args = call_expr.arguments();
+            let caller_name = call_expr.name();
+            let caller_args = call_expr.arguments();
 
             // At this point, the type of the argument is unknown.
             // First of all, determine the type of the argument if it is self-explanatory.
-            for arg in args {
+            for arg in caller_args {
                 analyze_expr(tcx, arg, vars, functions, named_types, errors);
             }
 
@@ -629,25 +625,25 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             // 3. Type of each parameter
             let name_matched = functions
                 .iter()
-                .filter(|f| f.name() == name)
+                .filter(|f| f.name() == caller_name)
                 .collect::<Vec<_>>();
             if name_matched.is_empty() {
                 errors.push(SemanticError::UndefinedFunction {
-                    name: name.to_string(),
+                    name: caller_name.to_string(),
                 });
                 return;
             }
 
             let n_args_matched = name_matched
                 .iter()
-                .filter(|f| f.params().len() == args.len())
+                .filter(|f| f.params().len() == caller_args.len())
                 .collect::<Vec<_>>();
             if n_args_matched.is_empty() {
                 assert!(!name_matched.is_empty());
                 errors.push(SemanticError::WrongNumberOfArguments {
-                    name: name.to_string(),
+                    name: caller_name.to_string(),
                     expected: name_matched[0].params().len(),
-                    actual: args.len(),
+                    actual: caller_args.len(),
                 });
                 return;
             }
@@ -655,15 +651,23 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             let mut ranked = n_args_matched
                 .iter()
                 .map(|f| {
-                    let mut rank = 0;
-
-                    for (i, arg) in args.iter().enumerate() {
-                        if let Some(arg_ty) = arg.ty() {
-                            if arg_ty == f.params()[i].ty() {
-                                rank += 1;
+                    let rank = caller_args
+                        .iter()
+                        .zip(f.params())
+                        .fold(0, |rank, (arg, param)| {
+                            if let Some(arg_ty) = arg.ty() {
+                                // More restricted match, higher rank.
+                                if arg_ty == param.ty() {
+                                    rank + 2
+                                } else if arg_ty.is_assignable_to(param.ty()) {
+                                    rank + 1
+                                } else {
+                                    rank
+                                }
+                            } else {
+                                rank
                             }
-                        }
-                    }
+                        });
 
                     (rank, f)
                 })
@@ -686,9 +690,9 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             let fun = ranked[0].1;
             let params = fun.params();
 
-            assert!(fun.params().len() == args.len());
+            assert!(fun.params().len() == caller_args.len());
 
-            for (i, arg) in args.iter().enumerate() {
+            for (i, arg) in caller_args.iter().enumerate() {
                 analyze_expr(tcx, arg, vars, functions, named_types, errors);
                 unify_expr_type(params[i].ty(), arg, errors);
             }

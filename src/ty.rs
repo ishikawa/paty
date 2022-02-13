@@ -130,6 +130,12 @@ impl<'tcx> Type<'tcx> {
             Type::Undetermined => true,
         }
     }
+
+    /// Returns `true` if the type can be assigned to the `other` type.
+    /// A type can be assigned to other type if the type is compatible to other.
+    pub fn is_assignable_to(&self, other: &Self) -> bool {
+        self == other
+    }
 }
 
 impl PartialEq for Type<'_> {
