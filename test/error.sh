@@ -233,6 +233,15 @@ assert 'spread pattern can appear only once: `...`' '
   when { t: T { ...x, ... } }
     puts(x)
   end'
+# function - return type annotation
+assert 'return type of function `bar()` is specified with `int64`, found `boolean`' '
+  def bar(): int64
+    false
+  end'
+assert 'return type of function `bar(int64)` is specified with `boolean`, found `int64`' '
+  def bar(x: int64): boolean
+    x + 1
+  end'
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
   def foo(n: int64)
