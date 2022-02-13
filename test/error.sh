@@ -177,134 +177,143 @@ assert 'named field `value` is defined more than once' "
     puts(1)
   end"
 assert 'unreachable pattern: `{ a: _, b: 3 }`' '
-case { a: 1, b: 2 }
-when { a: _, ... } | { b: 3, ... }
-  puts(0)
-else
-  puts(1)
-end'
+  case { a: 1, b: 2 }
+  when { a: _, ... } | { b: 3, ... }
+    puts(0)
+  else
+    puts(1)
+  end'
 # binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
-case (10, 20, 30)
-when (x, x, z)
-  puts(x + x + z)
-end"
+  case (10, 20, 30)
+  when (x, x, z)
+    puts(x + x + z)
+  end"
 assert 'identifier `x` is bound more than once in the same pattern' "
-struct S { a: int64, b: int64 }
-case S { a: 10, b: 20 }
-when S { a: x, b: x}
-  puts(x + x + z)
-end"
+  struct S { a: int64, b: int64 }
+  case S { a: 10, b: 20 }
+  when S { a: x, b: x}
+    puts(x + x + z)
+  end"
 assert 'cannot find variable `_` in scope' "
-_ = 1
-puts(_)"
+  _ = 1
+  puts(_)"
 assert 'variable `x` is not bound in all patterns' '
-case { a: 1, b: 2 }
-when { a: x, b: 0 } | { ... }
-  puts(x)
-end'
+  case { a: 1, b: 2 }
+  when { a: x, b: 0 } | { ... }
+    puts(x)
+  end'
 assert 'variable `value` is not bound in all patterns' '
-struct T { value: int64 }
-case { a: T { value: 1 }, b: T { value: 2 } }
-when { a: T { value }, b: T { value: 0 } } | { a: _, b: _ }
-  puts(x)
-end'
+  struct T { value: int64 }
+  case { a: T { value: 1 }, b: T { value: 2 } }
+  when { a: T { value }, b: T { value: 0 } } | { a: _, b: _ }
+    puts(x)
+  end'
 assert 'spread pattern can appear only once: `...`' '
-case { a: 100, b: 200, c: 300 }
-when { a, ..., ... }
-  puts(a)
-end'
+  case { a: 100, b: 200, c: 300 }
+  when { a, ..., ... }
+    puts(a)
+  end'
 assert 'spread pattern can appear only once: `...y`' '
-case { a: 100, b: 200, c: 300 }
-when { a, ...x, ...y }
-  puts(a)
-end'
+  case { a: 100, b: 200, c: 300 }
+  when { a, ...x, ...y }
+    puts(a)
+  end'
 assert 'spread pattern can appear only once: `...y`' '
-struct T { a: int64, b: int64, c: int64 }
-t = T { a: 100, b: 200, c: 300 }
-case t
-when T { a, ...x, ...y }
-  puts(a)
-end'
+  struct T { a: int64, b: int64, c: int64 }
+  t = T { a: 100, b: 200, c: 300 }
+  case t
+  when T { a, ...x, ...y }
+    puts(a)
+  end'
 assert 'spread pattern can appear only once: `...`' '
-struct T { a: int64, b: int64, c: int64 }
-t = T { a: 100, b: 200, c: 300 }
-case { t }
-when { t: T { ...x, ... } }
-  puts(x)
-end'
+  struct T { a: int64, b: int64, c: int64 }
+  t = T { a: 100, b: 200, c: 300 }
+  case { t }
+  when { t: T { ...x, ... } }
+    puts(x)
+  end'
+# function - return type annotation
+assert 'return type of function `bar()` is specified with `int64`, found `boolean`' '
+  def bar(): int64
+    false
+  end'
+assert 'return type of function `bar(int64)` is specified with `boolean`, found `int64`' '
+  def bar(x: int64): boolean
+    x + 1
+  end'
 # type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
-def foo(n: int64)
-  n
-end
-foo(true)"
-assert 'Semantic error: expected type `(int64)`, found `int64`' "
-def foo(t: (int64,))
-  t
-end
-foo(100)"
-assert 'Semantic error: expected type `A`, found `struct B { a: int64 }`' "
-struct A { a: int64 }
-struct B { a: int64 }
-def foo(t: A)
-  t
-end
-foo(B { a: 100 })"
-assert 'Semantic error: expected type `(int64, int64)`, found `(int64, int64, int64)`' "
-def foo(t: (int64, int64))
-  case t
-  when (1, 2, 3)
-    puts(1)
-  else
-    puts(2)
+  def foo(n: int64)
+    n
   end
-end
-foo((1, 2))"
+  foo(true)"
+assert 'Semantic error: expected type `(int64)`, found `int64`' "
+  def foo(t: (int64,))
+    t
+  end
+  foo(100)"
+assert 'Semantic error: expected type `A`, found `struct B { a: int64 }`' "
+  struct A { a: int64 }
+  struct B { a: int64 }
+  def foo(t: A)
+    t
+  end
+  foo(B { a: 100 })"
+assert 'Semantic error: expected type `(int64, int64)`, found `(int64, int64, int64)`' "
+  def foo(t: (int64, int64))
+    case t
+    when (1, 2, 3)
+      puts(1)
+    else
+      puts(2)
+    end
+  end
+  foo((1, 2))"
 assert 'Semantic error: non-exhaustive pattern: `(int64::MIN..=0)`
 Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "case (1,)
-when (1,)
-  puts(1)
-end"
+  when (1,)
+    puts(1)
+  end"
 assert 'expected type `int64`, found `boolean`' '
-case { a: 100, b: false }
-when { a: x, b: false } | { a: _, b: x }
-  puts(x)
-end'
+  case { a: 100, b: false }
+  when { a: x, b: false } | { a: _, b: x }
+    puts(x)
+  end'
 assert 'expected type `int64`, found `boolean`' '
-struct T { value: int64 }
-case { a: T { value: 100 }, b: false }
-when { a: T { value: x }, b: false } | { a: _, b: x }
-  puts(x)
-end'
+  struct T { value: int64 }
+  case { a: T { value: 100 }, b: false }
+  when { a: T { value: x }, b: false } | { a: _, b: x }
+    puts(x)
+  end'
 # tuple
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "
-x = (1, 2, 3)
-x.3"
+  x = (1, 2, 3)
+  x.3"
 # struct
 assert 'Semantic error: no field `b` on type `struct A { a: int64 }`' "
-struct A { a: int64 }
-a = A { a: 100 }
-a.b"
+  struct A { a: int64 }
+  a = A { a: 100 }
+  a.b"
 # anonymous struct
 assert 'expected type `{ a: int64, b: int64 }`, found `int64`' '
-def foo(opts: { a: int64, b: int64 })
-  opts.a + opts.b
-end
-foo(100)'
+  def foo(opts: { a: int64, b: int64 })
+    opts.a + opts.b
+  end
+  foo(100)'
 assert 'identifier `a` is bound more than once in the same pattern' '
-case { a: 100, b: 200, c: 300 }
-when { a, ...a }
-  puts(a)
-end'
+  case { a: 100, b: 200, c: 300 }
+  when { a, ...a }
+    puts(a)
+  end'
 # or-pattern
 assert 'expected type `struct T { a: int64 }`, found `{ a: int64 }`' '
-struct T { a: int64 }
-t = T { a: 0 }
-case t
-when T { a: 0 } | T { a: 1 } | { a: 2 }
-  puts(0)
-else
-  puts(1)
-end'
+  struct T { a: int64 }
+  t = T { a: 0 }
+  case t
+  when T { a: 0 } | T { a: 1 } | { a: 2 }
+    puts(0)
+  else
+    puts(1)
+  end'

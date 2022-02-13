@@ -831,7 +831,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 }
 
                 // Return type of the function
-                let retty = syntax_fun.retty().unwrap_or_else(|| self.tcx.unit());
+                let retty = syntax_fun.retty().expect("return type");
 
                 let fun = Function {
                     name: syntax_fun.name().to_string(),
@@ -1080,7 +1080,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 // The type of call expression can be not yet inferred due to
                 // forward declaration.
                 let expr_ty = if let Some(syntax_fun) = call_expr.function() {
-                    syntax_fun.retty().unwrap_or_else(|| self.tcx.unit())
+                    syntax_fun.retty().expect("return type")
                 } else if let Some(expr_ty) = expr.ty() {
                     expr_ty
                 } else {

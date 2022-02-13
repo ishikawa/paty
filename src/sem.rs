@@ -164,7 +164,7 @@ fn unify_expr_type<'nd: 'tcx, 'tcx>(
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
     if let Some(actual) = expr.ty() {
-        check_type(expected, actual, errors)
+        expect_assignable_type(expected, actual, errors)
     } else {
         expr.assign_ty(expected);
         true
@@ -177,24 +177,28 @@ fn unify_pat_type<'nd: 'tcx, 'tcx>(
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
     if let Some(actual) = pat.ty() {
-        check_type(expected, actual, errors)
+        expect_assignable_type(expected, actual, errors)
     } else {
         pat.assign_ty(expected);
         true
     }
 }
 
-fn check_type<'tcx>(
+fn expect_assignable_type<'tcx>(
     expected: &'tcx Type<'tcx>,
     actual: &'tcx Type<'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
-    if actual != expected {
+    if !is_assignable_type(actual, expected) {
         errors.push(SemanticError::MismatchedType { expected, actual });
         false
     } else {
         true
     }
+}
+
+fn is_assignable_type<'tcx>(expected: &'tcx Type<'tcx>, actual: &'tcx Type<'tcx>) -> bool {
+    actual == expected
 }
 
 fn resolve_type<'tcx>(
@@ -257,6 +261,44 @@ fn analyze_decl<'nd: 'tcx, 'tcx>(
         for stmt in fun.body() {
             analyze_stmt(tcx, stmt, &mut scope, functions, named_types, errors);
         }
+
+        // --- return type inference
+        let inferred_retty = if let Some(stmt) = fun.body().last() {
+            if let StmtKind::Expr(e) = stmt.kind() {
+                e.ty()
+            } else {
+                // Couldn't infer the return type. It should be specified by the return
+                // type annotation.
+                None
+            }
+        } else {
+            // Empty body function's return type should be unit type.
+            Some(tcx.unit())
+        };
+
+        match (inferred_retty, fun.retty()) {
+            (Some(inferred_retty), Some(retty)) => {
+                if !is_assignable_type(retty, inferred_retty) {
+                    errors.push(SemanticError::MismatchedReturnType {
+                        signature: fun.signature(),
+                        expected: retty,
+                        actual: inferred_retty,
+                    })
+                }
+            }
+            (Some(inferred_retty), None) => {
+                fun.assign_retty(inferred_retty);
+            }
+            (None, Some(_retty)) => {
+                // The return type is already defined.
+            }
+            (None, None) => {
+                // The return type of function cannot be inferred.
+                errors.push(SemanticError::UnrecognizedReturnType {
+                    signature: fun.signature(),
+                });
+            }
+        };
     }
 }
 
@@ -402,7 +444,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                                         return;
                                     };
 
-                                if !check_type(expected_field_ty, tf.ty(), errors) {
+                                if !expect_assignable_type(expected_field_ty, tf.ty(), errors) {
                                     continue;
                                 }
                             }
@@ -437,7 +479,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
                             // If the value will be overridden, its type must be consistence.
                             if let Some(defined_ty) = defined_fields.get(&field.name()) {
-                                if !check_type(defined_ty, ty, errors) {
+                                if !expect_assignable_type(defined_ty, ty, errors) {
                                     continue;
                                 }
                             }
@@ -463,7 +505,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                                 for tf in struct_ty.fields() {
                                     // If the value will be overridden, its type must be consistence.
                                     if let Some(defined_ty) = defined_fields.get(&tf.name()) {
-                                        if !check_type(defined_ty, tf.ty(), errors) {
+                                        if !expect_assignable_type(defined_ty, tf.ty(), errors) {
                                             continue;
                                         }
                                     }
@@ -999,7 +1041,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                                 });
                             }
                             (Some(expected_ty), Some(actual_ty)) => {
-                                check_type(expected_ty, actual_ty, errors);
+                                expect_assignable_type(expected_ty, actual_ty, errors);
                             }
                             (None, None) => unreachable!(),
                         }
