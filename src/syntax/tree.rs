@@ -349,6 +349,7 @@ pub struct Function<'nd, 'tcx> {
     name: String,
     params: Vec<Parameter<'nd, 'tcx>>,
     body: Vec<Stmt<'nd, 'tcx>>,
+    retty: Option<&'tcx Type<'tcx>>,
 }
 
 impl<'nd, 'tcx> Function<'nd, 'tcx> {
@@ -364,7 +365,13 @@ impl<'nd, 'tcx> Function<'nd, 'tcx> {
         &self.body
     }
 
+    /// Returns the return type if it is specified by the return type annotation.
     pub fn retty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.retty
+    }
+
+    /// Returns the return type which is inferred from the last expression of its body.
+    pub fn infer_retty(&self) -> Option<&'tcx Type<'tcx>> {
         if let Some(stmt) = self.body.last() {
             if let StmtKind::Expr(e) = stmt.kind() {
                 return e.ty();
@@ -1073,11 +1080,25 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         let params = self.parse_elements(it, ('(', ')'), Self::function_parameter)?;
 
+        // return type annotation (optional)
+        let retty = if self.match_token(it, TokenKind::Operator(':')) {
+            it.next();
+            let retty = self.type_specifier(it)?;
+            Some(retty)
+        } else {
+            None
+        };
+
         let body = self.stmts(it)?;
 
         self.expect_token(it, TokenKind::End)?;
 
-        let r#fn = Function { name, params, body };
+        let r#fn = Function {
+            name,
+            params,
+            body,
+            retty,
+        };
         let mut decl = Declaration::new(DeclarationKind::Function(r#fn));
 
         decl.data_mut().append_comments_from_token(def_token);
