@@ -79,6 +79,12 @@ assert 30 "
     z
   end
   puts(foo(10, 20, 30))"
+# function - return type annotation
+assert 30 "
+  def foo(x: int64, y: int64): int64
+    x + y
+  end
+  puts(foo(10, 20))"
 # comments
 assert 30 "
   # comment 1
