@@ -454,6 +454,27 @@ end
 foo(T { a: 1, b: 2, c: 0})
 foo(T { a: 1, b: 3, c: 3})
 foo(T { a: 3, b: 3, c: 3})'
+assert '100 200 300' '
+struct T { a: int64, b: int64, c: int64 }
+case T { a: 100, b: 200, c: 300 }
+when T { a, ...x }
+  puts(a, x.b, x.c)
+end'
+assert '1 3' '
+struct T { a: int64, b: int64, c: int64 }
+t1 = T { a: 1, b: 2, c: 3 }
+T { a, ...x } = t1
+puts(a, x.c)'
+assert 'T { a: 50, b: 10, c: 40 }' '
+struct T {
+  a: int64,
+  b: int64,
+  c: int64,
+}
+t1 = T { a: 1, b: 2, c: 3 }
+t2 = T { ...t1, a: 3, b: 10 } # { a: 3, b: 10, c: 3 }
+t3 = T { ...t1, ...t2, ...{ a: 50, c: 40 } }
+puts(t3)'
 # anonymous struct
 assert '{ a: 1 }' 'puts({a: 1})'
 assert '{ b: true, m: "hello" }' 'puts({m: "hello", b: true})'
@@ -503,27 +524,6 @@ case { a: 100, b: 200, c: 300 }
 when { a, ...x }
   puts(a, x.c)
 end'
-assert '100 200 300' '
-struct T { a: int64, b: int64, c: int64 }
-case T { a: 100, b: 200, c: 300 }
-when T { a, ...x }
-  puts(a, x.b, x.c)
-end'
-assert '1 3' '
-struct T { a: int64, b: int64, c: int64 }
-t1 = T { a: 1, b: 2, c: 3 }
-T { a, ...x } = t1
-puts(a, x.c)'
-assert 'T { a: 50, b: 10, c: 40 }' '
-struct T {
-  a: int64,
-  b: int64,
-  c: int64,
-}
-t1 = T { a: 1, b: 2, c: 3 }
-t2 = T { ...t1, a: 3, b: 10 } # { a: 3, b: 10, c: 3 }
-t3 = T { ...t1, ...t2, ...{ a: 50, c: 40 } }
-puts(t3)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
