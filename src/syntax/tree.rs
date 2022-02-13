@@ -972,6 +972,8 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         while it.peek().is_some() {
             if let Some(top_level) = self.lookahead(self.top_level(&mut it))? {
                 body.push(top_level);
+            } else {
+                break;
             }
         }
 
