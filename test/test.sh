@@ -185,7 +185,7 @@ assert "{ a: 100 }
   end
   puts(foo(true))
   puts(foo(false))'
-  # or-pattern
+# or-pattern
 assert '0..=2
 0..=2
 3..<10
@@ -287,7 +287,7 @@ assert '1 100
   func(T { a: 4, b: (1, 300) })
   func(T { a: 4, b: (400, 1) })
   func(T { a: 2, b: (3, 0) })'
-  # function overloading
+# function overloading
 assert "30
 true
 hello" '
@@ -317,7 +317,7 @@ assert '100 baz!' '
     end
   end
   baz(10, (true, "baz!"))'
-  # uniform function call syntax
+# uniform function call syntax
 assert 'hi' '"hi".puts()'
 assert '100 baz!' '
   def square(n)
@@ -327,7 +327,7 @@ assert '100 baz!' '
     n.puts(message)
   end
   10.square().baz("baz!")'
-  # boolean
+# boolean
 assert 'true' "
     n = 5
     case n > 1 && n <= 5
@@ -346,10 +346,9 @@ assert 'true' "
     when false
       puts(false)
     end"
-  # string
+# string
 assert "Hello, World!" "
-    puts(\"Hello, World!\\n\")
-  "
+    puts(\"Hello, World!\\n\")"
 assert '1 2 3 4' "
     def fruit_to_num(fruit: string)
       case fruit
@@ -369,7 +368,7 @@ assert '1 2 3 4' "
       fruit_to_num(\"Strawberry\"),
       fruit_to_num(\"Grape\")
     )"
-  # tuple
+# tuple
 assert "2022 1 22" "
   date = (2022, 1, 22)
   puts(date.0, date.1, date.2)"
@@ -399,7 +398,7 @@ assert "2" '
   else
     puts(3)
   end'
-  # zero-sized struct/tuple
+# zero-sized struct/tuple
 assert "()" "
   a = ()
   puts(a)"
@@ -425,7 +424,7 @@ assert 'WeAreZst { one: Zst {}, two: Zst {} }
   end
   _ = printZst()
   puts((Zst {},))'
-  # struct
+# struct
 assert "C { b: B { a: 50 }, c: (A {}, B { a: 60 }) }" '
   struct A {}
   struct B { a: int64 }
@@ -512,7 +511,7 @@ assert 'T { a: 50, b: 10, c: 40 }' '
   t2 = T { ...t1, a: 3, b: 10 } # { a: 3, b: 10, c: 3 }
   t3 = T { ...t1, ...t2, ...{ a: 50, c: 40 } }
   puts(t3)'
-  # anonymous struct
+# anonymous struct
 assert '{ a: 1 }' 'puts({a: 1})'
 assert '{ b: true, m: "hello" }' 'puts({m: "hello", b: true})'
 assert '{ t: { a: 123 }, z: 33 }' '
@@ -561,7 +560,7 @@ assert '100 300' '
   when { a, ...x }
     puts(a, x.c)
   end'
-  # examples
+# examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
   

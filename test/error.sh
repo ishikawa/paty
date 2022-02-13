@@ -183,7 +183,7 @@ assert 'unreachable pattern: `{ a: _, b: 3 }`' '
   else
     puts(1)
   end'
-  # binding variables
+# binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
   case (10, 20, 30)
   when (x, x, z)
@@ -233,7 +233,7 @@ assert 'spread pattern can appear only once: `...`' '
   when { t: T { ...x, ... } }
     puts(x)
   end'
-  # type check
+# type check
 assert 'Semantic error: expected type `int64`, found `boolean`' "
   def foo(n: int64)
     n
@@ -277,17 +277,17 @@ assert 'expected type `int64`, found `boolean`' '
   when { a: T { value: x }, b: false } | { a: _, b: x }
     puts(x)
   end'
-  # tuple
+# tuple
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "
   x = (1, 2, 3)
   x.3"
-  # struct
+# struct
 assert 'Semantic error: no field `b` on type `struct A { a: int64 }`' "
   struct A { a: int64 }
   a = A { a: 100 }
   a.b"
-  # anonymous struct
+# anonymous struct
 assert 'expected type `{ a: int64, b: int64 }`, found `int64`' '
   def foo(opts: { a: int64, b: int64 })
     opts.a + opts.b
@@ -298,7 +298,7 @@ assert 'identifier `a` is bound more than once in the same pattern' '
   when { a, ...a }
     puts(a)
   end'
-  # or-pattern
+# or-pattern
 assert 'expected type `struct T { a: int64 }`, found `{ a: int64 }`' '
   struct T { a: int64 }
   t = T { a: 0 }

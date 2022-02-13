@@ -349,10 +349,26 @@ pub struct Function<'nd, 'tcx> {
     name: String,
     params: Vec<Parameter<'nd, 'tcx>>,
     body: Vec<Stmt<'nd, 'tcx>>,
-    retty: Option<&'tcx Type<'tcx>>,
+
+    /// The return type of this function which is specified by the return
+    /// type annotation or is inferred from the last expression of the function body.
+    retty: Cell<Option<&'tcx Type<'tcx>>>,
 }
 
 impl<'nd, 'tcx> Function<'nd, 'tcx> {
+    pub fn new(
+        name: String,
+        params: Vec<Parameter<'nd, 'tcx>>,
+        body: Vec<Stmt<'nd, 'tcx>>,
+    ) -> Self {
+        Self {
+            name,
+            params,
+            body,
+            retty: Cell::new(None),
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -365,24 +381,18 @@ impl<'nd, 'tcx> Function<'nd, 'tcx> {
         &self.body
     }
 
-    /// Returns the return type if it is specified by the return type annotation.
-    pub fn retty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.retty
-    }
-
-    /// Returns the return type which is inferred from the last expression of its body.
-    pub fn infer_retty(&self) -> Option<&'tcx Type<'tcx>> {
-        if let Some(stmt) = self.body.last() {
-            if let StmtKind::Expr(e) = stmt.kind() {
-                return e.ty();
-            }
-        }
-        None
-    }
-
+    /// The function signature which is consist of its name and parameter types.
     pub fn signature(&self) -> FunctionSignature<'tcx> {
         let params = self.params().iter().map(|p| p.ty()).collect();
         FunctionSignature::new(self.name.clone(), params)
+    }
+
+    pub fn retty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.retty.get()
+    }
+
+    pub fn assign_retty(&self, retty: &'tcx Type<'tcx>) {
+        self.retty.set(Some(retty));
     }
 }
 
@@ -1093,12 +1103,12 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         self.expect_token(it, TokenKind::End)?;
 
-        let r#fn = Function {
-            name,
-            params,
-            body,
-            retty,
-        };
+        let r#fn = Function::new(name, params, body);
+
+        if let Some(retty) = retty {
+            r#fn.assign_retty(retty);
+        }
+
         let mut decl = Declaration::new(DeclarationKind::Function(r#fn));
 
         decl.data_mut().append_comments_from_token(def_token);

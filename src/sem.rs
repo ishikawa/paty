@@ -257,6 +257,44 @@ fn analyze_decl<'nd: 'tcx, 'tcx>(
         for stmt in fun.body() {
             analyze_stmt(tcx, stmt, &mut scope, functions, named_types, errors);
         }
+
+        // --- return type inference
+        let inferred_retty = if let Some(stmt) = fun.body().last() {
+            if let StmtKind::Expr(e) = stmt.kind() {
+                e.ty()
+            } else {
+                // Couldn't infer the return type. It should be specified by the return
+                // type annotation.
+                None
+            }
+        } else {
+            // Empty body function's return type should be unit type.
+            Some(tcx.unit())
+        };
+
+        match (inferred_retty, fun.retty()) {
+            (Some(inferred_retty), Some(retty)) => {
+                if !check_type(retty, inferred_retty, errors) {
+                    errors.push(SemanticError::MismatchedReturnType {
+                        signature: fun.signature(),
+                        expected: retty,
+                        actual: inferred_retty,
+                    })
+                }
+            }
+            (Some(inferred_retty), None) => {
+                fun.assign_retty(inferred_retty);
+            }
+            (None, Some(_retty)) => {
+                // The return type is already defined.
+            }
+            (None, None) => {
+                // The return type of function cannot be inferred.
+                errors.push(SemanticError::UnrecognizedReturnType {
+                    signature: fun.signature(),
+                });
+            }
+        };
     }
 }
 

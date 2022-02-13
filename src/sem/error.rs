@@ -61,6 +61,16 @@ pub enum SemanticError<'tcx> {
         expected: &'tcx Type<'tcx>,
         actual: &'tcx Type<'tcx>,
     },
+    #[error(
+        "return type of function `{signature}` is specified with `{expected}`, found `{actual}`"
+    )]
+    MismatchedReturnType {
+        signature: FunctionSignature<'tcx>,
+        expected: &'tcx Type<'tcx>,
+        actual: &'tcx Type<'tcx>,
+    },
+    #[error("return type of function `{signature}` cannot be inferred.")]
+    UnrecognizedReturnType { signature: FunctionSignature<'tcx> },
     #[error("no field `{name}` on type `{ty}`")]
     FieldNotFound { name: String, ty: &'tcx Type<'tcx> },
     // pattern match errors
