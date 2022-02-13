@@ -250,6 +250,37 @@ end
 { t: T { a: 100, b: 1 } }.foo().puts()
 { t: T { a: 200, b: 2 } }.foo().puts()
 { t: T { a: 300, b: 3 } }.foo().puts()'
+assert '1 100
+1 200
+2 100
+2 200
+3 300
+3 400
+3 300
+3 400
+4' '
+struct T { a: int64, b: (int64, int64) }
+def func(t: T)
+  case t
+  when T { a: 1, b: (x, _) }
+    puts(1, x)
+  when T { a: 2, b: (1 | 2, x) }
+    puts(2, x)
+  when T { a: 3 | 4, b: (1, x) | (x, 1) }
+    puts(3, x)
+  else
+    puts(4)
+  end
+end
+func(T { a: 1, b: (100, 200) })
+func(T { a: 1, b: (200, 100) })
+func(T { a: 2, b: (1, 100) })
+func(T { a: 2, b: (2, 200) })
+func(T { a: 3, b: (1, 300) })
+func(T { a: 3, b: (400, 1) })
+func(T { a: 4, b: (1, 300) })
+func(T { a: 4, b: (400, 1) })
+func(T { a: 2, b: (3, 0) })'
 # function overloading
 assert "30
 true
