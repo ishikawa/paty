@@ -225,7 +225,12 @@ fn resolve_type<'tcx>(
                 }
             }
         }
-        Type::Int64 | Type::Boolean | Type::String | Type::Undetermined | Type::NativeInt => {}
+        Type::Int64
+        | Type::Boolean
+        | Type::String
+        | Type::Undetermined
+        | Type::NativeInt
+        | Type::LiteralString(_) => {}
     }
 }
 

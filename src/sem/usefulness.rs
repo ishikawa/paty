@@ -340,6 +340,8 @@ impl<'tcx> SplitWildcard {
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
+            // A constant string
+            Type::LiteralString(s) => vec![Constructor::Str(s.clone())],
             Type::NativeInt => unreachable!("Native C types are not supported."),
         };
 
@@ -664,8 +666,8 @@ impl<'tcx> Constructor {
             | Self::IntRange(_)
             | Self::Str(_)
             | Self::NonExhaustive
-            | Self::Missing { .. }
-            | Self::Or => 0,
+            | Self::Missing { .. } => 0,
+            Self::Or => unreachable!("The `Or` constructor doesn't have a fixed arity"),
         }
     }
 

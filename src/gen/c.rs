@@ -89,7 +89,11 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str("};\n\n");
             }
-            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
+            Type::Int64
+            | Type::Boolean
+            | Type::String
+            | Type::NativeInt
+            | Type::LiteralString(_) => {
                 // no emit
             }
             Type::Named(named_ty) => {
@@ -413,7 +417,7 @@ impl<'a, 'tcx> Emitter {
                                     // "true" / "false"
                                     code.push_str("%s");
                                 }
-                                Type::String => {
+                                Type::String | Type::LiteralString(_) => {
                                     code.push_str("%s");
                                 }
                                 Type::NativeInt => {
@@ -449,7 +453,7 @@ impl<'a, 'tcx> Emitter {
                     code.push_str(", ");
 
                     match value.ty() {
-                        Type::Int64 | Type::String | Type::NativeInt => {
+                        Type::Int64 | Type::String | Type::NativeInt | Type::LiteralString(_) => {
                             self.emit_expr(value, code);
                         }
                         Type::Boolean => {
@@ -591,7 +595,7 @@ fn c_type(ty: &Type) -> String {
     match ty {
         Type::Int64 => "int64_t".to_string(),
         Type::Boolean => "bool".to_string(),
-        Type::String => "const char *".to_string(),
+        Type::String | Type::LiteralString(_) => "const char *".to_string(),
         Type::NativeInt => "int".to_string(),
         Type::Tuple(_) | Type::Struct(_) => {
             let mut buffer = String::new();
@@ -607,7 +611,9 @@ fn c_type(ty: &Type) -> String {
 // numeric elements to zero and pointers null.
 fn zero_value(ty: &Type) -> &'static str {
     match ty {
-        Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => "0",
+        Type::Int64 | Type::Boolean | Type::String | Type::NativeInt | Type::LiteralString(_) => {
+            "0"
+        }
         Type::Tuple(_) | Type::Struct(_) => "{0}",
         Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
@@ -655,6 +661,12 @@ fn zero_value(ty: &Type) -> &'static str {
 /// +-----+-------+
 /// ```
 ///
+/// ## Literal type - string
+///
+/// +-----+-----+------------------------------------+-----------------------------------+
+/// | "L" | "s" | digits (The length of "b58" field) | b58 (base58 encoded string value) |
+/// +-----+-----+------------------------------------+-----------------------------------+
+///
 /// ## Other types
 ///
 /// | Type           | Format |
@@ -669,6 +681,13 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
         Type::Boolean => buffer.push('b'),
         Type::String => buffer.push('s'),
         Type::NativeInt => buffer.push_str("ni"),
+        Type::LiteralString(s) => {
+            buffer.push('L');
+            buffer.push('s');
+            // TODO: base58
+            buffer.push_str(&s.len().to_string());
+            buffer.push_str(s);
+        }
         Type::Tuple(fs) => {
             buffer.push('T');
             buffer.push_str(&fs.len().to_string());

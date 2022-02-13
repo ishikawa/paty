@@ -33,7 +33,11 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
                     self.add_decl_type(f.ty());
                 }
             }
-            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
+            Type::Int64
+            | Type::Boolean
+            | Type::String
+            | Type::NativeInt
+            | Type::LiteralString(_) => {
                 // no declaration
                 return;
             }
@@ -1202,7 +1206,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             Type::Int64 | Type::NativeInt | Type::Boolean => {
                 specs.push(FormatSpec::Value(inc_used(arg)));
             }
-            Type::String => {
+            Type::String | Type::LiteralString(_) => {
                 if escape_string {
                     specs.push(FormatSpec::Quoted(inc_used(arg)));
                 } else {

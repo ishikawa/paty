@@ -93,6 +93,9 @@ pub enum Type<'tcx> {
     /// Type is specified by name and should be resolved in the later phase
     Named(NamedTy<'tcx>),
 
+    // Literal types
+    LiteralString(String),
+
     /// Type is not specified and should be inferred in the later phase.
     Undetermined,
 
@@ -118,6 +121,7 @@ impl<'tcx> Type<'tcx> {
     pub fn is_zero_sized(&self) -> bool {
         match self {
             Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => false,
+            Type::LiteralString(_) => false,
             Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
             Type::Struct(struct_ty) => struct_ty.fields().iter().all(|f| f.ty().is_zero_sized()),
             Type::Named(named_ty) => {
@@ -134,7 +138,10 @@ impl<'tcx> Type<'tcx> {
     /// Returns `true` if the type can be assigned to the `other` type.
     /// A type can be assigned to other type if the type is compatible to other.
     pub fn is_assignable_to(&self, other: &Self) -> bool {
-        self == other
+        match (self, other) {
+            (Self::LiteralString(_), Self::String) => true,
+            _ => self == other,
+        }
     }
 }
 
@@ -160,6 +167,7 @@ impl PartialEq for Type<'_> {
                     false
                 }
             }
+            (Self::LiteralString(l0), Self::LiteralString(r0)) => l0 == r0,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
@@ -168,16 +176,17 @@ impl PartialEq for Type<'_> {
 impl Hash for Type<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            Type::Tuple(fs) => fs.hash(state),
-            Type::Struct(struct_ty) => struct_ty.hash(state),
-            Type::Named(named_ty) => {
+            Self::Tuple(fs) => fs.hash(state),
+            Self::Struct(struct_ty) => struct_ty.hash(state),
+            Self::Named(named_ty) => {
                 if let Some(ty) = named_ty.ty() {
                     ty.hash(state)
                 } else {
                     named_ty.name().hash(state)
                 }
             }
-            Type::Int64 | Type::Boolean | Type::String | Type::Undetermined | Type::NativeInt => {
+            Self::LiteralString(s) => s.hash(state),
+            Self::Int64 | Self::Boolean | Self::String | Self::Undetermined | Self::NativeInt => {
                 core::mem::discriminant(self).hash(state)
             }
         }
@@ -187,13 +196,13 @@ impl Hash for Type<'_> {
 impl fmt::Display for Type<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Type::Int64 => write!(f, "int64"),
-            Type::Boolean => write!(f, "boolean"),
-            Type::String => write!(f, "string"),
-            Type::NativeInt => write!(f, "int"),
-            Type::Named(named_ty) => named_ty.fmt(f),
-            Type::Undetermined => write!(f, "_"),
-            Type::Tuple(value_types) => {
+            Self::Int64 => write!(f, "int64"),
+            Self::Boolean => write!(f, "boolean"),
+            Self::String => write!(f, "string"),
+            Self::NativeInt => write!(f, "int"),
+            Self::Named(named_ty) => named_ty.fmt(f),
+            Self::Undetermined => write!(f, "_"),
+            Self::Tuple(value_types) => {
                 let mut it = value_types.iter().peekable();
                 write!(f, "(")?;
                 while let Some(ty) = it.next() {
@@ -204,7 +213,8 @@ impl fmt::Display for Type<'_> {
                 }
                 write!(f, ")")
             }
-            Type::Struct(struct_ty) => struct_ty.fmt(f),
+            Self::Struct(struct_ty) => struct_ty.fmt(f),
+            Self::LiteralString(s) => write!(f, "{}", s.escape_unicode()),
         }
     }
 }
