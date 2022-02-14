@@ -423,9 +423,7 @@ impl<'a, 'tcx> Emitter {
                 for spec in specs {
                     match spec {
                         FormatSpec::Str(s) => {
-                            for c in s.escape_default() {
-                                code.push(c);
-                            }
+                            code.push_str(&escape_c_string(s));
                         }
                         FormatSpec::Value(value) => {
                             match value.ty() {
@@ -520,11 +518,7 @@ impl<'a, 'tcx> Emitter {
                 }
             }
             ExprKind::Str(s) => {
-                code.push_str("u8\"");
-                for c in s.escape_default() {
-                    code.push(c);
-                }
-                code.push('"');
+                code.push_str(&format!("u8\"{}\"", escape_c_string(s)));
             }
             ExprKind::Tuple(values) => {
                 // Specify struct type explicitly.
@@ -627,7 +621,7 @@ fn c_type(ty: &Type) -> String {
     }
 }
 
-// Anything in C can be initialised with = 0; this initializes
+// Anything in C can be initialized with = 0; this initializes
 // numeric elements to zero and pointers null.
 fn zero_value(ty: &Type) -> &'static str {
     match ty {
@@ -638,6 +632,26 @@ fn zero_value(ty: &Type) -> &'static str {
         Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
     }
+}
+
+/// Returns a new string from the input to produce literal that are legal in
+/// C11's `u8` string.
+fn escape_c_string(value: &str) -> String {
+    let mut escaped = String::new();
+
+    for c in value.chars() {
+        match c {
+            '\t' => escaped.push_str("\\t"),
+            '\r' => escaped.push_str("\\r"),
+            '\n' => escaped.push_str("\\n"),
+            '\'' => escaped.push_str("\\'"),
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            _ => escaped.push(c),
+        };
+    }
+
+    escaped
 }
 
 /// Encode type to C struct type name in universal way. "Universal" here means

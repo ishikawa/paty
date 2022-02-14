@@ -37,6 +37,9 @@ assert() {
 # number
 assert 20211231 "puts(20211231)"
 assert -20229116 "puts(-20229116)"
+# string
+assert 'こんにちは' 'puts("こんにちは")'
+assert '\' 'puts("\\")'
 # boolean operators
 assert true "puts(10 > 5)"
 assert false "puts(10 < 5)"

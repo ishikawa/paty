@@ -1200,14 +1200,14 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
         specs: &mut Vec<FormatSpec<'a, 'tcx>>,
-        escape_string: bool,
+        quote_string: bool,
     ) {
         match arg.ty() {
             Type::Int64 | Type::NativeInt | Type::Boolean => {
                 specs.push(FormatSpec::Value(inc_used(arg)));
             }
             Type::String | Type::LiteralString(_) => {
-                if escape_string {
+                if quote_string {
                     specs.push(FormatSpec::Quoted(inc_used(arg)));
                 } else {
                     specs.push(FormatSpec::Value(inc_used(arg)));
