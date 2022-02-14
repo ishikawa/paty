@@ -32,7 +32,9 @@ impl<'a, 'tcx> Emitter {
         ]
         .join("\n");
 
-        // Emit declarations
+        // --- Emit declarations
+        // Some types are represented as the same structure in the C language,
+        // so once a type is output, it should not be output twice.
         let mut emitted_c_types = HashSet::new();
 
         for ty in program.decl_types() {
