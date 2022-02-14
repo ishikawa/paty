@@ -24,6 +24,10 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::String)
     }
 
+    pub fn literal_string(&self, value: String) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::LiteralString(value))
+    }
+
     pub fn undetermined(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Undetermined)
     }
@@ -139,7 +143,41 @@ impl<'tcx> Type<'tcx> {
     /// A type can be assigned to other type if the type is compatible to other.
     pub fn is_assignable_to(&self, other: &Self) -> bool {
         match (self, other) {
+            // Widening type
             (Self::LiteralString(_), Self::String) => true,
+            // Compound types
+            (Self::Tuple(l0), Self::Tuple(r0)) => {
+                l0.len() == r0.len() && l0.iter().zip(r0).all(|(a, b)| a.is_assignable_to(b))
+            }
+            (Self::Struct(l0), Self::Struct(r0)) => {
+                // Different named structs are incompatible.
+                if l0.name() != r0.name() {
+                    return false;
+                }
+                // Is assignable by structural.
+                if l0.fields().len() != r0.fields().len() {
+                    return false;
+                }
+                l0.fields()
+                    .iter()
+                    .zip(r0.fields())
+                    .all(|(a, b)| a.name() == b.name() && a.ty().is_assignable_to(b.ty()))
+            }
+            (Self::Named(named_ty1), ty2) => {
+                if let Some(ty1) = named_ty1.ty() {
+                    ty1.is_assignable_to(ty2)
+                } else {
+                    false
+                }
+            }
+            (ty1, Self::Named(named_ty2)) => {
+                if let Some(ty2) = named_ty2.ty() {
+                    ty1.is_assignable_to(ty2)
+                } else {
+                    false
+                }
+            }
+            // Others
             _ => self == other,
         }
     }
@@ -148,6 +186,7 @@ impl<'tcx> Type<'tcx> {
 impl PartialEq for Type<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::LiteralString(l0), Self::LiteralString(r0)) => l0 == r0,
             (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
             (Self::Struct(l0), Self::Struct(r0)) => l0 == r0,
             (Self::Named(named_ty1), Self::Named(named_ty2)) => {
@@ -167,7 +206,6 @@ impl PartialEq for Type<'_> {
                     false
                 }
             }
-            (Self::LiteralString(l0), Self::LiteralString(r0)) => l0 == r0,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
@@ -214,7 +252,7 @@ impl fmt::Display for Type<'_> {
                 write!(f, ")")
             }
             Self::Struct(struct_ty) => struct_ty.fmt(f),
-            Self::LiteralString(s) => write!(f, "{}", s.escape_unicode()),
+            Self::LiteralString(s) => write!(f, "\"{}\"", s.escape_default()),
         }
     }
 }

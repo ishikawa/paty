@@ -115,6 +115,12 @@ assert 'Semantic error: unreachable pattern: `T { a: _, b: _ }`' "
   when T { a, b }
     puts(5)
   end"
+assert 'unreachable `else` clause' 'case "hello"
+when "hello"
+  puts(1)
+else
+  puts(2)
+end'
 # non-exhaustive pattern
 assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
   n = 100
@@ -134,13 +140,15 @@ assert 'Semantic error: non-exhaustive pattern: `false`' "
   when true
     puts(true)
   end"
-assert 'Semantic error: non-exhaustive pattern: `_`' "
-  case \"A\"
-  when \"A\"
-    puts(1)
-  when \"B\"
-    puts(2)
-  end"
+assert 'Semantic error: non-exhaustive pattern: `_`' '
+  def foo(s: string)
+    case s
+    when "A"
+      puts(1)
+    when "B"
+      puts(2)
+    end
+  end'
 assert 'Semantic error: non-exhaustive pattern: `T { a: false, b: false }`' "
   struct T { a: boolean, b: boolean }
   case T { a: true, b: false }
@@ -243,6 +251,13 @@ assert 'return type of function `bar(int64)` is specified with `boolean`, found 
     x + 1
   end'
 # type check
+assert 'expected type `"A"`, found `"B"`' '
+  case "A"
+  when "A"
+    puts(1)
+  when "B"
+    puts(2)
+  end'
 assert 'Semantic error: expected type `int64`, found `boolean`' "
   def foo(n: int64)
     n

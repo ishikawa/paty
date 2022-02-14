@@ -640,7 +640,7 @@ impl fmt::Display for FormatSpec<'_, '_> {
                 expr.fmt(f)?;
                 write!(f, "\"")
             }
-            FormatSpec::Str(s) => write!(f, "{}", s.escape_unicode()),
+            FormatSpec::Str(s) => write!(f, "{}", s.escape_default()),
         }
     }
 }

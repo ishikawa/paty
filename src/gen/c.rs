@@ -1,4 +1,6 @@
 //! C code generator
+use std::collections::HashSet;
+
 use super::ir::{
     CallingConvention, Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar,
 };
@@ -31,8 +33,10 @@ impl<'a, 'tcx> Emitter {
         .join("\n");
 
         // Emit declarations
+        let mut emitted_c_types = HashSet::new();
+
         for ty in program.decl_types() {
-            self.emit_decl_type(ty, &mut code);
+            self.emit_decl_type(ty, &mut emitted_c_types, &mut code);
         }
 
         for fun in program.functions() {
@@ -54,7 +58,12 @@ impl<'a, 'tcx> Emitter {
     }
 
     #[allow(clippy::mutable_key_type)]
-    fn emit_decl_type<'t>(&mut self, ty: &'t Type<'tcx>, code: &mut String) {
+    fn emit_decl_type<'t>(
+        &mut self,
+        ty: &'t Type<'tcx>,
+        emitted_c_types: &mut HashSet<String>,
+        code: &mut String,
+    ) {
         // Zero-size data should not has declaration.
         if ty.is_zero_sized() {
             return;
@@ -62,9 +71,15 @@ impl<'a, 'tcx> Emitter {
 
         // Emit C struct.
         // Note that C structure have to contain at least one member.
+        let emit_type = c_type(ty);
+
+        if emitted_c_types.contains(&emit_type) {
+            return;
+        }
+
         match ty {
             Type::Tuple(fs) => {
-                code.push_str(&c_type(ty));
+                code.push_str(&emit_type);
                 code.push_str(" {\n");
 
                 for (i, fty) in fs.iter().enumerate() {
@@ -78,7 +93,7 @@ impl<'a, 'tcx> Emitter {
                 code.push_str("};\n\n");
             }
             Type::Struct(struct_ty) => {
-                code.push_str(&c_type(ty));
+                code.push_str(&emit_type);
                 code.push_str(" {\n");
                 for f in struct_ty.fields() {
                     if !f.ty().is_zero_sized() {
@@ -95,12 +110,15 @@ impl<'a, 'tcx> Emitter {
             | Type::NativeInt
             | Type::LiteralString(_) => {
                 // no emit
+                return;
             }
             Type::Named(named_ty) => {
                 unreachable!("untyped code for named type `{}`", named_ty.name())
             }
             Type::Undetermined => unreachable!("untyped code"),
         };
+
+        emitted_c_types.insert(emit_type);
     }
 
     fn emit_function_declaration(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
@@ -433,7 +451,7 @@ impl<'a, 'tcx> Emitter {
                             }
                         }
                         FormatSpec::Quoted(value) => match value.ty() {
-                            Type::String => {
+                            Type::String | Type::LiteralString(_) => {
                                 code.push_str("\\\"%s\\\"");
                             }
                             _ => unreachable!("quoted value must be a string: {:?}", value),
@@ -623,6 +641,9 @@ fn zero_value(ty: &Type) -> &'static str {
 /// Encode type to C struct type name in universal way. "Universal" here means
 /// it is independent of runtime environment and machine architecture.
 ///
+/// Types that are represented as the same structure in the C language must
+/// return the same string.
+///
 /// ## Integer types
 ///
 /// ```ignore
@@ -661,13 +682,10 @@ fn zero_value(ty: &Type) -> &'static str {
 /// +-----+-------+
 /// ```
 ///
-/// ## Literal type - string
+/// ## Other types (including literal types)
 ///
-/// +-----+-----+------------------------------------+-----------------------------------+
-/// | "L" | "s" | digits (The length of "b58" field) | b58 (base58 encoded string value) |
-/// +-----+-----+------------------------------------+-----------------------------------+
-///
-/// ## Other types
+/// NOTE: We don't care a type is literal type or not to make it compatible in
+/// C struct type.
 ///
 /// | Type           | Format |
 /// | -------------- | ------ |
@@ -679,15 +697,8 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
     match ty {
         Type::Int64 => buffer.push_str("i64"),
         Type::Boolean => buffer.push('b'),
-        Type::String => buffer.push('s'),
+        Type::String | Type::LiteralString(_) => buffer.push('s'),
         Type::NativeInt => buffer.push_str("ni"),
-        Type::LiteralString(s) => {
-            buffer.push('L');
-            buffer.push('s');
-            // TODO: base58
-            buffer.push_str(&s.len().to_string());
-            buffer.push_str(s);
-        }
         Type::Tuple(fs) => {
             buffer.push('T');
             buffer.push_str(&fs.len().to_string());
@@ -715,14 +726,25 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
     }
 }
 
-/// Function name mangling scheme
+/// Function name mangling scheme.
+///
+/// Types that are treated as different types in this programming language must
+/// return separate strings.
 ///
 /// +------+-------------------------------------------+------+-----------------------------+-------------+
 /// | "_Z" | digits (The length of the following name) | name | digits (The number of args) | (arg types) |
 /// +------+-------------------------------------------+------+-----------------------------+-------------+
 ///
+/// ## Literal type - string
+///
+/// To make function overloading work properly, we have to encode literal types.
+///
+/// +-----+-----+------------------------------------+-----------------------------------+
+/// | "L" | "s" | digits (The length of "b58" field) | b58 (base58 encoded string value) |
+/// +-----+-----+------------------------------------+-----------------------------------+
+///
 fn mangle_name(signature: &FunctionSignature<'_>) -> String {
-    let mut name = format!(
+    let mut buffer = format!(
         "_Z{}{}{}",
         signature.name().len(),
         signature.name(),
@@ -730,8 +752,21 @@ fn mangle_name(signature: &FunctionSignature<'_>) -> String {
     );
 
     for p in signature.params() {
-        encode_ty(p.bottom_ty(), &mut name);
+        let pty = p.bottom_ty();
+
+        if let Type::LiteralString(s) = pty {
+            let encoded = bs58::encode(s).into_string();
+
+            buffer.push('L');
+            buffer.push('s');
+
+            // TODO: base58
+            buffer.push_str(&encoded.len().to_string());
+            buffer.push_str(&encoded);
+        } else {
+            encode_ty(pty, &mut buffer);
+        }
     }
 
-    name
+    buffer
 }

@@ -345,8 +345,9 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
         syntax::ExprKind::Boolean(_) => {
             unify_expr_type(tcx.boolean(), expr, errors);
         }
-        syntax::ExprKind::String(_) => {
-            unify_expr_type(tcx.string(), expr, errors);
+        syntax::ExprKind::String(s) => {
+            //unify_expr_type(tcx.string(), expr, errors);
+            unify_expr_type(tcx.literal_string(s.clone()), expr, errors);
         }
         syntax::ExprKind::Tuple(values) => {
             let mut value_types = vec![];
@@ -738,7 +739,9 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 .ty()
                 .unwrap_or_else(|| panic!("Untyped head expression for {:?}", head))
                 .bottom_ty();
-            let mut expr_ty = None;
+
+            // The result type of the expression.
+            let mut expr_ty: Option<&Type> = None;
 
             for arm in arms {
                 let mut scope = Scope::from_parent(vars);
@@ -758,15 +761,23 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 );
                 analyze_expr(tcx, arm.body(), &mut scope, functions, named_types, errors);
 
-                if let Some(expected) = expr_ty {
-                    unify_expr_type(expected, arm.body(), errors);
+                // The type of every arms must be compatible.
+                // If each type of arms is a literal type and they are incompatible,
+                // try to widen the type to generic one.
+                if let (Some(Type::LiteralString(s0)), Some(Type::LiteralString(s1))) =
+                    (expr_ty, arm.body().ty())
+                {
+                    if s0 != s1 {
+                        expr_ty = Some(tcx.string());
+                    }
                 }
 
-                if let Some(body_ty) = arm.body().ty() {
-                    expr_ty = Some(body_ty)
-                } else {
-                    // The type of body can't be inferred.
-                    expr_ty = Some(tcx.undetermined());
+                if let Some(expected_ty) = expr_ty {
+                    unify_expr_type(expected_ty, arm.body(), errors);
+                }
+
+                if expr_ty.is_none() {
+                    expr_ty = arm.body().ty().or_else(|| Some(tcx.undetermined()));
                 }
             }
 
@@ -928,8 +939,9 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
         PatternKind::Boolean(_) => {
             unify_pat_type(tcx.boolean(), pat, errors);
         }
-        PatternKind::String(_) => {
-            unify_pat_type(tcx.string(), pat, errors);
+        PatternKind::String(s) => {
+            //unify_pat_type(tcx.string(), pat, errors);
+            unify_pat_type(tcx.literal_string(s.clone()), pat, errors);
         }
         PatternKind::Range { .. } => {
             unify_pat_type(tcx.int64(), pat, errors);
@@ -1083,7 +1095,10 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
     match pat.kind() {
         PatternKind::Integer(_) => tcx.int64(),
         PatternKind::Boolean(_) => tcx.boolean(),
-        PatternKind::String(_) => tcx.string(),
+        PatternKind::String(s) => {
+            //tcx.string()
+            tcx.literal_string(s.clone())
+        }
         PatternKind::Range { .. } => tcx.int64(),
         PatternKind::Tuple(patterns) => {
             let sub_types: Vec<_> = patterns

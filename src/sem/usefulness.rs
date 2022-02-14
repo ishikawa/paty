@@ -7,6 +7,7 @@ use crate::syntax::{
     CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern,
 };
 use crate::ty::Type;
+use std::iter;
 use std::{
     cell::Cell,
     cmp::{max, min},
@@ -337,11 +338,11 @@ impl<'tcx> SplitWildcard {
                 ));
                 vec![ctor]
             }
+            // A constant string
+            Type::LiteralString(s) => vec![Constructor::Str(s.to_string())],
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
-            // A constant string
-            Type::LiteralString(s) => vec![Constructor::Str(s.clone())],
             Type::NativeInt => unreachable!("Native C types are not supported."),
         };
 
@@ -641,6 +642,13 @@ impl<'tcx> Constructor {
         }
     }
 
+    fn as_str_value(&self) -> Option<&str> {
+        match self {
+            Self::Str(value) => Some(value),
+            _ => None,
+        }
+    }
+
     pub(super) fn is_non_exhaustive(&self) -> bool {
         matches!(self, Self::NonExhaustive)
     }
@@ -712,9 +720,13 @@ impl<'tcx> Constructor {
                 .iter()
                 .filter_map(|c| c.as_int_range())
                 .any(|other| range.is_covered_by(other)),
+            Self::Str(value) => used_ctors
+                .iter()
+                .filter_map(|c| c.as_str_value())
+                .any(|other| other == value),
             // This constructor is never covered by anything else
             Self::NonExhaustive => false,
-            Self::Str(..) | Self::Wildcard | Self::Missing { .. } | Self::Or => {
+            Self::Wildcard | Self::Missing { .. } | Self::Or => {
                 unreachable!("found unexpected ctor in all_ctors: {:?}", self)
             }
         }
@@ -789,6 +801,15 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         Fields { fields: &[] }
     }
 
+    /*
+    fn singleton(cx: &MatchCheckContext<'p, 'tcx>, field: DeconstructedPat<'p, 'tcx>) -> Self {
+        let field: &_ = cx.pattern_arena.alloc(field);
+        Fields {
+            fields: std::slice::from_ref(field),
+        }
+    }
+    */
+
     pub fn from_iter(
         cx: &MatchCheckContext<'p, 'tcx>,
         fields: impl IntoIterator<Item = DeconstructedPat<'p, 'tcx>>,
@@ -822,6 +843,9 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
                     cx,
                     struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
                 ),
+                Type::String | Type::LiteralString(_) => {
+                    Fields::wildcards_from_tys(cx, iter::once(ty))
+                }
                 ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
             Constructor::IntRange(..)
