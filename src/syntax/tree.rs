@@ -1362,6 +1362,11 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 let ty = Type::Named(NamedTy::new(name));
                 self.tcx.type_arena.alloc(ty)
             }
+            TokenKind::String(value) => {
+                it.next();
+
+                self.tcx.literal_string(value.to_string())
+            }
             _ => {
                 return Err(ParseError::UnexpectedToken {
                     expected: "type".to_string(),

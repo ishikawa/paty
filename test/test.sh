@@ -317,6 +317,21 @@ assert '100 baz!' '
     end
   end
   baz(10, (true, "baz!"))'
+assert '1
+2
+3' '
+  def greeting(_: "A")
+    puts(1)
+  end
+  def greeting(_: "B")
+    puts(2)
+  end
+  def greeting(_: string)
+    puts(3)
+  end
+  greeting("A")
+  greeting("B")
+  greeting("C")'
 # uniform function call syntax
 assert 'hi' '"hi".puts()'
 assert '100 baz!' '
