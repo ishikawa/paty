@@ -316,6 +316,14 @@ assert 'expected type `int64`, found `boolean`' '
   when { a: T { value: x }, b: false } | { a: _, b: x }
     puts(x)
   end'
+assert 'expected type `int64`, found `struct T { a: int64, b: boolean }`' '
+  struct T { a: int64, b: boolean }
+  case 1
+  when T { a }
+    puts(1)
+  else
+    puts(2)
+  end'
 # tuple
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "

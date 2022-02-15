@@ -109,7 +109,7 @@ pub enum Type<'tcx> {
 }
 
 impl<'tcx> Type<'tcx> {
-    pub fn bottom_ty(&'tcx self) -> &'tcx Type<'tcx> {
+    pub fn bottom_ty(&self) -> &Type<'tcx> {
         if let Type::Named(named_ty) = self {
             if let Some(ty) = named_ty.ty() {
                 ty.bottom_ty()

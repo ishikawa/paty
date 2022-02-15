@@ -1,7 +1,7 @@
 //! Semantic analysis
 use self::error::{FormatSymbols, SemanticError};
 use crate::syntax::{PatternKind, StmtKind};
-use crate::ty::TypedField;
+use crate::ty::{StructTy, TypedField};
 use crate::{
     syntax,
     ty::{Type, TypeContext},
@@ -361,24 +361,12 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
         }
         syntax::ExprKind::Struct(struct_value) => {
             if let Some(struct_name) = struct_value.name() {
-                // Assign named struct type to struct value
-                let expected_ty = if let Some(ty) = named_types.get(struct_name) {
-                    ty
-                } else {
-                    errors.push(SemanticError::UndefinedNamedType {
-                        name: struct_name.to_string(),
-                    });
-                    return;
-                };
-
-                let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
-                    struct_ty
-                } else {
-                    errors.push(SemanticError::MismatchedType {
-                        expected: tcx.empty_struct_ty(struct_name.to_string()),
-                        actual: expected_ty,
-                    });
-                    return;
+                let (expected_ty, struct_ty) = match get_struct_ty(tcx, struct_name, named_types) {
+                    Ok(struct_ty) => struct_ty,
+                    Err(err) => {
+                        errors.push(err);
+                        return;
+                    }
                 };
 
                 unify_expr_type(expected_ty, expr, errors);
@@ -943,7 +931,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 if sub_types.len() != patterns.len() {
                     errors.push(SemanticError::MismatchedType {
                         expected: expected_ty,
-                        actual: pattern_to_type(tcx, pat),
+                        actual: pattern_to_type(tcx, pat, named_types),
                     });
                     return;
                 }
@@ -951,7 +939,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             } else {
                 errors.push(SemanticError::MismatchedType {
                     expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat),
+                    actual: pattern_to_type(tcx, pat, named_types),
                 });
                 return;
             };
@@ -969,7 +957,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             } else {
                 errors.push(SemanticError::MismatchedType {
                     expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat),
+                    actual: pattern_to_type(tcx, pat, named_types),
                 });
                 return;
             };
@@ -978,7 +966,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             if struct_ty.name() != struct_pat.name() {
                 errors.push(SemanticError::MismatchedType {
                     expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat),
+                    actual: pattern_to_type(tcx, pat, named_types),
                 });
                 return;
             }
@@ -1078,10 +1066,35 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     unify_pat_type(expected_ty, pat, errors);
 }
 
+fn get_struct_ty<'tcx>(
+    tcx: TypeContext<'tcx>,
+    struct_name: &str,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+) -> Result<(&'tcx Type<'tcx>, &'tcx StructTy<'tcx>), SemanticError<'tcx>> {
+    // Assign named struct type to struct value
+    let expected_ty = if let Some(ty) = named_types.get(struct_name) {
+        ty
+    } else {
+        return Err(SemanticError::UndefinedNamedType {
+            name: struct_name.to_string(),
+        });
+    };
+
+    if let Type::Struct(struct_ty) = expected_ty {
+        Ok((expected_ty, struct_ty))
+    } else {
+        Err(SemanticError::MismatchedType {
+            expected: tcx.empty_struct_ty(struct_name.to_string()),
+            actual: expected_ty,
+        })
+    }
+}
+
 // Only used for error description
 fn pattern_to_type<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
 ) -> &'tcx Type<'tcx> {
     // Infer the type of pattern from its values.
     match pat.kind() {
@@ -1095,19 +1108,27 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
         PatternKind::Tuple(patterns) => {
             let sub_types: Vec<_> = patterns
                 .iter()
-                .map(|pat| pattern_to_type(tcx, pat))
+                .map(|pat| pattern_to_type(tcx, pat, named_types))
                 .collect();
 
             tcx.tuple(&sub_types)
         }
         PatternKind::Struct(struct_pat) => {
+            // Search a named struct in the scope.
+            if let Some(struct_name) = struct_pat.name() {
+                if let Ok((ty, _)) = get_struct_ty(tcx, struct_name, named_types) {
+                    return ty;
+                }
+            }
+
+            // If not found corresponding struct, construct a new one from the pattern.
             let mut typed_fields = vec![];
 
             for f in struct_pat.fields() {
                 if let syntax::PatternFieldOrSpread::PatternField(f) = f {
                     typed_fields.push(TypedField::new(
                         f.name().to_string(),
-                        pattern_to_type(tcx, f.pattern()),
+                        pattern_to_type(tcx, f.pattern(), named_types),
                     ));
                 }
             }
@@ -1123,7 +1144,7 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
             let sub_pat = sub_pats
                 .first()
                 .expect("or-pattern must have at least 2 elements.");
-            pattern_to_type(tcx, sub_pat)
+            pattern_to_type(tcx, sub_pat, named_types)
         }
         PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }
