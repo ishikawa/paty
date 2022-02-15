@@ -391,6 +391,47 @@ string B' '
 
   foo(("A", "_"))
   foo(("_", "B"))'
+assert 'override 1
+string B' '
+  struct T { name: string }
+  def baz(_: "A")
+    puts("override 1")
+  end
+  def baz(s: string)
+    puts("string", s)
+  end
+
+  def foo(t: T)
+    case t.name
+    when "A"
+      baz(t.name)
+    else
+      baz(t.name)
+    end
+  end
+
+  foo(T {name: "A"})
+  foo(T {name: "B"})'
+assert 'override 1
+string B' '
+  def baz(_: "A")
+    puts("override 1")
+  end
+  def baz(s: string)
+    puts("string", s)
+  end
+
+  def foo(t: { values: (string, string) })
+    case t.values.1
+    when "A"
+      baz(t.values.1)
+    else
+      baz(t.values.1)
+    end
+  end
+
+  foo({ values: ("A", "A") })
+  foo({ values: ("B", "B") })'
 # function overloading
 assert "30
 true

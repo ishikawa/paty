@@ -579,12 +579,13 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
         }
         syntax::ExprKind::FieldAccess(operand, name) => {
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
+
             if operand.ty().is_none() {
                 return;
             }
 
             // index boundary check
-            let ty = operand.expect_ty();
+            let ty = operand.expect_ty().bottom_ty();
 
             if let Type::Struct(struct_ty) = ty {
                 if let Some(f) = struct_ty.get_field(name) {
@@ -714,7 +715,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
             let head_ty = head
                 .ty()
-                .unwrap_or_else(|| panic!("Untyped head expression for {:?}", head))
+                .unwrap_or_else(|| panic!("Untyped head expression for {} - {:?}", head, head))
                 .bottom_ty();
 
             // The result type of the expression.
@@ -1107,7 +1108,7 @@ fn narrow_type<'nd, 'tcx>(
             syntax::ExprKind::IndexAccess(operand, index) => {
                 // narrow the type of x.N (x.0, x.1, ...)
                 node = operand;
-                match operand.expect_ty() {
+                match operand.expect_ty().bottom_ty() {
                     Type::Tuple(fs) => {
                         let mut value_types = fs.clone();
 
@@ -1116,6 +1117,32 @@ fn narrow_type<'nd, 'tcx>(
                         narrowed_ty = tcx.tuple(value_types);
                     }
                     _ => unreachable!("expect tuple type"),
+                }
+            }
+            syntax::ExprKind::FieldAccess(operand, field_name) => {
+                // narrow the type of x.name
+                node = operand;
+                match operand.expect_ty().bottom_ty() {
+                    Type::Struct(struct_ty) => {
+                        let fields = struct_ty
+                            .fields()
+                            .iter()
+                            .map(|f| {
+                                if f.name() == field_name {
+                                    TypedField::new(field_name.to_string(), narrowed_ty)
+                                } else {
+                                    TypedField::new(f.name().to_string(), f.ty())
+                                }
+                            })
+                            .collect::<Vec<_>>();
+
+                        if let Some(struct_name) = struct_ty.name() {
+                            narrowed_ty = tcx.struct_ty(struct_name.to_string(), fields)
+                        } else {
+                            narrowed_ty = tcx.anon_struct_ty(fields)
+                        }
+                    }
+                    _ => unreachable!("expect struct type"),
                 }
             }
             _ => {
