@@ -755,9 +755,9 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
 ///
 /// To make function overloading work properly, we have to encode literal types.
 ///
-/// +-----+-----+------------------------------------+-----------------------------------+
-/// | "L" | "s" | digits (The length of "b58" field) | b58 (base58 encoded string value) |
-/// +-----+-----+------------------------------------+-----------------------------------+
+/// +-----+-----+------------------------------------+-----+-----------------------------------+
+/// | "L" | "s" | digits (The length of "b58" field) | "_" | b58 (base58 encoded string value) |
+/// +-----+-----+------------------------------------+-----+-----------------------------------+
 ///
 fn mangle_name(signature: &FunctionSignature<'_>) -> String {
     let mut buffer = format!(
@@ -776,8 +776,9 @@ fn mangle_name(signature: &FunctionSignature<'_>) -> String {
             buffer.push('L');
             buffer.push('s');
 
-            // TODO: base58
+            // Encode literal string with base58 encoding
             buffer.push_str(&encoded.len().to_string());
+            buffer.push('_');
             buffer.push_str(&encoded);
         } else {
             encode_ty(pty, &mut buffer);

@@ -381,6 +381,22 @@ assert '1
   greeting("A")
   greeting("B")
   greeting("C")'
+assert 'Hello, English
+こんにちは。 日本語
+Sorry, I don'"'"'t speak Deutsch' '
+  def greeting(lang: "English")
+    puts("Hello,", lang)
+  end
+  def greeting(lang: "日本語")
+    puts("こんにちは。", lang)
+  end
+  def greeting(lang: string)
+    puts("Sorry, I don'"'"'t speak", lang)
+  end
+
+  greeting("English")
+  greeting("日本語")
+  greeting("Deutsch")'
 # uniform function call syntax
 assert 'hi' '"hi".puts()'
 assert '100 baz!' '
