@@ -703,20 +703,12 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 unify_expr_type(params[i].ty(), arg, errors);
             }
 
-            // Infer return type of the called function from its last expression.
-            if let Some(stmt) = fun.body().last() {
-                if let StmtKind::Expr(e) = stmt.kind() {
-                    if let Some(retty) = e.ty() {
-                        unify_expr_type(retty, expr, errors);
-                    } else {
-                        // The return type is undefined if the function is called before
-                        // defined (recursive function). In that case, we skip unification here.
-                    }
-                } else {
-                    unify_expr_type(tcx.unit(), expr, errors);
-                }
+            // The return type of the called function.
+            if let Some(retty) = fun.retty() {
+                unify_expr_type(retty, expr, errors);
             } else {
-                unify_expr_type(tcx.unit(), expr, errors);
+                // The return type is undefined if the function is called before
+                // defined (recursive function). In that case, we skip unification here.
             }
 
             // Save

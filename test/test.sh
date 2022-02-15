@@ -37,9 +37,6 @@ assert() {
 # number
 assert 20211231 "puts(20211231)"
 assert -20229116 "puts(-20229116)"
-# string
-assert 'こんにちは' 'puts("こんにちは")'
-assert '\' 'puts("\\")'
 # boolean operators
 assert true "puts(10 > 5)"
 assert false "puts(10 < 5)"
@@ -66,6 +63,49 @@ assert "66" "(x, y, z) = (11, 22, 33)
   puts(x + y + z)"
 assert "231" "((a, b, c), (d, e), (f,)) = ((11, 22, 33), (44, 55), (66,))
   puts(a + b + c + d + e + f)"
+# boolean
+assert 'true' "
+    n = 5
+    case n > 1 && n <= 5
+    when true
+      puts(true)
+    when false
+      puts(false)
+    end"
+assert 'true' "
+    def is_positive(n)
+      n >= 0
+    end
+    case is_positive(1)
+    when true
+      puts(true)
+    when false
+      puts(false)
+    end"
+# string
+assert "Hello, World!" "
+    puts(\"Hello, World!\\n\")"
+assert 'こんにちは' 'puts("こんにちは")'
+assert '\' 'puts("\\")'
+assert '1 2 3 4' "
+    def fruit_to_num(fruit: string)
+      case fruit
+      when \"Apple\"
+        1
+      when \"Orange\"
+        2
+      when \"Strawberry\"
+        3
+      else
+        4
+      end
+    end
+    puts(
+      fruit_to_num(\"Apple\"),
+      fruit_to_num(\"Orange\"),
+      fruit_to_num(\"Strawberry\"),
+      fruit_to_num(\"Grape\")
+    )"
 # function
 assert 30 "
   def foo(x, y)
@@ -290,6 +330,12 @@ assert '1 100
   func(T { a: 4, b: (1, 300) })
   func(T { a: 4, b: (400, 1) })
   func(T { a: 2, b: (3, 0) })'
+# pattern match with literal types
+assert '1' '
+  case "A"
+  when "A"
+    puts(1)
+  end'
 # function overloading
 assert "30
 true
@@ -345,47 +391,6 @@ assert '100 baz!' '
     n.puts(message)
   end
   10.square().baz("baz!")'
-# boolean
-assert 'true' "
-    n = 5
-    case n > 1 && n <= 5
-    when true
-      puts(true)
-    when false
-      puts(false)
-    end"
-assert 'true' "
-    def is_positive(n)
-      n >= 0
-    end
-    case is_positive(1)
-    when true
-      puts(true)
-    when false
-      puts(false)
-    end"
-# string
-assert "Hello, World!" "
-    puts(\"Hello, World!\\n\")"
-assert '1 2 3 4' "
-    def fruit_to_num(fruit: string)
-      case fruit
-      when \"Apple\"
-        1
-      when \"Orange\"
-        2
-      when \"Strawberry\"
-        3
-      else
-        4
-      end
-    end
-    puts(
-      fruit_to_num(\"Apple\"),
-      fruit_to_num(\"Orange\"),
-      fruit_to_num(\"Strawberry\"),
-      fruit_to_num(\"Grape\")
-    )"
 # tuple
 assert "2022 1 22" "
   date = (2022, 1, 22)

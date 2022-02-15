@@ -159,6 +159,21 @@ assert 'Semantic error: non-exhaustive pattern: `T { a: false, b: false }`' "
   when T { a: false, b: true }
     puts(3)
   end"
+assert 'non-exhaustive pattern: `_`' '
+  def foo(): string
+    "A"
+  end
+  case foo()
+  when "A"
+    puts(1)
+  end'
+assert 'non-exhaustive pattern: `_`' '
+  def foo(value: string)
+    case value
+    when "A"
+      puts(1)
+    end
+  end'
 # destructuring
 assert 'uncovered fields `value`' "
   struct T { value: int64 }
