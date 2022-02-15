@@ -344,6 +344,33 @@ assert '1' '
     end
   end
   foo("A")'
+assert 'override 1
+override 2
+string C' '
+  def baz(_: "A")
+    puts("override 1")
+  end
+  def baz(_: "B")
+    puts("override 2")
+  end
+  def baz(s: string)
+    puts("string", s)
+  end
+
+  def foo(s: string)
+    case s
+    when "A"
+      baz(s)
+    when "B"
+      baz(s)
+    else
+      baz(s)
+    end
+  end
+
+  foo("A")
+  foo("B")
+  foo("C")'
 # function overloading
 assert "30
 true

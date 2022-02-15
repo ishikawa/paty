@@ -739,6 +739,18 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                     named_types,
                     errors,
                 );
+                if !errors.is_empty() {
+                    // Skip analyzing arm body if some errors occurred.
+                    continue;
+                }
+
+                // type narrowing.
+                // Override the named binding with new narrowed type binding.
+                let context_ty = pattern_to_type(tcx, arm.pattern(), named_types);
+                if let Some(narrowed_binding) = narrow_type(tcx, head, context_ty) {
+                    scope.insert(narrowed_binding);
+                }
+
                 analyze_expr(tcx, arm.body(), &mut scope, functions, named_types, errors);
 
                 // The type of every arms must be compatible.
@@ -772,7 +784,9 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 expr_ty = Some(else_body.ty().unwrap());
             }
 
-            unify_expr_type(expr_ty.unwrap(), expr, errors);
+            if let Some(expr_ty) = expr_ty {
+                unify_expr_type(expr_ty, expr, errors);
+            }
 
             if !errors.is_empty() {
                 return;
@@ -1064,6 +1078,30 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     };
 
     unify_pat_type(expected_ty, pat, errors);
+}
+
+/// Narrow the type of given operand expression from contextual type (e.g. matched pattern).
+fn narrow_type<'nd, 'tcx>(
+    _tcx: TypeContext<'tcx>,
+    operand: &'nd syntax::Expr<'nd, 'tcx>,
+    context_type: &'tcx Type<'tcx>,
+) -> Option<Binding<'tcx>> {
+    let operand_ty = operand.ty()?;
+
+    // TODO: x.0, x.a, ...
+    let name = if let syntax::ExprKind::Var(name) = operand.kind() {
+        name
+    } else {
+        return None;
+    };
+
+    // can be narrowed?
+    match (operand_ty, context_type) {
+        (Type::String, Type::LiteralString(_)) => {}
+        _ => return None,
+    }
+
+    Some(Binding::new(name, context_type))
 }
 
 fn get_struct_ty<'tcx>(
