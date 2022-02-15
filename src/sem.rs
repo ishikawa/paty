@@ -1090,13 +1090,12 @@ fn get_struct_ty<'tcx>(
     }
 }
 
-// Only used for error description
+/// Infer the closest possible type from a given pattern.
 fn pattern_to_type<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
 ) -> &'tcx Type<'tcx> {
-    // Infer the type of pattern from its values.
     match pat.kind() {
         PatternKind::Integer(_) => tcx.int64(),
         PatternKind::Boolean(_) => tcx.boolean(),
@@ -1139,13 +1138,7 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
                 tcx.anon_struct_ty(typed_fields)
             }
         }
-        PatternKind::Or(sub_pats) => {
-            // TODO: Union type?
-            let sub_pat = sub_pats
-                .first()
-                .expect("or-pattern must have at least 2 elements.");
-            pattern_to_type(tcx, sub_pat, named_types)
-        }
-        PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
+        // TODO: Union type for Or-pattern
+        PatternKind::Or(_) | PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }
 }
