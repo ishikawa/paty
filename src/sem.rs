@@ -18,11 +18,8 @@ struct Binding<'tcx> {
 }
 
 impl<'tcx> Binding<'tcx> {
-    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
-        Self {
-            name: name.to_string(),
-            ty,
-        }
+    pub fn new(name: String, ty: &'tcx Type<'tcx>) -> Self {
+        Self { name, ty }
     }
 
     pub fn name(&self) -> &str {
@@ -357,7 +354,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 value_types.push(value.ty().unwrap());
             }
 
-            unify_expr_type(tcx.tuple(&value_types), expr, errors);
+            unify_expr_type(tcx.tuple(value_types), expr, errors);
         }
         syntax::ExprKind::Struct(struct_value) => {
             if let Some(struct_name) = struct_value.name() {
@@ -894,7 +891,7 @@ fn analyze_pattern_struct_fields<'nd: 'tcx, 'tcx>(
                     }
 
                     // New binding with rest fields.
-                    let binding = Binding::new(spread_name, spread.expect_ty());
+                    let binding = Binding::new(spread_name.to_string(), spread.expect_ty());
                     vars.insert(binding);
                 }
 
@@ -962,7 +959,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, named_types, errors);
             }
 
-            unify_pat_type(tcx.tuple(sub_types), pat, errors);
+            unify_pat_type(tcx.tuple(sub_types.clone()), pat, errors);
         }
         PatternKind::Struct(struct_pat) => {
             // Struct type check
@@ -1011,7 +1008,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             // We need the type of pattern.
             unify_pat_type(expected_ty, pat, errors);
 
-            let binding = Binding::new(name, pat.expect_ty());
+            let binding = Binding::new(name.to_string(), pat.expect_ty());
 
             vars.insert(binding);
         }
@@ -1069,7 +1066,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             // Add bindings introduced in sub-patterns.
             if let Some(bindings) = bindings {
                 for (var_name, var_ty) in bindings {
-                    let binding = Binding::new(&var_name, var_ty);
+                    let binding = Binding::new(var_name, var_ty);
                     vars.insert(binding);
                 }
             }
@@ -1082,26 +1079,52 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
 
 /// Narrow the type of given operand expression from contextual type (e.g. matched pattern).
 fn narrow_type<'nd, 'tcx>(
-    _tcx: TypeContext<'tcx>,
-    operand: &'nd syntax::Expr<'nd, 'tcx>,
+    tcx: TypeContext<'tcx>,
+    target_expr: &'nd syntax::Expr<'nd, 'tcx>,
     context_type: &'tcx Type<'tcx>,
 ) -> Option<Binding<'tcx>> {
-    let operand_ty = operand.ty()?;
-
-    // TODO: x.0, x.a, ...
-    let name = if let syntax::ExprKind::Var(name) = operand.kind() {
-        name
-    } else {
-        return None;
-    };
+    let target_expr_ty = target_expr.ty()?;
 
     // can be narrowed?
-    match (operand_ty, context_type) {
+    match (target_expr_ty, context_type) {
         (Type::String, Type::LiteralString(_)) => {}
         _ => return None,
     }
 
-    Some(Binding::new(name, context_type))
+    // TODO: x.0, x.a, ...
+
+    let binding_name;
+    let mut node = target_expr;
+    let mut narrowed_ty = context_type;
+
+    loop {
+        match node.kind() {
+            syntax::ExprKind::Var(name) => {
+                // root
+                binding_name = name.to_string();
+                break;
+            }
+            syntax::ExprKind::IndexAccess(operand, index) => {
+                // narrow the type of x.N (x.0, x.1, ...)
+                node = operand;
+                match operand.expect_ty() {
+                    Type::Tuple(fs) => {
+                        let mut value_types = fs.clone();
+
+                        value_types.push(narrowed_ty);
+                        value_types.swap_remove(*index);
+                        narrowed_ty = tcx.tuple(value_types);
+                    }
+                    _ => unreachable!("expect tuple type"),
+                }
+            }
+            _ => {
+                return None;
+            }
+        }
+    }
+
+    Some(Binding::new(binding_name, narrowed_ty))
 }
 
 fn get_struct_ty<'tcx>(
@@ -1148,7 +1171,7 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
                 .map(|pat| pattern_to_type(tcx, pat, named_types))
                 .collect();
 
-            tcx.tuple(&sub_types)
+            tcx.tuple(sub_types)
         }
         PatternKind::Struct(struct_pat) => {
             // Search a named struct in the scope.

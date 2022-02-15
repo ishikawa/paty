@@ -32,9 +32,8 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::Undetermined)
     }
 
-    pub fn tuple(&self, value_types: &[&'tcx Type<'tcx>]) -> &'tcx Type<'tcx> {
-        self.type_arena
-            .alloc(Type::Tuple(value_types.iter().copied().collect()))
+    pub fn tuple(&self, value_types: Vec<&'tcx Type<'tcx>>) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::Tuple(value_types))
     }
 
     pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
@@ -73,7 +72,7 @@ impl<'tcx> TypeContext<'tcx> {
             }
         }
 
-        self.tuple(&value_types)
+        self.tuple(value_types)
     }
 
     pub fn native_int(&self) -> &'tcx Type<'tcx> {

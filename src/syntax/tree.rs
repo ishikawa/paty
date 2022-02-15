@@ -1350,7 +1350,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 // ')'
                 it.next();
 
-                self.tcx.tuple(&value_types)
+                self.tcx.tuple(value_types)
             }
             TokenKind::Operator('{') => {
                 let fields = self.parse_elements(it, ('{', '}'), Self::type_field)?;
