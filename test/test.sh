@@ -330,12 +330,20 @@ assert '1 100
   func(T { a: 4, b: (1, 300) })
   func(T { a: 4, b: (400, 1) })
   func(T { a: 2, b: (3, 0) })'
-# pattern match with literal types
+# literal types
 assert '1' '
   case "A"
   when "A"
     puts(1)
   end'
+assert '1' '
+  def foo(v: "A")
+    case v
+    when "A"
+      puts(1)
+    end
+  end
+  foo("A")'
 # function overloading
 assert "30
 true
