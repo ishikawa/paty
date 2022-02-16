@@ -246,6 +246,18 @@ assert "{ a: 100 }
   end
   puts(foo(true))
   puts(foo(false))'
+assert "(100, \"foo\")
+(200, \"baz\")" '
+  def foo(b: boolean)
+    case b
+    when true
+      (100, "foo")
+    when false
+      (200, "baz") # widening to (int64, string)
+    end
+  end
+  puts(foo(true))
+  puts(foo(false))'
 # or-pattern
 assert '0..=2
 0..=2

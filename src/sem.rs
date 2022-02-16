@@ -1113,7 +1113,19 @@ fn widen_type<'tcx>(
                 None
             }
         }
-        // compound types
+        // Recursively widen types in compound types
+        (Type::Tuple(fs1), Type::Tuple(fs2)) => {
+            if fs1.len() != fs2.len() {
+                return None;
+            }
+
+            let value_types: Vec<_> = fs1
+                .iter()
+                .zip(fs2)
+                .map(|(ty1, ty2)| widen_type(tcx, ty1, ty2).unwrap_or(ty2))
+                .collect();
+            Some(tcx.tuple(value_types))
+        }
         (Type::Struct(struct_ty1), Type::Struct(struct_ty2)) => {
             if struct_ty1.name() != struct_ty2.name() {
                 return None;
@@ -1128,7 +1140,7 @@ fn widen_type<'tcx>(
                 .zip(struct_ty2.fields())
                 .map(|(f1, f2)| {
                     assert!(f1.name() == f2.name());
-                    let ty = widen_type(tcx, f1.ty(), f2.ty()).unwrap_or(f1.ty());
+                    let ty = widen_type(tcx, f1.ty(), f2.ty()).unwrap_or_else(|| f1.ty());
 
                     TypedField::new(f1.name().to_string(), ty)
                 })
