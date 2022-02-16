@@ -1082,7 +1082,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     unify_pat_type(expected_ty, pat, errors);
 }
 
-/// This function returns the widen type for two types if it exists.
+/// Try to widen a given type `ty1` to `ty2`, returns the widen if it exists.
 fn widen_type<'tcx>(
     tcx: TypeContext<'tcx>,
     ty1: &'tcx Type<'tcx>,
@@ -1090,19 +1090,58 @@ fn widen_type<'tcx>(
 ) -> Option<&'tcx Type<'tcx>> {
     // TODO: widen the type to an union type.
     match (ty1, ty2) {
+        (Type::Int64, Type::LiteralInt64(_)) | (Type::LiteralInt64(_), Type::Int64) => {
+            Some(tcx.int64())
+        }
+        (Type::NativeInt, Type::LiteralInt64(_)) | (Type::LiteralInt64(_), Type::NativeInt) => {
+            Some(tcx.native_int())
+        }
         (Type::LiteralInt64(n0), Type::LiteralInt64(n1)) => {
             if n0 != n1 {
-                return Some(tcx.int64());
+                Some(tcx.int64())
+            } else {
+                None
             }
+        }
+        (Type::String, Type::LiteralString(_)) | (Type::LiteralString(_), Type::String) => {
+            Some(tcx.string())
         }
         (Type::LiteralString(s0), Type::LiteralString(s1)) => {
             if s0 != s1 {
-                return Some(tcx.string());
+                Some(tcx.string())
+            } else {
+                None
             }
         }
-        _ => {}
+        // compound types
+        (Type::Struct(struct_ty1), Type::Struct(struct_ty2)) => {
+            if struct_ty1.name() != struct_ty2.name() {
+                return None;
+            }
+            if struct_ty1.fields().len() != struct_ty2.fields().len() {
+                return None;
+            }
+
+            let fields: Vec<_> = struct_ty1
+                .fields()
+                .iter()
+                .zip(struct_ty2.fields())
+                .map(|(f1, f2)| {
+                    assert!(f1.name() == f2.name());
+                    let ty = widen_type(tcx, f1.ty(), f2.ty()).unwrap_or(f1.ty());
+
+                    TypedField::new(f1.name().to_string(), ty)
+                })
+                .collect();
+
+            if let Some(struct_name) = struct_ty1.name() {
+                Some(tcx.struct_ty(struct_name.to_string(), fields))
+            } else {
+                Some(tcx.anon_struct_ty(fields))
+            }
+        }
+        _ => None,
     }
-    None
 }
 
 /// Narrow the type of given operand expression from contextual type (e.g. matched pattern).
