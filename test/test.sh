@@ -234,6 +234,35 @@ assert "100
   end
   puts(foo(true))
   puts(foo(false))'
+assert '100
+200
+300' '
+  def foo(n: int64)
+    case n
+    when 1
+      100
+    when 2
+      200
+    else
+      300
+    end
+  end
+  puts(foo(1))
+  puts(foo(2))
+  puts(foo(3))'
+assert 'n = 1
+n = 2
+3' '
+  def foo(n: int64)
+    case n < 3
+    when true
+      puts("n =", n)
+      foo(n + 1)
+    else
+      n
+    end
+  end
+  puts(foo(1))'
 assert "{ a: 100 }
 { a: 55 }" '
   def foo(b: boolean)
@@ -551,23 +580,29 @@ assert "30 false 110 true" "
   puts(t1.0, t1.1, t2.0, t2.1)"
 assert "(1, 2, 3)" "puts((1, 2, 3))"
 assert "1" "
-  case (1, 2, 3)
-  when (2, 3, 4)
-    puts(0)
-  when (1, 2, 3)
-    puts(1)
-  else
-    puts(2)
-  end"
+  def foo(t: (int64, int64, int64))
+    case t
+    when (2, 3, 4)
+      puts(0)
+    when (1, 2, 3)
+      puts(1)
+    else
+      puts(2)
+    end
+  end
+  foo((1, 2, 3))"
 assert "2" '
-  case ("hello", true, 15)
-  when ("hello", false, 15)
-    puts(1)
-  when ("hello", true, 0..=15)
-    puts(2)
-  else
-    puts(3)
-  end'
+  def foo(t: (string, boolean, int64))
+    case t
+    when ("hello", false, 15)
+      puts(1)
+    when ("hello", true, 0..=15)
+      puts(2)
+    else
+      puts(3)
+    end
+  end
+  foo(("hello", true, 15))'
 # zero-sized struct/tuple
 assert "()" "
   a = ()

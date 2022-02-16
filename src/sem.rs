@@ -140,7 +140,7 @@ pub fn analyze<'nd: 'tcx, 'tcx>(
                     tcx,
                     stmt,
                     &mut scope,
-                    &mut functions,
+                    &functions,
                     &mut named_types,
                     &mut errors,
                 );
@@ -301,11 +301,37 @@ fn analyze_decl<'nd: 'tcx, 'tcx>(
     }
 }
 
+fn analyze_stmts<'nd: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    stmts: &[syntax::Stmt<'nd, 'tcx>],
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &[&'nd syntax::Function<'nd, 'tcx>],
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) -> &'tcx Type<'tcx> {
+    // unit type for empty body
+    let mut last_stmt_ty = if stmts.is_empty() {
+        tcx.unit()
+    } else {
+        tcx.undetermined()
+    };
+
+    for stmt in stmts {
+        analyze_stmt(tcx, stmt, vars, functions, named_types, errors);
+        if let syntax::StmtKind::Expr(expr) = stmt.kind() {
+            if let Some(ty) = expr.ty() {
+                last_stmt_ty = ty;
+            }
+        }
+    }
+    last_stmt_ty
+}
+
 fn analyze_stmt<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmt: &syntax::Stmt<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    functions: &[&'nd syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -333,7 +359,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
     expr: &'nd syntax::Expr<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&'nd syntax::Function<'nd, 'tcx>],
-    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match expr.kind() {
@@ -749,41 +775,46 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                     scope.insert(narrowed_binding);
                 }
 
-                analyze_expr(tcx, arm.body(), &mut scope, functions, named_types, errors);
+                // unit type for empty body
+                let arm_body_ty =
+                    analyze_stmts(tcx, arm.body(), &mut scope, functions, named_types, errors);
 
                 // -- Type widening
                 // The types of every arm of the expression must be compatible,
                 // and the type of the entire expression must be finally determined to be
                 // one type. If the types of each arm contain literal types and they are not
                 // compatible, then try to widen them to its general type.
-
-                // TODO: widen the type to an union type.
                 if let Some(ty1) = expr_ty {
-                    if let Some(ty2) = arm.body().ty() {
-                        if let Some(widen_ty) = widen_type(tcx, ty1, ty2) {
-                            expr_ty = Some(widen_ty);
-                        }
+                    if let Some(widen_ty) = widen_type(tcx, ty1, arm_body_ty) {
+                        expr_ty = Some(widen_ty);
                     }
                 }
 
                 if let Some(expected_ty) = expr_ty {
-                    unify_expr_type(expected_ty, arm.body(), errors);
-                }
-
-                if expr_ty.is_none() {
-                    expr_ty = arm.body().ty().or_else(|| Some(tcx.undetermined()));
+                    expect_assignable_type(expected_ty, arm_body_ty, errors);
+                } else {
+                    expr_ty = Some(arm_body_ty);
                 }
             }
 
             if let Some(else_body) = else_body {
                 let mut scope = Scope::from_parent(vars);
-                analyze_expr(tcx, else_body, &mut scope, functions, named_types, errors);
 
-                if let Some(expected) = expr_ty {
-                    unify_expr_type(expected, else_body, errors);
+                let else_body_ty =
+                    analyze_stmts(tcx, else_body, &mut scope, functions, named_types, errors);
+
+                // Type widening
+                if let Some(ty1) = expr_ty {
+                    if let Some(widen_ty) = widen_type(tcx, ty1, else_body_ty) {
+                        expr_ty = Some(widen_ty);
+                    }
                 }
 
-                expr_ty = Some(else_body.ty().unwrap());
+                if let Some(expected_ty) = expr_ty {
+                    expect_assignable_type(expected_ty, else_body_ty, errors);
+                } else {
+                    expr_ty = Some(else_body_ty);
+                }
             }
 
             if let Some(expr_ty) = expr_ty {
@@ -807,7 +838,7 @@ fn analyze_let_pattern<'nd: 'tcx, 'tcx>(
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    functions: &[&'nd syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {

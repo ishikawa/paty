@@ -325,7 +325,7 @@ assert 'expected type `"A"`, found `"B"`' '
   when "B"
     puts(2)
   end'
-assert 'expected type `3`, found `1`' "
+assert 'expected type `1`, found `2`' "
   case 3
   when 1
     puts(1)
@@ -333,6 +333,15 @@ assert 'expected type `3`, found `1`' "
     puts(2)
   else
     puts(3)
+  end"
+assert "1" "
+  case (1, 2, 3)
+  when (2, 3, 4)
+    puts(0)
+  when (1, 2, 3)
+    puts(1)
+  else
+    puts(2)
   end"
 # tuple
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"

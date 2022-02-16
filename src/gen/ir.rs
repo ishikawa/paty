@@ -1156,8 +1156,13 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             &mut branch_stmts,
                         );
 
-                        let ret = self.build_expr(arm.body(), program, &mut branch_stmts);
-                        branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                        let mut ret = None;
+                        for stmt in arm.body() {
+                            ret = self.build_stmt(stmt, program, &mut branch_stmts);
+                        }
+                        if let Some(ret) = ret {
+                            branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                        }
 
                         Branch {
                             condition,
@@ -1169,8 +1174,13 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
 
-                    let ret = self.build_expr(else_body, program, &mut branch_stmts);
-                    branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                    let mut ret = None;
+                    for stmt in else_body {
+                        ret = self.build_stmt(stmt, program, &mut branch_stmts);
+                    }
+                    if let Some(ret) = ret {
+                        branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                    }
 
                     let branch = Branch {
                         condition: None,
