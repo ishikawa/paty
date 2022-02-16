@@ -110,6 +110,7 @@ impl<'a, 'tcx> Emitter {
             | Type::Boolean
             | Type::String
             | Type::NativeInt
+            | Type::LiteralInt64(_)
             | Type::LiteralString(_) => {
                 // no emit
                 return;
@@ -427,7 +428,7 @@ impl<'a, 'tcx> Emitter {
                         }
                         FormatSpec::Value(value) => {
                             match value.ty() {
-                                Type::Int64 => {
+                                Type::Int64 | Type::LiteralInt64(_) => {
                                     // Use standard conversion specifier macros for integer types.
                                     code.push_str("%\" PRId64 \"");
                                 }
@@ -471,7 +472,11 @@ impl<'a, 'tcx> Emitter {
                     code.push_str(", ");
 
                     match value.ty() {
-                        Type::Int64 | Type::String | Type::NativeInt | Type::LiteralString(_) => {
+                        Type::Int64
+                        | Type::String
+                        | Type::NativeInt
+                        | Type::LiteralInt64(_)
+                        | Type::LiteralString(_) => {
                             self.emit_expr(value, code);
                         }
                         Type::Boolean => {
@@ -500,7 +505,7 @@ impl<'a, 'tcx> Emitter {
             }
             ExprKind::Int64(n) => {
                 match expr.ty() {
-                    Type::Int64 => {
+                    Type::Int64 | Type::LiteralInt64(_) => {
                         // Use standard macros for integer constant expression to expand
                         // a value to the type int_least_N.
                         code.push_str(&format!("INT64_C({})", *n))
@@ -607,7 +612,7 @@ fn tmp_var(t: &TmpVar) -> String {
 
 fn c_type(ty: &Type) -> String {
     match ty {
-        Type::Int64 => "int64_t".to_string(),
+        Type::Int64 | Type::LiteralInt64(_) => "int64_t".to_string(),
         Type::Boolean => "bool".to_string(),
         Type::String | Type::LiteralString(_) => "const char *".to_string(),
         Type::NativeInt => "int".to_string(),
@@ -625,9 +630,12 @@ fn c_type(ty: &Type) -> String {
 // numeric elements to zero and pointers null.
 fn zero_value(ty: &Type) -> &'static str {
     match ty {
-        Type::Int64 | Type::Boolean | Type::String | Type::NativeInt | Type::LiteralString(_) => {
-            "0"
-        }
+        Type::Int64
+        | Type::Boolean
+        | Type::String
+        | Type::NativeInt
+        | Type::LiteralInt64(_)
+        | Type::LiteralString(_) => "0",
         Type::Tuple(_) | Type::Struct(_) => "{0}",
         Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
@@ -711,7 +719,7 @@ fn escape_c_string(value: &str) -> String {
 ///
 fn encode_ty(ty: &Type, buffer: &mut String) {
     match ty {
-        Type::Int64 => buffer.push_str("i64"),
+        Type::Int64 | Type::LiteralInt64(_) => buffer.push_str("i64"),
         Type::Boolean => buffer.push('b'),
         Type::String | Type::LiteralString(_) => buffer.push('s'),
         Type::NativeInt => buffer.push_str("ni"),
@@ -751,9 +759,17 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
 /// | "_Z" | digits (The length of the following name) | name | digits (The number of args) | (arg types) |
 /// +------+-------------------------------------------+------+-----------------------------+-------------+
 ///
-/// ## Literal type - string
+/// ## Literal types
 ///
 /// To make function overloading work properly, we have to encode literal types.
+///
+/// ### integers
+///
+/// +-----+-----+-------------------------+-----+---------+
+/// | "L" | "i" | digits (number of bits) | "_" | integer |
+/// +-----+-----+-------------------------+-----+---------+
+///
+/// ### string
 ///
 /// +-----+-----+------------------------------------+-----+-----------------------------------+
 /// | "L" | "s" | digits (The length of "b58" field) | "_" | b58 (base58 encoded string value) |
@@ -770,18 +786,27 @@ fn mangle_name(signature: &FunctionSignature<'_>) -> String {
     for p in signature.params() {
         let pty = p.bottom_ty();
 
-        if let Type::LiteralString(s) = pty {
-            let encoded = bs58::encode(s).into_string();
+        match pty {
+            Type::LiteralInt64(n) => {
+                buffer.push('L');
+                buffer.push('i');
+                buffer.push_str("64");
+                buffer.push('_');
+                buffer.push_str(&n.to_string());
+            }
+            Type::LiteralString(s) => {
+                let encoded = bs58::encode(s).into_string();
 
-            buffer.push('L');
-            buffer.push('s');
+                buffer.push('L');
+                buffer.push('s');
 
-            // Encode literal string with base58 encoding
-            buffer.push_str(&encoded.len().to_string());
-            buffer.push('_');
-            buffer.push_str(&encoded);
-        } else {
-            encode_ty(pty, &mut buffer);
+                // Encode literal string with base58 encoding
+                buffer.push_str(&encoded.len().to_string());
+                buffer.push('_');
+                buffer.push_str(&encoded);
+            }
+            // fall back to encode_ty()
+            _ => encode_ty(pty, &mut buffer),
         }
     }
 

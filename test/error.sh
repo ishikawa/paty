@@ -266,13 +266,6 @@ assert 'return type of function `bar(int64)` is specified with `boolean`, found 
     x + 1
   end'
 # type check
-assert 'expected type `"A"`, found `"B"`' '
-  case "A"
-  when "A"
-    puts(1)
-  when "B"
-    puts(2)
-  end'
 assert 'Semantic error: expected type `int64`, found `boolean`' "
   def foo(n: int64)
     n
@@ -324,6 +317,23 @@ assert 'expected type `int64`, found `struct T { a: int64, b: boolean }`' '
   else
     puts(2)
   end'
+# literal types
+assert 'expected type `"A"`, found `"B"`' '
+  case "A"
+  when "A"
+    puts(1)
+  when "B"
+    puts(2)
+  end'
+assert 'expected type `3`, found `1`' "
+  case 3
+  when 1
+    puts(1)
+  when 0..=2
+    puts(2)
+  else
+    puts(3)
+  end"
 # tuple
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
 assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "

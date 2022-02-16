@@ -37,6 +37,7 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
             | Type::Boolean
             | Type::String
             | Type::NativeInt
+            | Type::LiteralInt64(_)
             | Type::LiteralString(_) => {
                 // no declaration
                 return;
@@ -1203,7 +1204,7 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         quote_string: bool,
     ) {
         match arg.ty() {
-            Type::Int64 | Type::NativeInt | Type::Boolean => {
+            Type::Int64 | Type::NativeInt | Type::Boolean | Type::LiteralInt64(_) => {
                 specs.push(FormatSpec::Value(inc_used(arg)));
             }
             Type::String | Type::LiteralString(_) => {

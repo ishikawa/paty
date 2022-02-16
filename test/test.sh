@@ -139,25 +139,43 @@ assert 30 "
   # comment 4
   puts(foo(10, 20))"
 # pattern match (case)
-assert 3 "
-  case 3
-  when 1
-    puts(1)
-  when 0..=2
-    puts(2)
-  else
-    puts(3)
-  end"
-assert 3 "
-  n = case 3
-  when 1
-    1
-  when 0..=2
-    2
-  else
-    3
+assert '2
+1
+2
+3' "
+  def foo(n)
+    case n
+    when 1
+      puts(1)
+    when 0..=2
+      puts(2)
+    else
+      puts(3)
+    end
   end
-  puts(n)"
+  foo(0)
+  foo(1)
+  foo(2)
+  foo(3)"
+assert '2
+1
+2
+3' "
+  def foo(n)
+    m = case n
+    when 1
+      puts(1)
+    when 0..=2
+      puts(2)
+    else
+      puts(3)
+    end
+    m
+  end
+  foo(0)
+  foo(1)
+  foo(2)
+  foo(3)"
 assert 152 "
   def pt(n)
     case n
@@ -223,7 +241,7 @@ assert "{ a: 100 }
     when true
       { a: 100 }
     when false
-      { a: 55 }
+      { a: 55 } # widening to { a: int64 }
     end
   end
   puts(foo(true))
@@ -334,6 +352,11 @@ assert '1 100
 assert '1' '
   case "A"
   when "A"
+    puts(1)
+  end'
+assert '1' '
+  case 100
+  when 100
     puts(1)
   end'
 assert '1' '

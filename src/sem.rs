@@ -227,6 +227,7 @@ fn resolve_type<'tcx>(
         | Type::String
         | Type::Undetermined
         | Type::NativeInt
+        | Type::LiteralInt64(_)
         | Type::LiteralString(_) => {}
     }
 }
@@ -336,14 +337,13 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match expr.kind() {
-        syntax::ExprKind::Integer(_) => {
-            unify_expr_type(tcx.int64(), expr, errors);
+        syntax::ExprKind::Integer(n) => {
+            unify_expr_type(tcx.literal_int64(*n), expr, errors);
         }
         syntax::ExprKind::Boolean(_) => {
             unify_expr_type(tcx.boolean(), expr, errors);
         }
         syntax::ExprKind::String(s) => {
-            //unify_expr_type(tcx.string(), expr, errors);
             unify_expr_type(tcx.literal_string(s.clone()), expr, errors);
         }
         syntax::ExprKind::Tuple(values) => {
@@ -742,7 +742,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                     continue;
                 }
 
-                // type narrowing.
+                // -- Type narrowing
                 // Override the named binding with new narrowed type binding.
                 let context_ty = pattern_to_type(tcx, arm.pattern(), named_types);
                 if let Some(narrowed_binding) = narrow_type(tcx, head, context_ty) {
@@ -751,14 +751,18 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
                 analyze_expr(tcx, arm.body(), &mut scope, functions, named_types, errors);
 
-                // The type of every arms must be compatible.
-                // If each type of arms is a literal type and they are incompatible,
-                // try to widen the type to generic one.
-                if let (Some(Type::LiteralString(s0)), Some(Type::LiteralString(s1))) =
-                    (expr_ty, arm.body().ty())
-                {
-                    if s0 != s1 {
-                        expr_ty = Some(tcx.string());
+                // -- Type widening
+                // The types of every arm of the expression must be compatible,
+                // and the type of the entire expression must be finally determined to be
+                // one type. If the types of each arm contain literal types and they are not
+                // compatible, then try to widen them to its general type.
+
+                // TODO: widen the type to an union type.
+                if let Some(ty1) = expr_ty {
+                    if let Some(ty2) = arm.body().ty() {
+                        if let Some(widen_ty) = widen_type(tcx, ty1, ty2) {
+                            expr_ty = Some(widen_ty);
+                        }
                     }
                 }
 
@@ -925,8 +929,8 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
 ) {
     // Infer the type of pattern from its values.
     match pat.kind() {
-        PatternKind::Integer(_) => {
-            unify_pat_type(tcx.int64(), pat, errors);
+        PatternKind::Integer(n) => {
+            unify_pat_type(tcx.literal_int64(*n), pat, errors);
         }
         PatternKind::Boolean(_) => {
             unify_pat_type(tcx.boolean(), pat, errors);
@@ -1078,22 +1082,43 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     unify_pat_type(expected_ty, pat, errors);
 }
 
+/// This function returns the widen type for two types if it exists.
+fn widen_type<'tcx>(
+    tcx: TypeContext<'tcx>,
+    ty1: &'tcx Type<'tcx>,
+    ty2: &'tcx Type<'tcx>,
+) -> Option<&'tcx Type<'tcx>> {
+    // TODO: widen the type to an union type.
+    match (ty1, ty2) {
+        (Type::LiteralInt64(n0), Type::LiteralInt64(n1)) => {
+            if n0 != n1 {
+                return Some(tcx.int64());
+            }
+        }
+        (Type::LiteralString(s0), Type::LiteralString(s1)) => {
+            if s0 != s1 {
+                return Some(tcx.string());
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
 /// Narrow the type of given operand expression from contextual type (e.g. matched pattern).
 fn narrow_type<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     target_expr: &'nd syntax::Expr<'nd, 'tcx>,
     context_type: &'tcx Type<'tcx>,
 ) -> Option<Binding<'tcx>> {
-    let target_expr_ty = target_expr.ty()?;
+    let target_expr_ty = target_expr.ty()?.bottom_ty();
 
     // can be narrowed?
-    match (target_expr_ty, context_type) {
-        (Type::String, Type::LiteralString(_)) => {}
-        _ => return None,
+    if !target_expr_ty.can_be_narrowed_to(context_type) {
+        return None;
     }
 
-    // TODO: x.0, x.a, ...
-
+    // narrowing
     let binding_name;
     let mut node = target_expr;
     let mut narrowed_ty = context_type;
@@ -1185,12 +1210,9 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
 ) -> &'tcx Type<'tcx> {
     match pat.kind() {
-        PatternKind::Integer(_) => tcx.int64(),
+        PatternKind::Integer(n) => tcx.literal_int64(*n),
         PatternKind::Boolean(_) => tcx.boolean(),
-        PatternKind::String(s) => {
-            //tcx.string()
-            tcx.literal_string(s.clone())
-        }
+        PatternKind::String(s) => tcx.literal_string(s.clone()),
         PatternKind::Range { .. } => tcx.int64(),
         PatternKind::Tuple(patterns) => {
             let sub_types: Vec<_> = patterns

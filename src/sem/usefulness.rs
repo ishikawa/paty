@@ -338,7 +338,16 @@ impl<'tcx> SplitWildcard {
                 ));
                 vec![ctor]
             }
-            // A constant string
+            // literal types
+            Type::LiteralInt64(n) => {
+                let ctor = Constructor::IntRange(IntRange::from_range(
+                    *n,
+                    *n,
+                    &Type::Int64,
+                    RangeEnd::Included,
+                ));
+                vec![ctor]
+            }
             Type::LiteralString(s) => vec![Constructor::Str(s.to_string())],
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
             // This type is one for which we cannot list constructors, like `str` or `f64`.

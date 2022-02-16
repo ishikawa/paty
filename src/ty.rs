@@ -12,6 +12,8 @@ impl<'tcx> TypeContext<'tcx> {
         Self { type_arena }
     }
 
+    // TODO: cache types
+
     pub fn int64(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Int64)
     }
@@ -22,6 +24,10 @@ impl<'tcx> TypeContext<'tcx> {
 
     pub fn string(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::String)
+    }
+
+    pub fn literal_int64(&self, value: i64) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::LiteralInt64(value))
     }
 
     pub fn literal_string(&self, value: String) -> &'tcx Type<'tcx> {
@@ -36,14 +42,14 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::Tuple(value_types))
     }
 
-    pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
-        self.anon_struct_ty(vec![])
-    }
-
     /// Returns a struct type whose name is `name` and has no value.
     pub fn empty_struct_ty(&self, name: String) -> &'tcx Type<'tcx> {
         let struct_ty = StructTy::new_named(name, vec![]);
         self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+
+    pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
+        self.anon_struct_ty(vec![])
     }
 
     pub fn anon_struct_ty(&self, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
@@ -97,6 +103,8 @@ pub enum Type<'tcx> {
     Named(NamedTy<'tcx>),
 
     // Literal types
+    LiteralInt64(i64),
+
     LiteralString(String),
 
     /// Type is not specified and should be inferred in the later phase.
@@ -123,8 +131,12 @@ impl<'tcx> Type<'tcx> {
     /// Returns `true` if the type is zero-sized.
     pub fn is_zero_sized(&self) -> bool {
         match self {
-            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => false,
-            Type::LiteralString(_) => false,
+            Type::Int64
+            | Type::Boolean
+            | Type::String
+            | Type::LiteralInt64(_)
+            | Type::LiteralString(_)
+            | Type::NativeInt => false,
             Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
             Type::Struct(struct_ty) => struct_ty.fields().iter().all(|f| f.ty().is_zero_sized()),
             Type::Named(named_ty) => {
@@ -143,7 +155,9 @@ impl<'tcx> Type<'tcx> {
     pub fn is_assignable_to(&self, other: &Self) -> bool {
         match (self, other) {
             // Widening type
-            (Self::LiteralString(_), Self::String) => true,
+            (Self::LiteralInt64(_), Self::Int64)
+            | (Self::LiteralInt64(_), Self::NativeInt)
+            | (Self::LiteralString(_), Self::String) => true,
             // Compound types
             (Self::Tuple(l0), Self::Tuple(r0)) => {
                 l0.len() == r0.len() && l0.iter().zip(r0).all(|(a, b)| a.is_assignable_to(b))
@@ -180,12 +194,23 @@ impl<'tcx> Type<'tcx> {
             _ => self == other,
         }
     }
+
+    /// Returns `true` if a given type can be narrowed to other type.
+    pub fn can_be_narrowed_to(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Type::Int64, Type::LiteralInt64(_))
+                | (Type::NativeInt, Type::LiteralInt64(_))
+                | (Type::String, Type::LiteralString(_))
+        )
+    }
 }
 
 impl PartialEq for Type<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::LiteralString(l0), Self::LiteralString(r0)) => l0 == r0,
+            (Self::LiteralInt64(l0), Self::LiteralInt64(r0)) => l0 == r0,
             (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
             (Self::Struct(l0), Self::Struct(r0)) => l0 == r0,
             (Self::Named(named_ty1), Self::Named(named_ty2)) => {
@@ -222,6 +247,7 @@ impl Hash for Type<'_> {
                     named_ty.name().hash(state)
                 }
             }
+            Self::LiteralInt64(n) => n.hash(state),
             Self::LiteralString(s) => s.hash(state),
             Self::Int64 | Self::Boolean | Self::String | Self::Undetermined | Self::NativeInt => {
                 core::mem::discriminant(self).hash(state)
@@ -251,6 +277,7 @@ impl fmt::Display for Type<'_> {
                 write!(f, ")")
             }
             Self::Struct(struct_ty) => struct_ty.fmt(f),
+            Self::LiteralInt64(n) => write!(f, "{}", n),
             Self::LiteralString(s) => write!(f, "\"{}\"", s.escape_default()),
         }
     }
