@@ -148,7 +148,7 @@ impl IntRange {
 
         let kind = if lo == hi {
             match ty {
-                Type::Int64 => PatternKind::Integer(lo),
+                Type::Int64 | Type::LiteralInt64(_) => PatternKind::Integer(lo),
                 Type::Boolean => PatternKind::Boolean(lo != 0),
                 _ => unreachable!("unexpected type ({}) for int range", ty),
             }

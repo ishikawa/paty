@@ -38,14 +38,15 @@ assert 'cannot find variable `x` in scope' "x"
 assert 'cannot find function `foo` in scope' "foo()"
 # unreachable pattern
 assert 'Semantic error: unreachable pattern: `1`' "
-  n = 100
-  case n
-  when 1
-    puts(1)
-  when 1
-    puts(1)
-  else
-    puts(n)
+  def foo(n: int64)
+    case n
+    when 1
+      puts(1)
+    when 1
+      puts(1)
+    else
+      puts(n)
+    end
   end"
 assert 'Semantic error: unreachable pattern: `false`' "
   case 5 > 3
@@ -123,12 +124,13 @@ else
 end'
 # non-exhaustive pattern
 assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
-  n = 100
-  case n
-  when 1
-    puts(1)
-  when 2
-    puts(2)
+  def foo(n: int64)
+    case n
+    when 1
+      puts(1)
+    when 2
+      puts(2)
+    end
   end"
 assert 'Semantic error: non-exhaustive pattern: `true`' "
   case 5 > 3
@@ -200,11 +202,13 @@ assert 'named field `value` is defined more than once' "
     puts(1)
   end"
 assert 'unreachable pattern: `{ a: _, b: 3 }`' '
-  case { a: 1, b: 2 }
-  when { a: _, ... } | { b: 3, ... }
-    puts(0)
-  else
-    puts(1)
+  def foo(t: { a: int64, b: int64 })
+    case t
+    when { a: _, ... } | { b: 3, ... }
+      puts(0)
+    else
+      puts(1)
+    end
   end'
 # binding variables
 assert 'identifier `x` is bound more than once in the same pattern' "
@@ -272,8 +276,11 @@ assert 'Semantic error: expected type `int64`, found `boolean`' "
   end
   foo(true)"
 assert 'Semantic error: expected type `(int64)`, found `int64`' "
-  def foo(t: (int64,))
+  def baz(t: (int64,))
     t
+  end
+  def foo(n: int64)
+    baz(n)
   end
   foo(100)"
 assert 'Semantic error: expected type `A`, found `struct B { a: int64 }`' "
@@ -283,7 +290,7 @@ assert 'Semantic error: expected type `A`, found `struct B { a: int64 }`' "
     t
   end
   foo(B { a: 100 })"
-assert 'Semantic error: expected type `(int64, int64)`, found `(int64, int64, int64)`' "
+assert 'Semantic error: expected type `(int64, int64)`, found `(1, 2, 3)`' "
   def foo(t: (int64, int64))
     case t
     when (1, 2, 3)
@@ -294,11 +301,14 @@ assert 'Semantic error: expected type `(int64, int64)`, found `(int64, int64, in
   end
   foo((1, 2))"
 assert 'Semantic error: non-exhaustive pattern: `(int64::MIN..=0)`
-Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "case (1,)
-  when (1,)
-    puts(1)
+Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "
+  def foo(t: (int64,))
+    case t
+    when (1,)
+      puts(1)
+    end
   end"
-assert 'expected type `int64`, found `boolean`' '
+assert 'expected type `100`, found `boolean`' '
   case { a: 100, b: false }
   when { a: x, b: false } | { a: _, b: x }
     puts(x)
@@ -309,7 +319,7 @@ assert 'expected type `int64`, found `boolean`' '
   when { a: T { value: x }, b: false } | { a: _, b: x }
     puts(x)
   end'
-assert 'expected type `int64`, found `struct T { a: int64, b: boolean }`' '
+assert 'expected type `1`, found `struct T { a: int64, b: boolean }`' '
   struct T { a: int64, b: boolean }
   case 1
   when T { a }
@@ -325,7 +335,7 @@ assert 'expected type `"A"`, found `"B"`' '
   when "B"
     puts(2)
   end'
-assert 'expected type `1`, found `2`' "
+assert 'expected type `3`, found `1`' "
   case 3
   when 1
     puts(1)
@@ -334,7 +344,7 @@ assert 'expected type `1`, found `2`' "
   else
     puts(3)
   end"
-assert "1" "
+assert 'expected type `1`, found `2`' "
   case (1, 2, 3)
   when (2, 3, 4)
     puts(0)
@@ -344,8 +354,8 @@ assert "1" "
     puts(2)
   end"
 # tuple
-assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "(1, 2, 3).3"
-assert 'Semantic error: no field `3` on type `(int64, int64, int64)`' "
+assert 'Semantic error: no field `3` on type `(1, 2, 3)`' "(1, 2, 3).3"
+assert 'Semantic error: no field `3` on type `(1, 2, 3)`' "
   x = (1, 2, 3)
   x.3"
 # struct
@@ -354,7 +364,7 @@ assert 'Semantic error: no field `b` on type `struct A { a: int64 }`' "
   a = A { a: 100 }
   a.b"
 # anonymous struct
-assert 'expected type `{ a: int64, b: int64 }`, found `int64`' '
+assert 'expected type `{ a: int64, b: int64 }`, found `100`' '
   def foo(opts: { a: int64, b: int64 })
     opts.a + opts.b
   end
@@ -365,7 +375,7 @@ assert 'identifier `a` is bound more than once in the same pattern' '
     puts(a)
   end'
 # or-pattern
-assert 'expected type `struct T { a: int64 }`, found `{ a: int64 }`' '
+assert 'expected type `struct T { a: int64 }`, found `{ a: 2 }`' '
   struct T { a: int64 }
   t = T { a: 0 }
   case t
