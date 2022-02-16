@@ -1377,6 +1377,12 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 let ty = Type::Named(NamedTy::new(name));
                 self.tcx.type_arena.alloc(ty)
             }
+            TokenKind::Integer(n) => {
+                it.next();
+
+                let i = n.parse().unwrap();
+                self.tcx.literal_int64(i)
+            }
             TokenKind::String(value) => {
                 it.next();
 

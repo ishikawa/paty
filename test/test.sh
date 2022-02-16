@@ -408,6 +408,14 @@ assert '1' '
     end
   end
   foo("A")'
+assert '100' '
+  def foo(v: 1)
+    case v
+    when 1
+      puts(100)
+    end
+  end
+  foo(1)'
 assert 'override 1
 override 2
 string C' '
