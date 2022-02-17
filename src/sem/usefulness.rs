@@ -57,14 +57,17 @@ pub struct IntRange {
 impl IntRange {
     #[inline]
     fn is_integral(ty: &Type) -> bool {
-        matches!(ty, Type::Int64 | Type::Boolean)
+        matches!(
+            ty,
+            Type::Int64 | Type::Boolean | Type::LiteralInt64(_) | Type::LiteralBoolean(_)
+        )
     }
 
     // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
     fn signed_bias(ty: &Type) -> i128 {
         match ty {
-            Type::Int64 => 1i128 << (i64::BITS as i128 - 1),
-            Type::Boolean => 0,
+            Type::Int64 | Type::LiteralInt64(_) => 1i128 << (i64::BITS as i128 - 1),
+            Type::Boolean | Type::LiteralBoolean(_) => 0,
             _ => 0,
         }
     }

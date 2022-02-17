@@ -344,6 +344,13 @@ assert 'expected type `3`, found `1`' "
   else
     puts(3)
   end"
+assert 'expected type `true`, found `false`' "
+  case true
+  when true
+    puts(1)
+  when false
+    puts(2)
+  end"
 assert 'expected type `1`, found `2`' "
   case (1, 2, 3)
   when (2, 3, 4)

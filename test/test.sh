@@ -201,12 +201,15 @@ assert '102030' "
     puts(x)
   end"
 assert '15' "
-  case (true, 15)
-  when (false, _)
-    puts(0)
-  when (true, x)
-    puts(x)
-  end"
+  def foo(t: (boolean, int64))
+    case t
+    when (false, _)
+      puts(0)
+    when (true, x)
+      puts(x)
+    end
+  end
+  foo((true, 15))"
 assert '60' "
   case (10, 20, 30)
   when (x, y, z)
@@ -401,6 +404,11 @@ assert '1' '
     puts(1)
   end'
 assert '1' '
+  case false
+  when false
+    puts(1)
+  end'
+assert '1' '
   def foo(v: "A")
     case v
     when "A"
@@ -416,6 +424,14 @@ assert '100' '
     end
   end
   foo(1)'
+assert '100' '
+  def foo(v: true)
+    case v
+    when true
+      puts(100)
+    end
+  end
+  foo(true)'
 assert 'override 1
 override 2
 string C' '
@@ -443,6 +459,53 @@ string C' '
   foo("A")
   foo("B")
   foo("C")'
+assert 'override 1
+override 2
+int64 300' '
+  def baz(_: 100)
+    puts("override 1")
+  end
+  def baz(_: 200)
+    puts("override 2")
+  end
+  def baz(n: int64)
+    puts("int64", n)
+  end
+
+  def foo(n: int64)
+    case n
+    when 100
+      baz(n)
+    when 200
+      baz(n)
+    else
+      baz(n)
+    end
+  end
+
+  foo(100)
+  foo(200)
+  foo(300)'
+assert 'override 1
+override 2' '
+  def baz(_: true)
+    puts("override 1")
+  end
+  def baz(_: false)
+    puts("override 2")
+  end
+
+  def foo(b: boolean)
+    case b
+    when true
+      baz(b)
+    when false
+      baz(b)
+    end
+  end
+
+  foo(true)
+  foo(false)'
 assert 'override 1
 string B' '
   def baz(_: "A")

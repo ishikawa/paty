@@ -752,6 +752,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 let mut scope = Scope::from_parent(vars);
 
                 // Infer pattern's type and bindings
+
                 //if !unify_pat_type(dbg!(head_ty), arm.pattern(), errors) {
                 //    return;
                 //}

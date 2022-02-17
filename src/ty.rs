@@ -216,8 +216,9 @@ impl<'tcx> Type<'tcx> {
 impl PartialEq for Type<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::LiteralString(l0), Self::LiteralString(r0)) => l0 == r0,
             (Self::LiteralInt64(l0), Self::LiteralInt64(r0)) => l0 == r0,
+            (Self::LiteralBoolean(l0), Self::LiteralBoolean(r0)) => l0 == r0,
+            (Self::LiteralString(l0), Self::LiteralString(r0)) => l0 == r0,
             (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
             (Self::Struct(l0), Self::Struct(r0)) => l0 == r0,
             (Self::Named(named_ty1), Self::Named(named_ty2)) => {
