@@ -111,6 +111,7 @@ impl<'a, 'tcx> Emitter {
             | Type::String
             | Type::NativeInt
             | Type::LiteralInt64(_)
+            | Type::LiteralBoolean(_)
             | Type::LiteralString(_) => {
                 // no emit
                 return;
@@ -432,7 +433,7 @@ impl<'a, 'tcx> Emitter {
                                     // Use standard conversion specifier macros for integer types.
                                     code.push_str("%\" PRId64 \"");
                                 }
-                                Type::Boolean => {
+                                Type::Boolean | Type::LiteralBoolean(_) => {
                                     // "true" / "false"
                                     code.push_str("%s");
                                 }
@@ -479,7 +480,7 @@ impl<'a, 'tcx> Emitter {
                         | Type::LiteralString(_) => {
                             self.emit_expr(value, code);
                         }
-                        Type::Boolean => {
+                        Type::Boolean | Type::LiteralBoolean(_) => {
                             match immediate(value).kind() {
                                 ExprKind::Bool(true) => code.push_str("\"true\""),
                                 ExprKind::Bool(false) => code.push_str("\"false\""),
@@ -613,7 +614,7 @@ fn tmp_var(t: &TmpVar) -> String {
 fn c_type(ty: &Type) -> String {
     match ty {
         Type::Int64 | Type::LiteralInt64(_) => "int64_t".to_string(),
-        Type::Boolean => "bool".to_string(),
+        Type::Boolean | Type::LiteralBoolean(_) => "bool".to_string(),
         Type::String | Type::LiteralString(_) => "const char *".to_string(),
         Type::NativeInt => "int".to_string(),
         Type::Tuple(_) | Type::Struct(_) => {
@@ -635,6 +636,7 @@ fn zero_value(ty: &Type) -> &'static str {
         | Type::String
         | Type::NativeInt
         | Type::LiteralInt64(_)
+        | Type::LiteralBoolean(_)
         | Type::LiteralString(_) => "0",
         Type::Tuple(_) | Type::Struct(_) => "{0}",
         Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
@@ -720,7 +722,7 @@ fn escape_c_string(value: &str) -> String {
 fn encode_ty(ty: &Type, buffer: &mut String) {
     match ty {
         Type::Int64 | Type::LiteralInt64(_) => buffer.push_str("i64"),
-        Type::Boolean => buffer.push('b'),
+        Type::Boolean | Type::LiteralBoolean(_) => buffer.push('b'),
         Type::String | Type::LiteralString(_) => buffer.push('s'),
         Type::NativeInt => buffer.push_str("ni"),
         Type::Tuple(fs) => {
@@ -769,6 +771,12 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
 /// | "L" | "i" | digits (number of bits) | "_" | integer |
 /// +-----+-----+-------------------------+-----+---------+
 ///
+/// ### boolean
+///
+/// +-----+-----+-----------------------+
+/// | "L" | "b" | "0": false, "1": true |
+/// +-----+-----+-----------------------+
+///
 /// ### string
 ///
 /// +-----+-----+------------------------------------+-----+-----------------------------------+
@@ -793,6 +801,15 @@ fn mangle_name(signature: &FunctionSignature<'_>) -> String {
                 buffer.push_str("64");
                 buffer.push('_');
                 buffer.push_str(&n.to_string());
+            }
+            Type::LiteralBoolean(b) => {
+                buffer.push('L');
+                buffer.push('b');
+                if *b {
+                    buffer.push('1');
+                } else {
+                    buffer.push('0');
+                }
             }
             Type::LiteralString(s) => {
                 let encoded = bs58::encode(s).into_string();

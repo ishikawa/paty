@@ -1383,6 +1383,14 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 let i = n.parse().unwrap();
                 self.tcx.literal_int64(i)
             }
+            TokenKind::True => {
+                it.next();
+                self.tcx.literal_boolean(true)
+            }
+            TokenKind::False => {
+                it.next();
+                self.tcx.literal_boolean(false)
+            }
             TokenKind::String(value) => {
                 it.next();
 

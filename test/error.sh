@@ -261,7 +261,7 @@ assert 'spread pattern can appear only once: `...`' '
     puts(x)
   end'
 # function - return type annotation
-assert 'return type of function `bar()` is specified with `int64`, found `boolean`' '
+assert 'return type of function `bar()` is specified with `int64`, found `false`' '
   def bar(): int64
     false
   end'
@@ -270,7 +270,7 @@ assert 'return type of function `bar(int64)` is specified with `boolean`, found 
     x + 1
   end'
 # type check
-assert 'Semantic error: expected type `int64`, found `boolean`' "
+assert 'Semantic error: expected type `int64`, found `true`' "
   def foo(n: int64)
     n
   end
@@ -308,12 +308,12 @@ Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "
       puts(1)
     end
   end"
-assert 'expected type `100`, found `boolean`' '
+assert 'expected type `100`, found `false`' '
   case { a: 100, b: false }
   when { a: x, b: false } | { a: _, b: x }
     puts(x)
   end'
-assert 'expected type `int64`, found `boolean`' '
+assert 'expected type `int64`, found `false`' '
   struct T { value: int64 }
   case { a: T { value: 100 }, b: false }
   when { a: T { value: x }, b: false } | { a: _, b: x }

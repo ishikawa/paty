@@ -30,6 +30,10 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::LiteralInt64(value))
     }
 
+    pub fn literal_boolean(&self, value: bool) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::LiteralBoolean(value))
+    }
+
     pub fn literal_string(&self, value: String) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::LiteralString(value))
     }
@@ -104,7 +108,7 @@ pub enum Type<'tcx> {
 
     // Literal types
     LiteralInt64(i64),
-
+    LiteralBoolean(bool),
     LiteralString(String),
 
     /// Type is not specified and should be inferred in the later phase.
@@ -135,6 +139,7 @@ impl<'tcx> Type<'tcx> {
             | Type::Boolean
             | Type::String
             | Type::LiteralInt64(_)
+            | Type::LiteralBoolean(_)
             | Type::LiteralString(_)
             | Type::NativeInt => false,
             Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
@@ -157,6 +162,7 @@ impl<'tcx> Type<'tcx> {
             // Widening type
             (Self::LiteralInt64(_), Self::Int64)
             | (Self::LiteralInt64(_), Self::NativeInt)
+            | (Self::LiteralBoolean(_), Self::Boolean)
             | (Self::LiteralString(_), Self::String) => true,
             // Compound types
             (Self::Tuple(l0), Self::Tuple(r0)) => {
@@ -201,6 +207,7 @@ impl<'tcx> Type<'tcx> {
             (self, other),
             (Type::Int64, Type::LiteralInt64(_))
                 | (Type::NativeInt, Type::LiteralInt64(_))
+                | (Type::Boolean, Type::LiteralBoolean(_))
                 | (Type::String, Type::LiteralString(_))
         )
     }
@@ -248,6 +255,7 @@ impl Hash for Type<'_> {
                 }
             }
             Self::LiteralInt64(n) => n.hash(state),
+            Self::LiteralBoolean(b) => b.hash(state),
             Self::LiteralString(s) => s.hash(state),
             Self::Int64 | Self::Boolean | Self::String | Self::Undetermined | Self::NativeInt => {
                 core::mem::discriminant(self).hash(state)
@@ -277,7 +285,8 @@ impl fmt::Display for Type<'_> {
                 write!(f, ")")
             }
             Self::Struct(struct_ty) => struct_ty.fmt(f),
-            Self::LiteralInt64(n) => write!(f, "{}", n),
+            Self::LiteralInt64(n) => n.fmt(f),
+            Self::LiteralBoolean(b) => b.fmt(f),
             Self::LiteralString(s) => write!(f, "\"{}\"", s.escape_default()),
         }
     }

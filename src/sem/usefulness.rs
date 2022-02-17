@@ -149,8 +149,8 @@ impl IntRange {
         let kind = if lo == hi {
             match ty {
                 Type::Int64 | Type::LiteralInt64(_) => PatternKind::Integer(lo),
-                Type::Boolean => PatternKind::Boolean(lo != 0),
-                _ => unreachable!("unexpected type ({}) for int range", ty),
+                Type::Boolean | Type::LiteralBoolean(_) => PatternKind::Boolean(lo != 0),
+                _ => unreachable!("unexpected type `{}` for int range", ty),
             }
         } else {
             PatternKind::Range {
@@ -344,6 +344,16 @@ impl<'tcx> SplitWildcard {
                     *n,
                     *n,
                     &Type::Int64,
+                    RangeEnd::Included,
+                ));
+                vec![ctor]
+            }
+            Type::LiteralBoolean(b) => {
+                let n = *b as i64;
+                let ctor = Constructor::IntRange(IntRange::from_range(
+                    n,
+                    n,
+                    &Type::Boolean,
                     RangeEnd::Included,
                 ));
                 vec![ctor]

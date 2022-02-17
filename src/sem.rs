@@ -228,6 +228,7 @@ fn resolve_type<'tcx>(
         | Type::Undetermined
         | Type::NativeInt
         | Type::LiteralInt64(_)
+        | Type::LiteralBoolean(_)
         | Type::LiteralString(_) => {}
     }
 }
@@ -366,8 +367,8 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
         syntax::ExprKind::Integer(n) => {
             unify_expr_type(tcx.literal_int64(*n), expr, errors);
         }
-        syntax::ExprKind::Boolean(_) => {
-            unify_expr_type(tcx.boolean(), expr, errors);
+        syntax::ExprKind::Boolean(b) => {
+            unify_expr_type(tcx.literal_boolean(*b), expr, errors);
         }
         syntax::ExprKind::String(s) => {
             unify_expr_type(tcx.literal_string(s.clone()), expr, errors);
@@ -963,8 +964,8 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
         PatternKind::Integer(n) => {
             unify_pat_type(tcx.literal_int64(*n), pat, errors);
         }
-        PatternKind::Boolean(_) => {
-            unify_pat_type(tcx.boolean(), pat, errors);
+        PatternKind::Boolean(b) => {
+            unify_pat_type(tcx.literal_boolean(*b), pat, errors);
         }
         PatternKind::String(s) => {
             //unify_pat_type(tcx.string(), pat, errors);
@@ -1126,6 +1127,9 @@ fn widen_type<'tcx>(
         }
         (Type::NativeInt, Type::LiteralInt64(_)) | (Type::LiteralInt64(_), Type::NativeInt) => {
             Some(tcx.native_int())
+        }
+        (Type::Boolean, Type::LiteralBoolean(_)) | (Type::LiteralBoolean(_), Type::Boolean) => {
+            Some(tcx.boolean())
         }
         (Type::LiteralInt64(n0), Type::LiteralInt64(n1)) => {
             if n0 != n1 {
@@ -1293,7 +1297,7 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
 ) -> &'tcx Type<'tcx> {
     match pat.kind() {
         PatternKind::Integer(n) => tcx.literal_int64(*n),
-        PatternKind::Boolean(_) => tcx.boolean(),
+        PatternKind::Boolean(b) => tcx.literal_boolean(*b),
         PatternKind::String(s) => tcx.literal_string(s.clone()),
         PatternKind::Range { .. } => tcx.int64(),
         PatternKind::Tuple(patterns) => {
