@@ -1,7 +1,7 @@
 //! Semantic analysis
 use self::error::{FormatSymbols, SemanticError};
 use crate::syntax::{PatternKind, StmtKind};
-use crate::ty::TypedField;
+use crate::ty::{StructTy, TypedField};
 use crate::{
     syntax,
     ty::{Type, TypeContext},
@@ -18,11 +18,8 @@ struct Binding<'tcx> {
 }
 
 impl<'tcx> Binding<'tcx> {
-    pub fn new(name: &str, ty: &'tcx Type<'tcx>) -> Self {
-        Self {
-            name: name.to_string(),
-            ty,
-        }
+    pub fn new(name: String, ty: &'tcx Type<'tcx>) -> Self {
+        Self { name, ty }
     }
 
     pub fn name(&self) -> &str {
@@ -143,7 +140,7 @@ pub fn analyze<'nd: 'tcx, 'tcx>(
                     tcx,
                     stmt,
                     &mut scope,
-                    &mut functions,
+                    &functions,
                     &mut named_types,
                     &mut errors,
                 );
@@ -189,16 +186,12 @@ fn expect_assignable_type<'tcx>(
     actual: &'tcx Type<'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
-    if !is_assignable_type(actual, expected) {
+    if !actual.is_assignable_to(expected) {
         errors.push(SemanticError::MismatchedType { expected, actual });
         false
     } else {
         true
     }
-}
-
-fn is_assignable_type<'tcx>(expected: &'tcx Type<'tcx>, actual: &'tcx Type<'tcx>) -> bool {
-    actual == expected
 }
 
 fn resolve_type<'tcx>(
@@ -229,7 +222,14 @@ fn resolve_type<'tcx>(
                 }
             }
         }
-        Type::Int64 | Type::Boolean | Type::String | Type::Undetermined | Type::NativeInt => {}
+        Type::Int64
+        | Type::Boolean
+        | Type::String
+        | Type::Undetermined
+        | Type::NativeInt
+        | Type::LiteralInt64(_)
+        | Type::LiteralBoolean(_)
+        | Type::LiteralString(_) => {}
     }
 }
 
@@ -278,7 +278,7 @@ fn analyze_decl<'nd: 'tcx, 'tcx>(
 
         match (inferred_retty, fun.retty()) {
             (Some(inferred_retty), Some(retty)) => {
-                if !is_assignable_type(retty, inferred_retty) {
+                if !inferred_retty.is_assignable_to(retty) {
                     errors.push(SemanticError::MismatchedReturnType {
                         signature: fun.signature(),
                         expected: retty,
@@ -302,11 +302,37 @@ fn analyze_decl<'nd: 'tcx, 'tcx>(
     }
 }
 
+fn analyze_stmts<'nd: 'tcx, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    stmts: &[syntax::Stmt<'nd, 'tcx>],
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &[&'nd syntax::Function<'nd, 'tcx>],
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) -> &'tcx Type<'tcx> {
+    // unit type for empty body
+    let mut last_stmt_ty = if stmts.is_empty() {
+        tcx.unit()
+    } else {
+        tcx.undetermined()
+    };
+
+    for stmt in stmts {
+        analyze_stmt(tcx, stmt, vars, functions, named_types, errors);
+        if let syntax::StmtKind::Expr(expr) = stmt.kind() {
+            if let Some(ty) = expr.ty() {
+                last_stmt_ty = ty;
+            }
+        }
+    }
+    last_stmt_ty
+}
+
 fn analyze_stmt<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmt: &syntax::Stmt<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    functions: &[&'nd syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -334,18 +360,18 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
     expr: &'nd syntax::Expr<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&'nd syntax::Function<'nd, 'tcx>],
-    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match expr.kind() {
-        syntax::ExprKind::Integer(_) => {
-            unify_expr_type(tcx.int64(), expr, errors);
+        syntax::ExprKind::Integer(n) => {
+            unify_expr_type(tcx.literal_int64(*n), expr, errors);
         }
-        syntax::ExprKind::Boolean(_) => {
-            unify_expr_type(tcx.boolean(), expr, errors);
+        syntax::ExprKind::Boolean(b) => {
+            unify_expr_type(tcx.literal_boolean(*b), expr, errors);
         }
-        syntax::ExprKind::String(_) => {
-            unify_expr_type(tcx.string(), expr, errors);
+        syntax::ExprKind::String(s) => {
+            unify_expr_type(tcx.literal_string(s.clone()), expr, errors);
         }
         syntax::ExprKind::Tuple(values) => {
             let mut value_types = vec![];
@@ -355,28 +381,16 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 value_types.push(value.ty().unwrap());
             }
 
-            unify_expr_type(tcx.tuple(&value_types), expr, errors);
+            unify_expr_type(tcx.tuple(value_types), expr, errors);
         }
         syntax::ExprKind::Struct(struct_value) => {
             if let Some(struct_name) = struct_value.name() {
-                // Assign named struct type to struct value
-                let expected_ty = if let Some(ty) = named_types.get(struct_name) {
-                    ty
-                } else {
-                    errors.push(SemanticError::UndefinedNamedType {
-                        name: struct_name.to_string(),
-                    });
-                    return;
-                };
-
-                let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
-                    struct_ty
-                } else {
-                    errors.push(SemanticError::MismatchedType {
-                        expected: tcx.empty_struct_ty(struct_name.to_string()),
-                        actual: expected_ty,
-                    });
-                    return;
+                let (expected_ty, struct_ty) = match get_struct_ty(tcx, struct_name, named_types) {
+                    Ok(struct_ty) => struct_ty,
+                    Err(err) => {
+                        errors.push(err);
+                        return;
+                    }
                 };
 
                 unify_expr_type(expected_ty, expr, errors);
@@ -592,12 +606,13 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
         }
         syntax::ExprKind::FieldAccess(operand, name) => {
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
+
             if operand.ty().is_none() {
                 return;
             }
 
             // index boundary check
-            let ty = operand.expect_ty();
+            let ty = operand.expect_ty().bottom_ty();
 
             if let Type::Struct(struct_ty) = ty {
                 if let Some(f) = struct_ty.get_field(name) {
@@ -613,12 +628,12 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             });
         }
         syntax::ExprKind::Call(call_expr) => {
-            let name = call_expr.name();
-            let args = call_expr.arguments();
+            let caller_name = call_expr.name();
+            let caller_args = call_expr.arguments();
 
             // At this point, the type of the argument is unknown.
             // First of all, determine the type of the argument if it is self-explanatory.
-            for arg in args {
+            for arg in caller_args {
                 analyze_expr(tcx, arg, vars, functions, named_types, errors);
             }
 
@@ -629,25 +644,25 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             // 3. Type of each parameter
             let name_matched = functions
                 .iter()
-                .filter(|f| f.name() == name)
+                .filter(|f| f.name() == caller_name)
                 .collect::<Vec<_>>();
             if name_matched.is_empty() {
                 errors.push(SemanticError::UndefinedFunction {
-                    name: name.to_string(),
+                    name: caller_name.to_string(),
                 });
                 return;
             }
 
             let n_args_matched = name_matched
                 .iter()
-                .filter(|f| f.params().len() == args.len())
+                .filter(|f| f.params().len() == caller_args.len())
                 .collect::<Vec<_>>();
             if n_args_matched.is_empty() {
                 assert!(!name_matched.is_empty());
                 errors.push(SemanticError::WrongNumberOfArguments {
-                    name: name.to_string(),
+                    name: caller_name.to_string(),
                     expected: name_matched[0].params().len(),
-                    actual: args.len(),
+                    actual: caller_args.len(),
                 });
                 return;
             }
@@ -655,15 +670,23 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             let mut ranked = n_args_matched
                 .iter()
                 .map(|f| {
-                    let mut rank = 0;
-
-                    for (i, arg) in args.iter().enumerate() {
-                        if let Some(arg_ty) = arg.ty() {
-                            if arg_ty == f.params()[i].ty() {
-                                rank += 1;
+                    let rank = caller_args
+                        .iter()
+                        .zip(f.params())
+                        .fold(0, |rank, (arg, param)| {
+                            if let Some(arg_ty) = arg.ty() {
+                                // More restricted match, higher rank.
+                                if arg_ty == param.ty() {
+                                    rank + 2
+                                } else if arg_ty.is_assignable_to(param.ty()) {
+                                    rank + 1
+                                } else {
+                                    rank
+                                }
+                            } else {
+                                rank
                             }
-                        }
-                    }
+                        });
 
                     (rank, f)
                 })
@@ -686,27 +709,19 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             let fun = ranked[0].1;
             let params = fun.params();
 
-            assert!(fun.params().len() == args.len());
+            assert!(fun.params().len() == caller_args.len());
 
-            for (i, arg) in args.iter().enumerate() {
+            for (i, arg) in caller_args.iter().enumerate() {
                 analyze_expr(tcx, arg, vars, functions, named_types, errors);
                 unify_expr_type(params[i].ty(), arg, errors);
             }
 
-            // Infer return type of the called function from its last expression.
-            if let Some(stmt) = fun.body().last() {
-                if let StmtKind::Expr(e) = stmt.kind() {
-                    if let Some(retty) = e.ty() {
-                        unify_expr_type(retty, expr, errors);
-                    } else {
-                        // The return type is undefined if the function is called before
-                        // defined (recursive function). In that case, we skip unification here.
-                    }
-                } else {
-                    unify_expr_type(tcx.unit(), expr, errors);
-                }
+            // The return type of the called function.
+            if let Some(retty) = fun.retty() {
+                unify_expr_type(retty, expr, errors);
             } else {
-                unify_expr_type(tcx.unit(), expr, errors);
+                // The return type is undefined if the function is called before
+                // defined (recursive function). In that case, we skip unification here.
             }
 
             // Save
@@ -727,14 +742,17 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
             let head_ty = head
                 .ty()
-                .unwrap_or_else(|| panic!("Untyped head expression for {:?}", head))
+                .unwrap_or_else(|| panic!("Untyped head expression for {} - {:?}", head, head))
                 .bottom_ty();
-            let mut expr_ty = None;
+
+            // The result type of the expression.
+            let mut expr_ty: Option<&Type> = None;
 
             for arm in arms {
                 let mut scope = Scope::from_parent(vars);
 
                 // Infer pattern's type and bindings
+
                 //if !unify_pat_type(dbg!(head_ty), arm.pattern(), errors) {
                 //    return;
                 //}
@@ -747,32 +765,63 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                     named_types,
                     errors,
                 );
-                analyze_expr(tcx, arm.body(), &mut scope, functions, named_types, errors);
-
-                if let Some(expected) = expr_ty {
-                    unify_expr_type(expected, arm.body(), errors);
+                if !errors.is_empty() {
+                    // Skip analyzing arm body if some errors occurred.
+                    continue;
                 }
 
-                if let Some(body_ty) = arm.body().ty() {
-                    expr_ty = Some(body_ty)
+                // -- Type narrowing
+                // Override the named binding with new narrowed type binding.
+                let context_ty = pattern_to_type(tcx, arm.pattern(), named_types);
+                if let Some(narrowed_binding) = narrow_type(tcx, head, context_ty) {
+                    scope.insert(narrowed_binding);
+                }
+
+                // unit type for empty body
+                let arm_body_ty =
+                    analyze_stmts(tcx, arm.body(), &mut scope, functions, named_types, errors);
+
+                // -- Type widening
+                // The types of every arm of the expression must be compatible,
+                // and the type of the entire expression must be finally determined to be
+                // one type. If the types of each arm contain literal types and they are not
+                // compatible, then try to widen them to its general type.
+                if let Some(ty1) = expr_ty {
+                    if let Some(widen_ty) = widen_type(tcx, ty1, arm_body_ty) {
+                        expr_ty = Some(widen_ty);
+                    }
+                }
+
+                if let Some(expected_ty) = expr_ty {
+                    expect_assignable_type(expected_ty, arm_body_ty, errors);
                 } else {
-                    // The type of body can't be inferred.
-                    expr_ty = Some(tcx.undetermined());
+                    expr_ty = Some(arm_body_ty);
                 }
             }
 
             if let Some(else_body) = else_body {
                 let mut scope = Scope::from_parent(vars);
-                analyze_expr(tcx, else_body, &mut scope, functions, named_types, errors);
 
-                if let Some(expected) = expr_ty {
-                    unify_expr_type(expected, else_body, errors);
+                let else_body_ty =
+                    analyze_stmts(tcx, else_body, &mut scope, functions, named_types, errors);
+
+                // Type widening
+                if let Some(ty1) = expr_ty {
+                    if let Some(widen_ty) = widen_type(tcx, ty1, else_body_ty) {
+                        expr_ty = Some(widen_ty);
+                    }
                 }
 
-                expr_ty = Some(else_body.ty().unwrap());
+                if let Some(expected_ty) = expr_ty {
+                    expect_assignable_type(expected_ty, else_body_ty, errors);
+                } else {
+                    expr_ty = Some(else_body_ty);
+                }
             }
 
-            unify_expr_type(expr_ty.unwrap(), expr, errors);
+            if let Some(expr_ty) = expr_ty {
+                unify_expr_type(expr_ty, expr, errors);
+            }
 
             if !errors.is_empty() {
                 return;
@@ -791,7 +840,7 @@ fn analyze_let_pattern<'nd: 'tcx, 'tcx>(
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    functions: &[&'nd syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -880,7 +929,7 @@ fn analyze_pattern_struct_fields<'nd: 'tcx, 'tcx>(
                     }
 
                     // New binding with rest fields.
-                    let binding = Binding::new(spread_name, spread.expect_ty());
+                    let binding = Binding::new(spread_name.to_string(), spread.expect_ty());
                     vars.insert(binding);
                 }
 
@@ -913,14 +962,15 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
 ) {
     // Infer the type of pattern from its values.
     match pat.kind() {
-        PatternKind::Integer(_) => {
-            unify_pat_type(tcx.int64(), pat, errors);
+        PatternKind::Integer(n) => {
+            unify_pat_type(tcx.literal_int64(*n), pat, errors);
         }
-        PatternKind::Boolean(_) => {
-            unify_pat_type(tcx.boolean(), pat, errors);
+        PatternKind::Boolean(b) => {
+            unify_pat_type(tcx.literal_boolean(*b), pat, errors);
         }
-        PatternKind::String(_) => {
-            unify_pat_type(tcx.string(), pat, errors);
+        PatternKind::String(s) => {
+            //unify_pat_type(tcx.string(), pat, errors);
+            unify_pat_type(tcx.literal_string(s.clone()), pat, errors);
         }
         PatternKind::Range { .. } => {
             unify_pat_type(tcx.int64(), pat, errors);
@@ -930,7 +980,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 if sub_types.len() != patterns.len() {
                     errors.push(SemanticError::MismatchedType {
                         expected: expected_ty,
-                        actual: pattern_to_type(tcx, pat),
+                        actual: pattern_to_type(tcx, pat, named_types),
                     });
                     return;
                 }
@@ -938,7 +988,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             } else {
                 errors.push(SemanticError::MismatchedType {
                     expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat),
+                    actual: pattern_to_type(tcx, pat, named_types),
                 });
                 return;
             };
@@ -947,7 +997,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, named_types, errors);
             }
 
-            unify_pat_type(tcx.tuple(sub_types), pat, errors);
+            unify_pat_type(tcx.tuple(sub_types.clone()), pat, errors);
         }
         PatternKind::Struct(struct_pat) => {
             // Struct type check
@@ -956,7 +1006,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             } else {
                 errors.push(SemanticError::MismatchedType {
                     expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat),
+                    actual: pattern_to_type(tcx, pat, named_types),
                 });
                 return;
             };
@@ -965,7 +1015,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             if struct_ty.name() != struct_pat.name() {
                 errors.push(SemanticError::MismatchedType {
                     expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat),
+                    actual: pattern_to_type(tcx, pat, named_types),
                 });
                 return;
             }
@@ -996,7 +1046,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             // We need the type of pattern.
             unify_pat_type(expected_ty, pat, errors);
 
-            let binding = Binding::new(name, pat.expect_ty());
+            let binding = Binding::new(name.to_string(), pat.expect_ty());
 
             vars.insert(binding);
         }
@@ -1054,7 +1104,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             // Add bindings introduced in sub-patterns.
             if let Some(bindings) = bindings {
                 for (var_name, var_ty) in bindings {
-                    let binding = Binding::new(&var_name, var_ty);
+                    let binding = Binding::new(var_name, var_ty);
                     vars.insert(binding);
                 }
             }
@@ -1065,33 +1115,216 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     unify_pat_type(expected_ty, pat, errors);
 }
 
-// Only used for error description
+/// Try to widen a given type `ty1` to `ty2`, returns the widen if it exists.
+fn widen_type<'tcx>(
+    tcx: TypeContext<'tcx>,
+    ty1: &'tcx Type<'tcx>,
+    ty2: &'tcx Type<'tcx>,
+) -> Option<&'tcx Type<'tcx>> {
+    // TODO: widen the type to an union type.
+    match (ty1, ty2) {
+        (Type::Int64, Type::LiteralInt64(_)) | (Type::LiteralInt64(_), Type::Int64) => {
+            Some(tcx.int64())
+        }
+        (Type::NativeInt, Type::LiteralInt64(_)) | (Type::LiteralInt64(_), Type::NativeInt) => {
+            Some(tcx.native_int())
+        }
+        (Type::Boolean, Type::LiteralBoolean(_)) | (Type::LiteralBoolean(_), Type::Boolean) => {
+            Some(tcx.boolean())
+        }
+        (Type::LiteralInt64(n0), Type::LiteralInt64(n1)) => {
+            if n0 != n1 {
+                Some(tcx.int64())
+            } else {
+                None
+            }
+        }
+        (Type::String, Type::LiteralString(_)) | (Type::LiteralString(_), Type::String) => {
+            Some(tcx.string())
+        }
+        (Type::LiteralString(s0), Type::LiteralString(s1)) => {
+            if s0 != s1 {
+                Some(tcx.string())
+            } else {
+                None
+            }
+        }
+        // Recursively widen types in compound types
+        (Type::Tuple(fs1), Type::Tuple(fs2)) => {
+            if fs1.len() != fs2.len() {
+                return None;
+            }
+
+            let value_types: Vec<_> = fs1
+                .iter()
+                .zip(fs2)
+                .map(|(ty1, ty2)| widen_type(tcx, ty1, ty2).unwrap_or(ty2))
+                .collect();
+            Some(tcx.tuple(value_types))
+        }
+        (Type::Struct(struct_ty1), Type::Struct(struct_ty2)) => {
+            if struct_ty1.name() != struct_ty2.name() {
+                return None;
+            }
+            if struct_ty1.fields().len() != struct_ty2.fields().len() {
+                return None;
+            }
+
+            let fields: Vec<_> = struct_ty1
+                .fields()
+                .iter()
+                .zip(struct_ty2.fields())
+                .map(|(f1, f2)| {
+                    assert!(f1.name() == f2.name());
+                    let ty = widen_type(tcx, f1.ty(), f2.ty()).unwrap_or_else(|| f1.ty());
+
+                    TypedField::new(f1.name().to_string(), ty)
+                })
+                .collect();
+
+            if let Some(struct_name) = struct_ty1.name() {
+                Some(tcx.struct_ty(struct_name.to_string(), fields))
+            } else {
+                Some(tcx.anon_struct_ty(fields))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Narrow the type of given operand expression from contextual type (e.g. matched pattern).
+fn narrow_type<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    target_expr: &'nd syntax::Expr<'nd, 'tcx>,
+    context_type: &'tcx Type<'tcx>,
+) -> Option<Binding<'tcx>> {
+    let target_expr_ty = target_expr.ty()?.bottom_ty();
+
+    // can be narrowed?
+    if !target_expr_ty.can_be_narrowed_to(context_type) {
+        return None;
+    }
+
+    // narrowing
+    let binding_name;
+    let mut node = target_expr;
+    let mut narrowed_ty = context_type;
+
+    loop {
+        match node.kind() {
+            syntax::ExprKind::Var(name) => {
+                // root
+                binding_name = name.to_string();
+                break;
+            }
+            syntax::ExprKind::IndexAccess(operand, index) => {
+                // narrow the type of x.N (x.0, x.1, ...)
+                node = operand;
+                match operand.expect_ty().bottom_ty() {
+                    Type::Tuple(fs) => {
+                        let mut value_types = fs.clone();
+
+                        value_types.push(narrowed_ty);
+                        value_types.swap_remove(*index);
+                        narrowed_ty = tcx.tuple(value_types);
+                    }
+                    _ => unreachable!("expect tuple type"),
+                }
+            }
+            syntax::ExprKind::FieldAccess(operand, field_name) => {
+                // narrow the type of x.name
+                node = operand;
+                match operand.expect_ty().bottom_ty() {
+                    Type::Struct(struct_ty) => {
+                        let fields = struct_ty
+                            .fields()
+                            .iter()
+                            .map(|f| {
+                                if f.name() == field_name {
+                                    TypedField::new(field_name.to_string(), narrowed_ty)
+                                } else {
+                                    TypedField::new(f.name().to_string(), f.ty())
+                                }
+                            })
+                            .collect::<Vec<_>>();
+
+                        if let Some(struct_name) = struct_ty.name() {
+                            narrowed_ty = tcx.struct_ty(struct_name.to_string(), fields)
+                        } else {
+                            narrowed_ty = tcx.anon_struct_ty(fields)
+                        }
+                    }
+                    _ => unreachable!("expect struct type"),
+                }
+            }
+            _ => {
+                return None;
+            }
+        }
+    }
+
+    Some(Binding::new(binding_name, narrowed_ty))
+}
+
+fn get_struct_ty<'tcx>(
+    tcx: TypeContext<'tcx>,
+    struct_name: &str,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+) -> Result<(&'tcx Type<'tcx>, &'tcx StructTy<'tcx>), SemanticError<'tcx>> {
+    // Assign named struct type to struct value
+    let expected_ty = if let Some(ty) = named_types.get(struct_name) {
+        ty
+    } else {
+        return Err(SemanticError::UndefinedNamedType {
+            name: struct_name.to_string(),
+        });
+    };
+
+    if let Type::Struct(struct_ty) = expected_ty {
+        Ok((expected_ty, struct_ty))
+    } else {
+        Err(SemanticError::MismatchedType {
+            expected: tcx.empty_struct_ty(struct_name.to_string()),
+            actual: expected_ty,
+        })
+    }
+}
+
+/// Infer the closest possible type from a given pattern.
 fn pattern_to_type<'nd: 'tcx, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
 ) -> &'tcx Type<'tcx> {
-    // Infer the type of pattern from its values.
     match pat.kind() {
-        PatternKind::Integer(_) => tcx.int64(),
-        PatternKind::Boolean(_) => tcx.boolean(),
-        PatternKind::String(_) => tcx.string(),
+        PatternKind::Integer(n) => tcx.literal_int64(*n),
+        PatternKind::Boolean(b) => tcx.literal_boolean(*b),
+        PatternKind::String(s) => tcx.literal_string(s.clone()),
         PatternKind::Range { .. } => tcx.int64(),
         PatternKind::Tuple(patterns) => {
             let sub_types: Vec<_> = patterns
                 .iter()
-                .map(|pat| pattern_to_type(tcx, pat))
+                .map(|pat| pattern_to_type(tcx, pat, named_types))
                 .collect();
 
-            tcx.tuple(&sub_types)
+            tcx.tuple(sub_types)
         }
         PatternKind::Struct(struct_pat) => {
+            // Search a named struct in the scope.
+            if let Some(struct_name) = struct_pat.name() {
+                if let Ok((ty, _)) = get_struct_ty(tcx, struct_name, named_types) {
+                    return ty;
+                }
+            }
+
+            // If not found corresponding struct, construct a new one from the pattern.
             let mut typed_fields = vec![];
 
             for f in struct_pat.fields() {
                 if let syntax::PatternFieldOrSpread::PatternField(f) = f {
                     typed_fields.push(TypedField::new(
                         f.name().to_string(),
-                        pattern_to_type(tcx, f.pattern()),
+                        pattern_to_type(tcx, f.pattern(), named_types),
                     ));
                 }
             }
@@ -1102,13 +1335,7 @@ fn pattern_to_type<'nd: 'tcx, 'tcx>(
                 tcx.anon_struct_ty(typed_fields)
             }
         }
-        PatternKind::Or(sub_pats) => {
-            // TODO: Union type?
-            let sub_pat = sub_pats
-                .first()
-                .expect("or-pattern must have at least 2 elements.");
-            pattern_to_type(tcx, sub_pat)
-        }
-        PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
+        // TODO: Union type for Or-pattern
+        PatternKind::Or(_) | PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
     }
 }

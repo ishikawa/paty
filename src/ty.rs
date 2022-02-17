@@ -12,6 +12,8 @@ impl<'tcx> TypeContext<'tcx> {
         Self { type_arena }
     }
 
+    // TODO: cache types
+
     pub fn int64(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Int64)
     }
@@ -24,23 +26,34 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::String)
     }
 
+    pub fn literal_int64(&self, value: i64) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::LiteralInt64(value))
+    }
+
+    pub fn literal_boolean(&self, value: bool) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::LiteralBoolean(value))
+    }
+
+    pub fn literal_string(&self, value: String) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::LiteralString(value))
+    }
+
     pub fn undetermined(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Undetermined)
     }
 
-    pub fn tuple(&self, value_types: &[&'tcx Type<'tcx>]) -> &'tcx Type<'tcx> {
-        self.type_arena
-            .alloc(Type::Tuple(value_types.iter().copied().collect()))
-    }
-
-    pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
-        self.anon_struct_ty(vec![])
+    pub fn tuple(&self, value_types: Vec<&'tcx Type<'tcx>>) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::Tuple(value_types))
     }
 
     /// Returns a struct type whose name is `name` and has no value.
     pub fn empty_struct_ty(&self, name: String) -> &'tcx Type<'tcx> {
         let struct_ty = StructTy::new_named(name, vec![]);
         self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+
+    pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
+        self.anon_struct_ty(vec![])
     }
 
     pub fn anon_struct_ty(&self, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
@@ -69,7 +82,7 @@ impl<'tcx> TypeContext<'tcx> {
             }
         }
 
-        self.tuple(&value_types)
+        self.tuple(value_types)
     }
 
     pub fn native_int(&self) -> &'tcx Type<'tcx> {
@@ -93,6 +106,11 @@ pub enum Type<'tcx> {
     /// Type is specified by name and should be resolved in the later phase
     Named(NamedTy<'tcx>),
 
+    // Literal types
+    LiteralInt64(i64),
+    LiteralBoolean(bool),
+    LiteralString(String),
+
     /// Type is not specified and should be inferred in the later phase.
     Undetermined,
 
@@ -102,7 +120,7 @@ pub enum Type<'tcx> {
 }
 
 impl<'tcx> Type<'tcx> {
-    pub fn bottom_ty(&'tcx self) -> &'tcx Type<'tcx> {
+    pub fn bottom_ty(&self) -> &Type<'tcx> {
         if let Type::Named(named_ty) = self {
             if let Some(ty) = named_ty.ty() {
                 ty.bottom_ty()
@@ -117,7 +135,13 @@ impl<'tcx> Type<'tcx> {
     /// Returns `true` if the type is zero-sized.
     pub fn is_zero_sized(&self) -> bool {
         match self {
-            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => false,
+            Type::Int64
+            | Type::Boolean
+            | Type::String
+            | Type::LiteralInt64(_)
+            | Type::LiteralBoolean(_)
+            | Type::LiteralString(_)
+            | Type::NativeInt => false,
             Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
             Type::Struct(struct_ty) => struct_ty.fields().iter().all(|f| f.ty().is_zero_sized()),
             Type::Named(named_ty) => {
@@ -130,11 +154,71 @@ impl<'tcx> Type<'tcx> {
             Type::Undetermined => true,
         }
     }
+
+    /// Returns `true` if the type can be assigned to the `other` type.
+    /// A type can be assigned to other type if the type is compatible to other.
+    pub fn is_assignable_to(&self, other: &Self) -> bool {
+        match (self, other) {
+            // Widening type
+            (Self::LiteralInt64(_), Self::Int64)
+            | (Self::LiteralInt64(_), Self::NativeInt)
+            | (Self::LiteralBoolean(_), Self::Boolean)
+            | (Self::LiteralString(_), Self::String) => true,
+            // Compound types
+            (Self::Tuple(l0), Self::Tuple(r0)) => {
+                l0.len() == r0.len() && l0.iter().zip(r0).all(|(a, b)| a.is_assignable_to(b))
+            }
+            (Self::Struct(l0), Self::Struct(r0)) => {
+                // Different named structs are incompatible.
+                if l0.name() != r0.name() {
+                    return false;
+                }
+                // Is assignable by structural.
+                if l0.fields().len() != r0.fields().len() {
+                    return false;
+                }
+                l0.fields()
+                    .iter()
+                    .zip(r0.fields())
+                    .all(|(a, b)| a.name() == b.name() && a.ty().is_assignable_to(b.ty()))
+            }
+            (Self::Named(named_ty1), ty2) => {
+                if let Some(ty1) = named_ty1.ty() {
+                    ty1.is_assignable_to(ty2)
+                } else {
+                    false
+                }
+            }
+            (ty1, Self::Named(named_ty2)) => {
+                if let Some(ty2) = named_ty2.ty() {
+                    ty1.is_assignable_to(ty2)
+                } else {
+                    false
+                }
+            }
+            // Others
+            _ => self == other,
+        }
+    }
+
+    /// Returns `true` if a given type can be narrowed to other type.
+    pub fn can_be_narrowed_to(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Type::Int64, Type::LiteralInt64(_))
+                | (Type::NativeInt, Type::LiteralInt64(_))
+                | (Type::Boolean, Type::LiteralBoolean(_))
+                | (Type::String, Type::LiteralString(_))
+        )
+    }
 }
 
 impl PartialEq for Type<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::LiteralInt64(l0), Self::LiteralInt64(r0)) => l0 == r0,
+            (Self::LiteralBoolean(l0), Self::LiteralBoolean(r0)) => l0 == r0,
+            (Self::LiteralString(l0), Self::LiteralString(r0)) => l0 == r0,
             (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
             (Self::Struct(l0), Self::Struct(r0)) => l0 == r0,
             (Self::Named(named_ty1), Self::Named(named_ty2)) => {
@@ -162,16 +246,19 @@ impl PartialEq for Type<'_> {
 impl Hash for Type<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            Type::Tuple(fs) => fs.hash(state),
-            Type::Struct(struct_ty) => struct_ty.hash(state),
-            Type::Named(named_ty) => {
+            Self::Tuple(fs) => fs.hash(state),
+            Self::Struct(struct_ty) => struct_ty.hash(state),
+            Self::Named(named_ty) => {
                 if let Some(ty) = named_ty.ty() {
                     ty.hash(state)
                 } else {
                     named_ty.name().hash(state)
                 }
             }
-            Type::Int64 | Type::Boolean | Type::String | Type::Undetermined | Type::NativeInt => {
+            Self::LiteralInt64(n) => n.hash(state),
+            Self::LiteralBoolean(b) => b.hash(state),
+            Self::LiteralString(s) => s.hash(state),
+            Self::Int64 | Self::Boolean | Self::String | Self::Undetermined | Self::NativeInt => {
                 core::mem::discriminant(self).hash(state)
             }
         }
@@ -181,13 +268,13 @@ impl Hash for Type<'_> {
 impl fmt::Display for Type<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Type::Int64 => write!(f, "int64"),
-            Type::Boolean => write!(f, "boolean"),
-            Type::String => write!(f, "string"),
-            Type::NativeInt => write!(f, "int"),
-            Type::Named(named_ty) => named_ty.fmt(f),
-            Type::Undetermined => write!(f, "_"),
-            Type::Tuple(value_types) => {
+            Self::Int64 => write!(f, "int64"),
+            Self::Boolean => write!(f, "boolean"),
+            Self::String => write!(f, "string"),
+            Self::NativeInt => write!(f, "int"),
+            Self::Named(named_ty) => named_ty.fmt(f),
+            Self::Undetermined => write!(f, "_"),
+            Self::Tuple(value_types) => {
                 let mut it = value_types.iter().peekable();
                 write!(f, "(")?;
                 while let Some(ty) = it.next() {
@@ -198,7 +285,10 @@ impl fmt::Display for Type<'_> {
                 }
                 write!(f, ")")
             }
-            Type::Struct(struct_ty) => struct_ty.fmt(f),
+            Self::Struct(struct_ty) => struct_ty.fmt(f),
+            Self::LiteralInt64(n) => n.fmt(f),
+            Self::LiteralBoolean(b) => b.fmt(f),
+            Self::LiteralString(s) => write!(f, "\"{}\"", s.escape_default()),
         }
     }
 }

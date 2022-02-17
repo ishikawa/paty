@@ -33,7 +33,13 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
                     self.add_decl_type(f.ty());
                 }
             }
-            Type::Int64 | Type::Boolean | Type::String | Type::NativeInt => {
+            Type::Int64
+            | Type::Boolean
+            | Type::String
+            | Type::NativeInt
+            | Type::LiteralInt64(_)
+            | Type::LiteralBoolean(_)
+            | Type::LiteralString(_) => {
                 // no declaration
                 return;
             }
@@ -636,7 +642,7 @@ impl fmt::Display for FormatSpec<'_, '_> {
                 expr.fmt(f)?;
                 write!(f, "\"")
             }
-            FormatSpec::Str(s) => write!(f, "{}", s.escape_unicode()),
+            FormatSpec::Str(s) => write!(f, "{}", s.escape_default()),
         }
     }
 }
@@ -1151,8 +1157,13 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                             &mut branch_stmts,
                         );
 
-                        let ret = self.build_expr(arm.body(), program, &mut branch_stmts);
-                        branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                        let mut ret = None;
+                        for stmt in arm.body() {
+                            ret = self.build_stmt(stmt, program, &mut branch_stmts);
+                        }
+                        if let Some(ret) = ret {
+                            branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                        }
 
                         Branch {
                             condition,
@@ -1164,8 +1175,13 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
 
-                    let ret = self.build_expr(else_body, program, &mut branch_stmts);
-                    branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                    let mut ret = None;
+                    for stmt in else_body {
+                        ret = self.build_stmt(stmt, program, &mut branch_stmts);
+                    }
+                    if let Some(ret) = ret {
+                        branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                    }
 
                     let branch = Branch {
                         condition: None,
@@ -1196,14 +1212,18 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
         program: &mut Program<'a, 'tcx>,
         stmts: &mut Vec<Stmt<'a, 'tcx>>,
         specs: &mut Vec<FormatSpec<'a, 'tcx>>,
-        escape_string: bool,
+        quote_string: bool,
     ) {
         match arg.ty() {
-            Type::Int64 | Type::NativeInt | Type::Boolean => {
+            Type::Int64
+            | Type::NativeInt
+            | Type::Boolean
+            | Type::LiteralInt64(_)
+            | Type::LiteralBoolean(_) => {
                 specs.push(FormatSpec::Value(inc_used(arg)));
             }
-            Type::String => {
-                if escape_string {
+            Type::String | Type::LiteralString(_) => {
+                if quote_string {
                     specs.push(FormatSpec::Quoted(inc_used(arg)));
                 } else {
                     specs.push(FormatSpec::Value(inc_used(arg)));

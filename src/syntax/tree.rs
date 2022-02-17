@@ -123,6 +123,17 @@ impl<'nd, 'tcx> Node for Stmt<'nd, 'tcx> {
     }
 }
 
+impl fmt::Display for Stmt<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            StmtKind::Let { pattern, rhs } => {
+                write!(f, "{} = {}", pattern, rhs)
+            }
+            StmtKind::Expr(expr) => expr.fmt(f),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum StmtKind<'nd, 'tcx> {
     Let {
@@ -222,7 +233,7 @@ pub enum ExprKind<'nd, 'tcx> {
     Case {
         head: &'nd Expr<'nd, 'tcx>,
         arms: Vec<CaseArm<'nd, 'tcx>>,
-        else_body: Option<&'nd Expr<'nd, 'tcx>>,
+        else_body: Option<Vec<Stmt<'nd, 'tcx>>>,
     },
 
     // Built-in functions
@@ -272,11 +283,15 @@ impl fmt::Display for ExprKind<'_, '_> {
                 writeln!(f, "case {}", head)?;
                 for arm in arms {
                     writeln!(f, "when {:?}", arm.pattern())?;
-                    writeln!(f, "  {}", arm.body())?;
+                    for stmt in arm.body() {
+                        writeln!(f, "  {}", stmt)?;
+                    }
                 }
                 if let Some(else_body) = else_body {
                     writeln!(f, "else")?;
-                    writeln!(f, "  {}", else_body)?;
+                    for stmt in else_body {
+                        writeln!(f, "  {}", stmt)?;
+                    }
                 }
                 write!(f, "end")
             }
@@ -579,12 +594,12 @@ impl fmt::Display for SpreadExpr<'_, '_> {
 #[derive(Debug)]
 pub struct CaseArm<'nd, 'tcx> {
     pattern: &'nd Pattern<'nd, 'tcx>,
-    body: &'nd Expr<'nd, 'tcx>,
+    body: Vec<Stmt<'nd, 'tcx>>,
     data: NodeData,
 }
 
 impl<'nd, 'tcx> CaseArm<'nd, 'tcx> {
-    pub fn new(pattern: &'nd Pattern<'nd, 'tcx>, body: &'nd Expr<'nd, 'tcx>) -> Self {
+    pub fn new(pattern: &'nd Pattern<'nd, 'tcx>, body: Vec<Stmt<'nd, 'tcx>>) -> Self {
         Self {
             pattern,
             body,
@@ -596,8 +611,8 @@ impl<'nd, 'tcx> CaseArm<'nd, 'tcx> {
         self.pattern
     }
 
-    pub fn body(&self) -> &'nd Expr<'nd, 'tcx> {
-        self.body
+    pub fn body(&self) -> &[Stmt<'nd, 'tcx>] {
+        &self.body
     }
 }
 
@@ -1350,7 +1365,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 // ')'
                 it.next();
 
-                self.tcx.tuple(&value_types)
+                self.tcx.tuple(value_types)
             }
             TokenKind::Operator('{') => {
                 let fields = self.parse_elements(it, ('{', '}'), Self::type_field)?;
@@ -1361,6 +1376,25 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
                 let ty = Type::Named(NamedTy::new(name));
                 self.tcx.type_arena.alloc(ty)
+            }
+            TokenKind::Integer(n) => {
+                it.next();
+
+                let i = n.parse().unwrap();
+                self.tcx.literal_int64(i)
+            }
+            TokenKind::True => {
+                it.next();
+                self.tcx.literal_boolean(true)
+            }
+            TokenKind::False => {
+                it.next();
+                self.tcx.literal_boolean(false)
+            }
+            TokenKind::String(value) => {
+                it.next();
+
+                self.tcx.literal_string(value.to_string())
             }
             _ => {
                 return Err(ParseError::UnexpectedToken {
@@ -1631,7 +1665,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         let when_token = self.try_token(it, TokenKind::When)?;
 
         let pattern = self.pattern(it)?;
-        let body = self.expr(it)?;
+        let body = self.stmts(it)?;
 
         let mut arm = CaseArm::new(pattern, body);
         arm.data_mut().append_comments_from_token(when_token);
@@ -1650,7 +1684,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         let else_body = if self.match_token(it, TokenKind::Else) {
             it.next();
-            Some(self.expr(it)?)
+            Some(self.stmts(it)?)
         } else {
             None
         };

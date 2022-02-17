@@ -7,6 +7,7 @@ use crate::syntax::{
     CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern,
 };
 use crate::ty::Type;
+use std::iter;
 use std::{
     cell::Cell,
     cmp::{max, min},
@@ -56,14 +57,17 @@ pub struct IntRange {
 impl IntRange {
     #[inline]
     fn is_integral(ty: &Type) -> bool {
-        matches!(ty, Type::Int64 | Type::Boolean)
+        matches!(
+            ty,
+            Type::Int64 | Type::Boolean | Type::LiteralInt64(_) | Type::LiteralBoolean(_)
+        )
     }
 
     // The return value of `signed_bias` should be XORed with an endpoint to encode/decode it.
     fn signed_bias(ty: &Type) -> i128 {
         match ty {
-            Type::Int64 => 1i128 << (i64::BITS as i128 - 1),
-            Type::Boolean => 0,
+            Type::Int64 | Type::LiteralInt64(_) => 1i128 << (i64::BITS as i128 - 1),
+            Type::Boolean | Type::LiteralBoolean(_) => 0,
             _ => 0,
         }
     }
@@ -147,9 +151,9 @@ impl IntRange {
 
         let kind = if lo == hi {
             match ty {
-                Type::Int64 => PatternKind::Integer(lo),
-                Type::Boolean => PatternKind::Boolean(lo != 0),
-                _ => unreachable!("unexpected type ({}) for int range", ty),
+                Type::Int64 | Type::LiteralInt64(_) => PatternKind::Integer(lo),
+                Type::Boolean | Type::LiteralBoolean(_) => PatternKind::Boolean(lo != 0),
+                _ => unreachable!("unexpected type `{}` for int range", ty),
             }
         } else {
             PatternKind::Range {
@@ -337,6 +341,27 @@ impl<'tcx> SplitWildcard {
                 ));
                 vec![ctor]
             }
+            // literal types
+            Type::LiteralInt64(n) => {
+                let ctor = Constructor::IntRange(IntRange::from_range(
+                    *n,
+                    *n,
+                    &Type::Int64,
+                    RangeEnd::Included,
+                ));
+                vec![ctor]
+            }
+            Type::LiteralBoolean(b) => {
+                let n = *b as i64;
+                let ctor = Constructor::IntRange(IntRange::from_range(
+                    n,
+                    n,
+                    &Type::Boolean,
+                    RangeEnd::Included,
+                ));
+                vec![ctor]
+            }
+            Type::LiteralString(s) => vec![Constructor::Str(s.to_string())],
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
@@ -639,6 +664,13 @@ impl<'tcx> Constructor {
         }
     }
 
+    fn as_str_value(&self) -> Option<&str> {
+        match self {
+            Self::Str(value) => Some(value),
+            _ => None,
+        }
+    }
+
     pub(super) fn is_non_exhaustive(&self) -> bool {
         matches!(self, Self::NonExhaustive)
     }
@@ -664,8 +696,8 @@ impl<'tcx> Constructor {
             | Self::IntRange(_)
             | Self::Str(_)
             | Self::NonExhaustive
-            | Self::Missing { .. }
-            | Self::Or => 0,
+            | Self::Missing { .. } => 0,
+            Self::Or => unreachable!("The `Or` constructor doesn't have a fixed arity"),
         }
     }
 
@@ -710,9 +742,13 @@ impl<'tcx> Constructor {
                 .iter()
                 .filter_map(|c| c.as_int_range())
                 .any(|other| range.is_covered_by(other)),
+            Self::Str(value) => used_ctors
+                .iter()
+                .filter_map(|c| c.as_str_value())
+                .any(|other| other == value),
             // This constructor is never covered by anything else
             Self::NonExhaustive => false,
-            Self::Str(..) | Self::Wildcard | Self::Missing { .. } | Self::Or => {
+            Self::Wildcard | Self::Missing { .. } | Self::Or => {
                 unreachable!("found unexpected ctor in all_ctors: {:?}", self)
             }
         }
@@ -787,6 +823,15 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         Fields { fields: &[] }
     }
 
+    /*
+    fn singleton(cx: &MatchCheckContext<'p, 'tcx>, field: DeconstructedPat<'p, 'tcx>) -> Self {
+        let field: &_ = cx.pattern_arena.alloc(field);
+        Fields {
+            fields: std::slice::from_ref(field),
+        }
+    }
+    */
+
     pub fn from_iter(
         cx: &MatchCheckContext<'p, 'tcx>,
         fields: impl IntoIterator<Item = DeconstructedPat<'p, 'tcx>>,
@@ -820,6 +865,9 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
                     cx,
                     struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
                 ),
+                Type::String | Type::LiteralString(_) => {
+                    Fields::wildcards_from_tys(cx, iter::once(ty))
+                }
                 ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
             Constructor::IntRange(..)

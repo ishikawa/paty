@@ -63,6 +63,49 @@ assert "66" "(x, y, z) = (11, 22, 33)
   puts(x + y + z)"
 assert "231" "((a, b, c), (d, e), (f,)) = ((11, 22, 33), (44, 55), (66,))
   puts(a + b + c + d + e + f)"
+# boolean
+assert 'true' "
+    n = 5
+    case n > 1 && n <= 5
+    when true
+      puts(true)
+    when false
+      puts(false)
+    end"
+assert 'true' "
+    def is_positive(n)
+      n >= 0
+    end
+    case is_positive(1)
+    when true
+      puts(true)
+    when false
+      puts(false)
+    end"
+# string
+assert "Hello, World!" "
+    puts(\"Hello, World!\\n\")"
+assert 'こんにちは' 'puts("こんにちは")'
+assert '\' 'puts("\\")'
+assert '1 2 3 4' "
+    def fruit_to_num(fruit: string)
+      case fruit
+      when \"Apple\"
+        1
+      when \"Orange\"
+        2
+      when \"Strawberry\"
+        3
+      else
+        4
+      end
+    end
+    puts(
+      fruit_to_num(\"Apple\"),
+      fruit_to_num(\"Orange\"),
+      fruit_to_num(\"Strawberry\"),
+      fruit_to_num(\"Grape\")
+    )"
 # function
 assert 30 "
   def foo(x, y)
@@ -96,25 +139,43 @@ assert 30 "
   # comment 4
   puts(foo(10, 20))"
 # pattern match (case)
-assert 3 "
-  case 3
-  when 1
-    puts(1)
-  when 0..=2
-    puts(2)
-  else
-    puts(3)
-  end"
-assert 3 "
-  n = case 3
-  when 1
-    1
-  when 0..=2
-    2
-  else
-    3
+assert '2
+1
+2
+3' "
+  def foo(n)
+    case n
+    when 1
+      puts(1)
+    when 0..=2
+      puts(2)
+    else
+      puts(3)
+    end
   end
-  puts(n)"
+  foo(0)
+  foo(1)
+  foo(2)
+  foo(3)"
+assert '2
+1
+2
+3' "
+  def foo(n)
+    m = case n
+    when 1
+      puts(1)
+    when 0..=2
+      puts(2)
+    else
+      puts(3)
+    end
+    m
+  end
+  foo(0)
+  foo(1)
+  foo(2)
+  foo(3)"
 assert 152 "
   def pt(n)
     case n
@@ -140,12 +201,15 @@ assert '102030' "
     puts(x)
   end"
 assert '15' "
-  case (true, 15)
-  when (false, _)
-    puts(0)
-  when (true, x)
-    puts(x)
-  end"
+  def foo(t: (boolean, int64))
+    case t
+    when (false, _)
+      puts(0)
+    when (true, x)
+      puts(x)
+    end
+  end
+  foo((true, 15))"
 assert '60' "
   case (10, 20, 30)
   when (x, y, z)
@@ -173,6 +237,35 @@ assert "100
   end
   puts(foo(true))
   puts(foo(false))'
+assert '100
+200
+300' '
+  def foo(n: int64)
+    case n
+    when 1
+      100
+    when 2
+      200
+    else
+      300
+    end
+  end
+  puts(foo(1))
+  puts(foo(2))
+  puts(foo(3))'
+assert 'n = 1
+n = 2
+3' '
+  def foo(n: int64)
+    case n < 3
+    when true
+      puts("n =", n)
+      foo(n + 1)
+    else
+      n
+    end
+  end
+  puts(foo(1))'
 assert "{ a: 100 }
 { a: 55 }" '
   def foo(b: boolean)
@@ -180,7 +273,19 @@ assert "{ a: 100 }
     when true
       { a: 100 }
     when false
-      { a: 55 }
+      { a: 55 } # widening to { a: int64 }
+    end
+  end
+  puts(foo(true))
+  puts(foo(false))'
+assert "(100, \"foo\")
+(200, \"baz\")" '
+  def foo(b: boolean)
+    case b
+    when true
+      (100, "foo")
+    when false
+      (200, "baz") # widening to (int64, string)
     end
   end
   puts(foo(true))
@@ -287,6 +392,181 @@ assert '1 100
   func(T { a: 4, b: (1, 300) })
   func(T { a: 4, b: (400, 1) })
   func(T { a: 2, b: (3, 0) })'
+# literal types
+assert '1' '
+  case "A"
+  when "A"
+    puts(1)
+  end'
+assert '1' '
+  case 100
+  when 100
+    puts(1)
+  end'
+assert '1' '
+  case false
+  when false
+    puts(1)
+  end'
+assert '1' '
+  def foo(v: "A")
+    case v
+    when "A"
+      puts(1)
+    end
+  end
+  foo("A")'
+assert '100' '
+  def foo(v: 1)
+    case v
+    when 1
+      puts(100)
+    end
+  end
+  foo(1)'
+assert '100' '
+  def foo(v: true)
+    case v
+    when true
+      puts(100)
+    end
+  end
+  foo(true)'
+assert 'override 1
+override 2
+string C' '
+  def baz(_: "A")
+    puts("override 1")
+  end
+  def baz(_: "B")
+    puts("override 2")
+  end
+  def baz(s: string)
+    puts("string", s)
+  end
+
+  def foo(s: string)
+    case s
+    when "A"
+      baz(s)
+    when "B"
+      baz(s)
+    else
+      baz(s)
+    end
+  end
+
+  foo("A")
+  foo("B")
+  foo("C")'
+assert 'override 1
+override 2
+int64 300' '
+  def baz(_: 100)
+    puts("override 1")
+  end
+  def baz(_: 200)
+    puts("override 2")
+  end
+  def baz(n: int64)
+    puts("int64", n)
+  end
+
+  def foo(n: int64)
+    case n
+    when 100
+      baz(n)
+    when 200
+      baz(n)
+    else
+      baz(n)
+    end
+  end
+
+  foo(100)
+  foo(200)
+  foo(300)'
+assert 'override 1
+override 2' '
+  def baz(_: true)
+    puts("override 1")
+  end
+  def baz(_: false)
+    puts("override 2")
+  end
+
+  def foo(b: boolean)
+    case b
+    when true
+      baz(b)
+    when false
+      baz(b)
+    end
+  end
+
+  foo(true)
+  foo(false)'
+assert 'override 1
+string B' '
+  def baz(_: "A")
+    puts("override 1")
+  end
+  def baz(s: string)
+    puts("string", s)
+  end
+
+  def foo(t: (string, string))
+    case t.0
+    when "A"
+      baz(t.0)
+    else
+      baz(t.1)
+    end
+  end
+
+  foo(("A", "_"))
+  foo(("_", "B"))'
+assert 'override 1
+string B' '
+  struct T { name: string }
+  def baz(_: "A")
+    puts("override 1")
+  end
+  def baz(s: string)
+    puts("string", s)
+  end
+
+  def foo(t: T)
+    case t.name
+    when "A"
+      baz(t.name)
+    else
+      baz(t.name)
+    end
+  end
+
+  foo(T {name: "A"})
+  foo(T {name: "B"})'
+assert 'override 1
+string B' '
+  def baz(_: "A")
+    puts("override 1")
+  end
+  def baz(s: string)
+    puts("string", s)
+  end
+
+  def foo(t: { values: (string, string) })
+    case t.values.1
+    when "A"
+      baz(t.values.1)
+    else
+      baz(t.values.1)
+    end
+  end
+
+  foo({ values: ("A", "A") })
+  foo({ values: ("B", "B") })'
 # function overloading
 assert "30
 true
@@ -317,6 +597,37 @@ assert '100 baz!' '
     end
   end
   baz(10, (true, "baz!"))'
+assert '1
+2
+3' '
+  def greeting(_: "A")
+    puts(1)
+  end
+  def greeting(_: "B")
+    puts(2)
+  end
+  def greeting(_: string)
+    puts(3)
+  end
+  greeting("A")
+  greeting("B")
+  greeting("C")'
+assert 'Hello, English
+こんにちは。 日本語
+Sorry, I don'"'"'t speak Deutsch' '
+  def greeting(lang: "English")
+    puts("Hello,", lang)
+  end
+  def greeting(lang: "日本語")
+    puts("こんにちは。", lang)
+  end
+  def greeting(lang: string)
+    puts("Sorry, I don'"'"'t speak", lang)
+  end
+
+  greeting("English")
+  greeting("日本語")
+  greeting("Deutsch")'
 # uniform function call syntax
 assert 'hi' '"hi".puts()'
 assert '100 baz!' '
@@ -327,47 +638,6 @@ assert '100 baz!' '
     n.puts(message)
   end
   10.square().baz("baz!")'
-# boolean
-assert 'true' "
-    n = 5
-    case n > 1 && n <= 5
-    when true
-      puts(true)
-    when false
-      puts(false)
-    end"
-assert 'true' "
-    def is_positive(n)
-      n >= 0
-    end
-    case is_positive(1)
-    when true
-      puts(true)
-    when false
-      puts(false)
-    end"
-# string
-assert "Hello, World!" "
-    puts(\"Hello, World!\\n\")"
-assert '1 2 3 4' "
-    def fruit_to_num(fruit: string)
-      case fruit
-      when \"Apple\"
-        1
-      when \"Orange\"
-        2
-      when \"Strawberry\"
-        3
-      else
-        4
-      end
-    end
-    puts(
-      fruit_to_num(\"Apple\"),
-      fruit_to_num(\"Orange\"),
-      fruit_to_num(\"Strawberry\"),
-      fruit_to_num(\"Grape\")
-    )"
 # tuple
 assert "2022 1 22" "
   date = (2022, 1, 22)
@@ -381,23 +651,29 @@ assert "30 false 110 true" "
   puts(t1.0, t1.1, t2.0, t2.1)"
 assert "(1, 2, 3)" "puts((1, 2, 3))"
 assert "1" "
-  case (1, 2, 3)
-  when (2, 3, 4)
-    puts(0)
-  when (1, 2, 3)
-    puts(1)
-  else
-    puts(2)
-  end"
+  def foo(t: (int64, int64, int64))
+    case t
+    when (2, 3, 4)
+      puts(0)
+    when (1, 2, 3)
+      puts(1)
+    else
+      puts(2)
+    end
+  end
+  foo((1, 2, 3))"
 assert "2" '
-  case ("hello", true, 15)
-  when ("hello", false, 15)
-    puts(1)
-  when ("hello", true, 0..=15)
-    puts(2)
-  else
-    puts(3)
-  end'
+  def foo(t: (string, boolean, int64))
+    case t
+    when ("hello", false, 15)
+      puts(1)
+    when ("hello", true, 0..=15)
+      puts(2)
+    else
+      puts(3)
+    end
+  end
+  foo(("hello", true, 15))'
 # zero-sized struct/tuple
 assert "()" "
   a = ()
