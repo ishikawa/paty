@@ -4,7 +4,7 @@
 use super::error::SemanticError;
 use crate::syntax::token::RangeEnd;
 use crate::syntax::{
-    CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern,
+    CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
 };
 use crate::ty::Type;
 use std::iter;

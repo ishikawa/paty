@@ -25,6 +25,21 @@ pub trait Node {
     fn data_mut(&mut self) -> &mut NodeData;
 }
 
+pub trait Typable<'tcx>: fmt::Display {
+    fn ty(&self) -> Option<&'tcx Type<'tcx>>;
+
+    fn assign_ty(&self, ty: &'tcx Type<'tcx>);
+
+    fn expect_ty(&self) -> &'tcx Type<'tcx> {
+        self.ty().unwrap_or_else(|| {
+            panic!(
+                "Semantic analyzer couldn't assign type for the node {}",
+                self
+            );
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct NodeData {
     // comments followed by this node.
@@ -163,23 +178,6 @@ impl<'nd, 'tcx> Expr<'nd, 'tcx> {
     pub fn kind(&self) -> &ExprKind<'nd, 'tcx> {
         &self.kind
     }
-
-    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.ty.get()
-    }
-
-    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
-        self.ty().unwrap_or_else(|| {
-            panic!(
-                "Semantic analyzer couldn't assign type for expression {:?}",
-                self
-            );
-        })
-    }
-
-    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
-        self.ty.set(Some(ty))
-    }
 }
 
 impl<'nd, 'tcx> Node for Expr<'nd, 'tcx> {
@@ -189,6 +187,16 @@ impl<'nd, 'tcx> Node for Expr<'nd, 'tcx> {
 
     fn data_mut(&mut self) -> &mut NodeData {
         &mut self.data
+    }
+}
+
+impl<'tcx> Typable<'tcx> for Expr<'_, 'tcx> {
+    fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.ty.set(Some(ty))
     }
 }
 
@@ -646,23 +654,6 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
     pub fn kind(&self) -> &PatternKind<'nd, 'tcx> {
         &self.kind
     }
-
-    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.ty.get()
-    }
-
-    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
-        self.ty().unwrap_or_else(|| {
-            panic!(
-                "Semantic analyzer couldn't assign type for pattern {}",
-                self.kind
-            );
-        })
-    }
-
-    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
-        self.ty.set(Some(ty))
-    }
 }
 
 impl<'nd, 'tcx> Node for Pattern<'nd, 'tcx> {
@@ -672,6 +663,16 @@ impl<'nd, 'tcx> Node for Pattern<'nd, 'tcx> {
 
     fn data_mut(&mut self) -> &mut NodeData {
         &mut self.data
+    }
+}
+
+impl<'tcx> Typable<'tcx> for Pattern<'_, 'tcx> {
+    fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.ty.set(Some(ty))
     }
 }
 
@@ -877,19 +878,6 @@ impl<'tcx> SpreadPattern<'tcx> {
         self.name.as_deref()
     }
 
-    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.ty.get()
-    }
-
-    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
-        self.ty().unwrap_or_else(|| {
-            panic!(
-                "Semantic analyzer couldn't assign type for the spread pattern {}",
-                self
-            );
-        })
-    }
-
     pub fn expect_struct_ty(&self) -> &StructTy<'tcx> {
         if let Type::Struct(struct_ty) = self.expect_ty() {
             struct_ty
@@ -900,8 +888,14 @@ impl<'tcx> SpreadPattern<'tcx> {
             );
         }
     }
+}
 
-    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+impl<'tcx> Typable<'tcx> for SpreadPattern<'tcx> {
+    fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
     }
 }
