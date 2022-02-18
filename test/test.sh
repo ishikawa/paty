@@ -836,6 +836,23 @@ assert '100 300' '
   when { a, ...x }
     puts(a, x.c)
   end'
+# type aliases
+# assert '101' '
+# type K = int64
+# n: K = 100
+# puts(101)'
+# assert 'x value is 136
+# y value is 353' '
+# type Point = {
+#   x: int64,
+#   y: int64,
+# }
+# def printCoord(pt: Point)
+#   puts("x value is " + pt.x);
+#   puts("y value is " + pt.y)
+# end
+
+# printCoord({ x: 136, y: 353 })'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
