@@ -1065,21 +1065,37 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             //
             //     assignment -> expr ASSIGN expr | expr
             //
-            // And then, construct an assignment node if the left hand of an assignment is
-            // a pattern.
+            // And then, construct an assignment node with a pattern built from the parsed
+            // expression.
+
+            // A type annotation can follow a pattern.
+            let ty = if self.match_token(it, TokenKind::Operator(':')) {
+                it.next();
+                Some(self.type_specifier(it)?)
+            } else {
+                None
+            };
+
             let stmt = if self.match_token(it, TokenKind::Operator('=')) {
                 // convert Expr to Pattern
                 let pattern = self.expr_to_pattern(expr)?;
                 it.next();
+
+                if let Some(ty) = ty {
+                    pattern.assign_ty(ty);
+                }
 
                 let rhs = self.expr(it)?;
                 let mut r#let = Stmt::new(StmtKind::Let { pattern, rhs });
 
                 r#let.data_mut().append_comments_from_node(expr);
                 r#let
+            } else if ty.is_some() {
+                todo!("variable definition without rhs.");
             } else {
                 Stmt::new(StmtKind::Expr(expr))
             };
+
             Ok(stmt)
         } else {
             Err(ParseError::NotParsed)
@@ -1589,7 +1605,34 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 PatternKind::Tuple(ps)
             }
             ExprKind::Struct(struct_value) => {
-                let fields = self.value_fields_to_pattern_fields(struct_value.fields())?;
+                let mut fields = vec![];
+
+                for f in struct_value.fields() {
+                    match f {
+                        ValueFieldOrSpread::ValueField(field) => {
+                            let field_pat = self.expr_to_pattern(field.value())?;
+                            let field = PatternField::new(field.name().to_string(), field_pat);
+
+                            fields.push(PatternFieldOrSpread::PatternField(field));
+                        }
+                        ValueFieldOrSpread::Spread(spread) => {
+                            let spread_pat = if let Some(expr) = spread.operand {
+                                if let ExprKind::Var(name) = expr.kind() {
+                                    SpreadPattern::new(Some(name.to_string()))
+                                } else {
+                                    return Err(ParseError::UnrecognizedPattern {
+                                        src: expr.to_string(),
+                                    });
+                                }
+                            } else {
+                                SpreadPattern::new(None)
+                            };
+
+                            fields.push(PatternFieldOrSpread::Spread(spread_pat));
+                        }
+                    }
+                }
+
                 let struct_pat = if let Some(name) = struct_value.name() {
                     StructPattern::new(Some(name.to_string()), fields)
                 } else {
@@ -1623,41 +1666,6 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         };
 
         Ok(self.pat_arena.alloc(Pattern::new(kind)))
-    }
-
-    fn value_fields_to_pattern_fields(
-        &self,
-        value_fields: &[ValueFieldOrSpread<'nd, 'tcx>],
-    ) -> Result<Vec<PatternFieldOrSpread<'nd, 'tcx>>, ParseError<'t>> {
-        let mut fields = vec![];
-
-        for f in value_fields {
-            match f {
-                ValueFieldOrSpread::ValueField(field) => {
-                    let field_pat = self.expr_to_pattern(field.value())?;
-                    let field = PatternField::new(field.name().to_string(), field_pat);
-
-                    fields.push(PatternFieldOrSpread::PatternField(field));
-                }
-                ValueFieldOrSpread::Spread(spread) => {
-                    let spread_pat = if let Some(expr) = spread.operand {
-                        if let ExprKind::Var(name) = expr.kind() {
-                            SpreadPattern::new(Some(name.to_string()))
-                        } else {
-                            return Err(ParseError::UnrecognizedPattern {
-                                src: expr.to_string(),
-                            });
-                        }
-                    } else {
-                        SpreadPattern::new(None)
-                    };
-
-                    fields.push(PatternFieldOrSpread::Spread(spread_pat));
-                }
-            }
-        }
-
-        Ok(fields)
     }
 
     fn variable_name_to_pattern(&self, name: String) -> PatternKind<'nd, 'tcx> {

@@ -327,9 +327,16 @@ assert 'expected type `1`, found `struct T { a: int64, b: boolean }`' '
   else
     puts(2)
   end'
+# explict type annotated pattern
 assert 'expected type `1`, found `2`' 'case 1
 when x : 2
   puts(x)
+end'
+assert 'non-exhaustive pattern' '
+n: int64 = 1
+case n
+when 1
+  puts(n)
 end'
 # literal types
 assert 'expected type `"A"`, found `"B"`' '

@@ -168,13 +168,20 @@ fn unify_expr_type<'nd: 'tcx, 'tcx>(
     }
 }
 
+#[allow(clippy::needless_bool)]
 fn unify_pat_type<'nd: 'tcx, 'tcx>(
     expected: &'tcx Type<'tcx>,
     pat: &syntax::Pattern<'nd, 'tcx>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
     if let Some(actual) = pat.ty() {
-        expect_assignable_type(expected, actual, errors)
+        if !expect_assignable_type(expected, actual, errors) {
+            //dbg!(expected);
+            //dbg!(pat);
+            false
+        } else {
+            true
+        }
     } else {
         pat.assign_ty(expected);
         true
@@ -339,15 +346,31 @@ fn analyze_stmt<'nd: 'tcx, 'tcx>(
     match stmt.kind() {
         syntax::StmtKind::Let { pattern, rhs } => {
             analyze_expr(tcx, rhs, vars, functions, named_types, errors);
-            analyze_let_pattern(
-                tcx,
-                pattern,
-                rhs.expect_ty(),
-                vars,
-                functions,
-                named_types,
-                errors,
-            );
+
+            if let Some(pattern_ty) = pattern.ty() {
+                // the pattern has an explicit type annotation.
+                analyze_let_pattern(
+                    tcx,
+                    pattern,
+                    pattern_ty,
+                    vars,
+                    functions,
+                    named_types,
+                    errors,
+                );
+                unify_expr_type(pattern_ty, rhs, errors);
+            } else {
+                // otherwise, pattern should be unified with rhs's type.
+                analyze_let_pattern(
+                    tcx,
+                    pattern,
+                    rhs.expect_ty(),
+                    vars,
+                    functions,
+                    named_types,
+                    errors,
+                );
+            }
         }
         syntax::StmtKind::Expr(expr) => {
             analyze_expr(tcx, expr, vars, functions, named_types, errors);
@@ -1047,8 +1070,10 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             unify_pat_type(expected_ty, pat, errors);
 
             let binding = Binding::new(name.to_string(), pat.expect_ty());
-
             vars.insert(binding);
+
+            // already unified.
+            return;
         }
         PatternKind::Or(sub_pats) => {
             let mut bindings: Option<HashMap<String, &Type>> = None;
