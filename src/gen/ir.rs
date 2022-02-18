@@ -855,6 +855,9 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             syntax::DeclarationKind::Struct(struct_def) => {
                 program.add_decl_type(struct_def.ty());
             }
+            syntax::DeclarationKind::TypeAlias(alias) => {
+                program.add_decl_type(alias.ty());
+            }
         }
     }
 

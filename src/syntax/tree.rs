@@ -107,6 +107,7 @@ impl<'nd, 'tcx> Node for Declaration<'nd, 'tcx> {
 pub enum DeclarationKind<'nd, 'tcx> {
     Function(Function<'nd, 'tcx>),
     Struct(StructDeclaration<'tcx>),
+    TypeAlias(TypeAlias<'tcx>),
 }
 
 #[derive(Debug)]
@@ -364,6 +365,32 @@ impl fmt::Display for CallExpr<'_, '_> {
             }
         }
         write!(f, ")")
+    }
+}
+
+#[derive(Debug)]
+pub struct TypeAlias<'tcx> {
+    name: String,
+    ty: &'tcx Type<'tcx>,
+}
+
+impl<'tcx> TypeAlias<'tcx> {
+    pub fn new(name: String, ty: &'tcx Type<'tcx>) -> Self {
+        Self { name, ty }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
+    }
+}
+
+impl fmt::Display for TypeAlias<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "type {} = {}", self.name(), self.ty())
     }
 }
 

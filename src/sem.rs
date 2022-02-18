@@ -82,14 +82,18 @@ pub fn analyze<'nd: 'tcx, 'tcx>(
     // 1. Collect named types before analyze program.
     for top_level in body {
         if let syntax::TopLevel::Declaration(decl) = top_level {
-            if let syntax::DeclarationKind::Struct(struct_decl) = decl.kind() {
-                if named_types.contains_key(struct_decl.name()) {
-                    errors.push(SemanticError::DuplicateNamedType {
-                        name: struct_decl.name().to_string(),
-                    });
-                } else {
-                    named_types.insert(struct_decl.name().to_string(), struct_decl.ty());
+            match decl.kind() {
+                syntax::DeclarationKind::Struct(struct_decl) => {
+                    if named_types.contains_key(struct_decl.name()) {
+                        errors.push(SemanticError::DuplicateNamedType {
+                            name: struct_decl.name().to_string(),
+                        });
+                    } else {
+                        named_types.insert(struct_decl.name().to_string(), struct_decl.ty());
+                    }
                 }
+                syntax::DeclarationKind::TypeAlias(_) => todo!(),
+                syntax::DeclarationKind::Function(_) => {}
             }
         }
     }
