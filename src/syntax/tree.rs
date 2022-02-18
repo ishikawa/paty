@@ -25,6 +25,21 @@ pub trait Node {
     fn data_mut(&mut self) -> &mut NodeData;
 }
 
+pub trait Typable<'tcx>: fmt::Display {
+    fn ty(&self) -> Option<&'tcx Type<'tcx>>;
+
+    fn assign_ty(&self, ty: &'tcx Type<'tcx>);
+
+    fn expect_ty(&self) -> &'tcx Type<'tcx> {
+        self.ty().unwrap_or_else(|| {
+            panic!(
+                "Semantic analyzer couldn't assign type for the node {}",
+                self
+            );
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct NodeData {
     // comments followed by this node.
@@ -163,23 +178,6 @@ impl<'nd, 'tcx> Expr<'nd, 'tcx> {
     pub fn kind(&self) -> &ExprKind<'nd, 'tcx> {
         &self.kind
     }
-
-    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.ty.get()
-    }
-
-    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
-        self.ty().unwrap_or_else(|| {
-            panic!(
-                "Semantic analyzer couldn't assign type for expression {:?}",
-                self
-            );
-        })
-    }
-
-    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
-        self.ty.set(Some(ty))
-    }
 }
 
 impl<'nd, 'tcx> Node for Expr<'nd, 'tcx> {
@@ -189,6 +187,16 @@ impl<'nd, 'tcx> Node for Expr<'nd, 'tcx> {
 
     fn data_mut(&mut self) -> &mut NodeData {
         &mut self.data
+    }
+}
+
+impl<'tcx> Typable<'tcx> for Expr<'_, 'tcx> {
+    fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.ty.set(Some(ty))
     }
 }
 
@@ -415,15 +423,13 @@ impl<'nd, 'tcx> Function<'nd, 'tcx> {
 #[derive(Debug)]
 pub struct Parameter<'nd, 'tcx> {
     pattern: &'nd Pattern<'nd, 'tcx>,
-    ty: &'tcx Type<'tcx>,
     data: NodeData,
 }
 
 impl<'nd, 'tcx> Parameter<'nd, 'tcx> {
-    pub fn new(pattern: &'nd Pattern<'nd, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
+    pub fn new(pattern: &'nd Pattern<'nd, 'tcx>) -> Self {
         Self {
             pattern,
-            ty,
             data: NodeData::new(),
         }
     }
@@ -433,7 +439,9 @@ impl<'nd, 'tcx> Parameter<'nd, 'tcx> {
     }
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
-        self.ty
+        self.pattern
+            .ty()
+            .expect("function parameter type must be explicit")
     }
 }
 
@@ -646,23 +654,6 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
     pub fn kind(&self) -> &PatternKind<'nd, 'tcx> {
         &self.kind
     }
-
-    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.ty.get()
-    }
-
-    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
-        self.ty().unwrap_or_else(|| {
-            panic!(
-                "Semantic analyzer couldn't assign type for pattern {}",
-                self.kind
-            );
-        })
-    }
-
-    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
-        self.ty.set(Some(ty))
-    }
 }
 
 impl<'nd, 'tcx> Node for Pattern<'nd, 'tcx> {
@@ -672,6 +663,16 @@ impl<'nd, 'tcx> Node for Pattern<'nd, 'tcx> {
 
     fn data_mut(&mut self) -> &mut NodeData {
         &mut self.data
+    }
+}
+
+impl<'tcx> Typable<'tcx> for Pattern<'_, 'tcx> {
+    fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.ty.set(Some(ty))
     }
 }
 
@@ -877,19 +878,6 @@ impl<'tcx> SpreadPattern<'tcx> {
         self.name.as_deref()
     }
 
-    pub fn ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.ty.get()
-    }
-
-    pub fn expect_ty(&self) -> &'tcx Type<'tcx> {
-        self.ty().unwrap_or_else(|| {
-            panic!(
-                "Semantic analyzer couldn't assign type for the spread pattern {}",
-                self
-            );
-        })
-    }
-
     pub fn expect_struct_ty(&self) -> &StructTy<'tcx> {
         if let Type::Struct(struct_ty) = self.expect_ty() {
             struct_ty
@@ -900,8 +888,14 @@ impl<'tcx> SpreadPattern<'tcx> {
             );
         }
     }
+}
 
-    pub fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
+impl<'tcx> Typable<'tcx> for SpreadPattern<'tcx> {
+    fn ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.ty.get()
+    }
+
+    fn assign_ty(&self, ty: &'tcx Type<'tcx>) {
         self.ty.set(Some(ty))
     }
 }
@@ -1065,21 +1059,37 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             //
             //     assignment -> expr ASSIGN expr | expr
             //
-            // And then, construct an assignment node if the left hand of an assignment is
-            // a pattern.
+            // And then, construct an assignment node with a pattern built from the parsed
+            // expression.
+
+            // A type annotation can follow a pattern.
+            let ty = if self.match_token(it, TokenKind::Operator(':')) {
+                it.next();
+                Some(self.type_specifier(it)?)
+            } else {
+                None
+            };
+
             let stmt = if self.match_token(it, TokenKind::Operator('=')) {
                 // convert Expr to Pattern
                 let pattern = self.expr_to_pattern(expr)?;
                 it.next();
+
+                if let Some(ty) = ty {
+                    pattern.assign_ty(ty);
+                }
 
                 let rhs = self.expr(it)?;
                 let mut r#let = Stmt::new(StmtKind::Let { pattern, rhs });
 
                 r#let.data_mut().append_comments_from_node(expr);
                 r#let
+            } else if ty.is_some() {
+                todo!("variable definition without rhs.");
             } else {
                 Stmt::new(StmtKind::Expr(expr))
             };
+
             Ok(stmt)
         } else {
             Err(ParseError::NotParsed)
@@ -1137,16 +1147,12 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
     ) -> Result<Parameter<'nd, 'tcx>, ParseError<'t>> {
         let pat = self.pattern(it)?;
 
-        let ty = if self.match_token(it, TokenKind::Operator(':')) {
-            it.next();
-
-            self.type_specifier(it)?
-        } else {
+        if pat.ty().is_none() {
             // Int64 for omitted type
-            self.tcx.int64()
-        };
+            pat.assign_ty(self.tcx.int64());
+        }
 
-        let mut param = Parameter::new(pat, ty);
+        let mut param = Parameter::new(pat);
         param.data_mut().append_comments_from_node(pat);
 
         Ok(param)
@@ -1323,6 +1329,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             _ => Err(ParseError::NotParsed),
         }
     }
+
     fn type_specifier(
         &self,
         it: &mut TokenIterator<'t>,
@@ -1526,19 +1533,29 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             }
             TokenKind::Identifier(name) => {
                 it.next();
+
                 if self.match_token(it, TokenKind::Operator('{')) {
+                    // Struct pattern
                     let fields = self.parse_elements(it, ('{', '}'), Self::pattern_field)?;
                     let struct_value = StructPattern::new(Some(name.to_string()), fields);
                     let kind = PatternKind::Struct(struct_value);
                     self.alloc_pat(kind, token)
                 } else {
-                    self.alloc_pat(self.variable_name_to_pattern(name), token)
+                    // Variable pattern
+                    let kind = self.variable_name_to_pattern(name.clone());
+                    self.alloc_pat(kind, token)
                 }
             }
             _ => {
                 return Err(ParseError::NotParsed);
             }
         };
+
+        // Type annotated pattern
+        if self.match_token(it, TokenKind::Operator(':')) {
+            it.next();
+            pat.assign_ty(self.type_specifier(it)?);
+        }
 
         // Or-pattern?
         let mut sub_pats = vec![pat];
@@ -1567,7 +1584,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         expr: &'nd Expr<'nd, 'tcx>,
     ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
         let kind = match expr.kind() {
-            ExprKind::Var(name) => self.variable_name_to_pattern(name),
+            ExprKind::Var(name) => self.variable_name_to_pattern(name.clone()),
             ExprKind::Integer(n) => PatternKind::Integer(*n),
             ExprKind::Boolean(b) => PatternKind::Boolean(*b),
             ExprKind::String(s) => PatternKind::String(s.to_string()),
@@ -1582,7 +1599,34 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 PatternKind::Tuple(ps)
             }
             ExprKind::Struct(struct_value) => {
-                let fields = self.value_fields_to_pattern_fields(struct_value.fields())?;
+                let mut fields = vec![];
+
+                for f in struct_value.fields() {
+                    match f {
+                        ValueFieldOrSpread::ValueField(field) => {
+                            let field_pat = self.expr_to_pattern(field.value())?;
+                            let field = PatternField::new(field.name().to_string(), field_pat);
+
+                            fields.push(PatternFieldOrSpread::PatternField(field));
+                        }
+                        ValueFieldOrSpread::Spread(spread) => {
+                            let spread_pat = if let Some(expr) = spread.operand {
+                                if let ExprKind::Var(name) = expr.kind() {
+                                    SpreadPattern::new(Some(name.to_string()))
+                                } else {
+                                    return Err(ParseError::UnrecognizedPattern {
+                                        src: expr.to_string(),
+                                    });
+                                }
+                            } else {
+                                SpreadPattern::new(None)
+                            };
+
+                            fields.push(PatternFieldOrSpread::Spread(spread_pat));
+                        }
+                    }
+                }
+
                 let struct_pat = if let Some(name) = struct_value.name() {
                     StructPattern::new(Some(name.to_string()), fields)
                 } else {
@@ -1618,46 +1662,11 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         Ok(self.pat_arena.alloc(Pattern::new(kind)))
     }
 
-    fn value_fields_to_pattern_fields(
-        &self,
-        value_fields: &[ValueFieldOrSpread<'nd, 'tcx>],
-    ) -> Result<Vec<PatternFieldOrSpread<'nd, 'tcx>>, ParseError<'t>> {
-        let mut fields = vec![];
-
-        for f in value_fields {
-            match f {
-                ValueFieldOrSpread::ValueField(field) => {
-                    let field_pat = self.expr_to_pattern(field.value())?;
-                    let field = PatternField::new(field.name().to_string(), field_pat);
-
-                    fields.push(PatternFieldOrSpread::PatternField(field));
-                }
-                ValueFieldOrSpread::Spread(spread) => {
-                    let spread_pat = if let Some(expr) = spread.operand {
-                        if let ExprKind::Var(name) = expr.kind() {
-                            SpreadPattern::new(Some(name.to_string()))
-                        } else {
-                            return Err(ParseError::UnrecognizedPattern {
-                                src: expr.to_string(),
-                            });
-                        }
-                    } else {
-                        SpreadPattern::new(None)
-                    };
-
-                    fields.push(PatternFieldOrSpread::Spread(spread_pat));
-                }
-            }
-        }
-
-        Ok(fields)
-    }
-
-    fn variable_name_to_pattern(&self, name: &str) -> PatternKind<'nd, 'tcx> {
+    fn variable_name_to_pattern(&self, name: String) -> PatternKind<'nd, 'tcx> {
         if name == "_" {
             PatternKind::Wildcard
         } else {
-            PatternKind::Var(name.to_string())
+            PatternKind::Var(name)
         }
     }
 

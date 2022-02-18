@@ -1,6 +1,6 @@
 //! Semantic analysis
 use self::error::{FormatSymbols, SemanticError};
-use crate::syntax::{PatternKind, StmtKind};
+use crate::syntax::{PatternKind, StmtKind, Typable};
 use crate::ty::{StructTy, TypedField};
 use crate::{
     syntax,
@@ -155,28 +155,22 @@ pub fn analyze<'nd: 'tcx, 'tcx>(
     }
 }
 
-fn unify_expr_type<'nd: 'tcx, 'tcx>(
+#[allow(clippy::needless_bool)]
+fn unify_type<'tcx, T: Typable<'tcx>>(
     expected: &'tcx Type<'tcx>,
-    expr: &syntax::Expr<'nd, 'tcx>,
+    node: &T,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
-    if let Some(actual) = expr.ty() {
-        expect_assignable_type(expected, actual, errors)
+    if let Some(actual) = node.ty() {
+        if !expect_assignable_type(expected, actual, errors) {
+            //dbg!(expected);
+            //dbg!(pat);
+            false
+        } else {
+            true
+        }
     } else {
-        expr.assign_ty(expected);
-        true
-    }
-}
-
-fn unify_pat_type<'nd: 'tcx, 'tcx>(
-    expected: &'tcx Type<'tcx>,
-    pat: &syntax::Pattern<'nd, 'tcx>,
-    errors: &mut Vec<SemanticError<'tcx>>,
-) -> bool {
-    if let Some(actual) = pat.ty() {
-        expect_assignable_type(expected, actual, errors)
-    } else {
-        pat.assign_ty(expected);
+        node.assign_ty(expected);
         true
     }
 }
@@ -337,17 +331,33 @@ fn analyze_stmt<'nd: 'tcx, 'tcx>(
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
     match stmt.kind() {
-        syntax::StmtKind::Let { pattern, rhs } => {
+        &syntax::StmtKind::Let { pattern, rhs } => {
             analyze_expr(tcx, rhs, vars, functions, named_types, errors);
-            analyze_let_pattern(
-                tcx,
-                pattern,
-                rhs.expect_ty(),
-                vars,
-                functions,
-                named_types,
-                errors,
-            );
+
+            if let Some(pattern_ty) = pattern.ty() {
+                // the pattern has an explicit type annotation.
+                analyze_let_pattern(
+                    tcx,
+                    pattern,
+                    pattern_ty,
+                    vars,
+                    functions,
+                    named_types,
+                    errors,
+                );
+                unify_type(pattern_ty, rhs, errors);
+            } else {
+                // otherwise, pattern should be unified with rhs's type.
+                analyze_let_pattern(
+                    tcx,
+                    pattern,
+                    rhs.expect_ty(),
+                    vars,
+                    functions,
+                    named_types,
+                    errors,
+                );
+            }
         }
         syntax::StmtKind::Expr(expr) => {
             analyze_expr(tcx, expr, vars, functions, named_types, errors);
@@ -365,13 +375,13 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 ) {
     match expr.kind() {
         syntax::ExprKind::Integer(n) => {
-            unify_expr_type(tcx.literal_int64(*n), expr, errors);
+            unify_type(tcx.literal_int64(*n), expr, errors);
         }
         syntax::ExprKind::Boolean(b) => {
-            unify_expr_type(tcx.literal_boolean(*b), expr, errors);
+            unify_type(tcx.literal_boolean(*b), expr, errors);
         }
         syntax::ExprKind::String(s) => {
-            unify_expr_type(tcx.literal_string(s.clone()), expr, errors);
+            unify_type(tcx.literal_string(s.clone()), expr, errors);
         }
         syntax::ExprKind::Tuple(values) => {
             let mut value_types = vec![];
@@ -381,7 +391,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                 value_types.push(value.ty().unwrap());
             }
 
-            unify_expr_type(tcx.tuple(value_types), expr, errors);
+            unify_type(tcx.tuple(value_types), expr, errors);
         }
         syntax::ExprKind::Struct(struct_value) => {
             if let Some(struct_name) = struct_value.name() {
@@ -393,7 +403,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                     }
                 };
 
-                unify_expr_type(expected_ty, expr, errors);
+                unify_type(expected_ty, expr, errors);
 
                 // Analyze fields
                 let mut defined_fields = HashSet::new();
@@ -421,7 +431,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                             };
 
                             analyze_expr(tcx, field.value(), vars, functions, named_types, errors);
-                            unify_expr_type(field_ty, field.value(), errors);
+                            unify_type(field_ty, field.value(), errors);
                         }
                         syntax::ValueFieldOrSpread::Spread(spread) => {
                             let operand = if let Some(operand) = spread.operand() {
@@ -538,50 +548,50 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
                     .map(|(k, ty)| TypedField::new(k.to_string(), ty))
                     .collect::<Vec<_>>();
 
-                unify_expr_type(tcx.anon_struct_ty(expected_tfs), expr, errors);
+                unify_type(tcx.anon_struct_ty(expected_tfs), expr, errors);
             }
         }
-        syntax::ExprKind::Minus(a) => {
+        &syntax::ExprKind::Minus(a) => {
             analyze_expr(tcx, a, vars, functions, named_types, errors);
 
-            unify_expr_type(tcx.int64(), a, errors);
-            unify_expr_type(tcx.int64(), expr, errors);
+            unify_type(tcx.int64(), a, errors);
+            unify_type(tcx.int64(), expr, errors);
         }
-        syntax::ExprKind::Add(a, b)
-        | syntax::ExprKind::Sub(a, b)
-        | syntax::ExprKind::Mul(a, b)
-        | syntax::ExprKind::Div(a, b) => {
+        &syntax::ExprKind::Add(a, b)
+        | &syntax::ExprKind::Sub(a, b)
+        | &syntax::ExprKind::Mul(a, b)
+        | &syntax::ExprKind::Div(a, b) => {
             analyze_expr(tcx, a, vars, functions, named_types, errors);
             analyze_expr(tcx, b, vars, functions, named_types, errors);
 
-            unify_expr_type(tcx.int64(), a, errors);
-            unify_expr_type(tcx.int64(), b, errors);
-            unify_expr_type(tcx.int64(), expr, errors);
+            unify_type(tcx.int64(), a, errors);
+            unify_type(tcx.int64(), b, errors);
+            unify_type(tcx.int64(), expr, errors);
         }
-        syntax::ExprKind::Lt(a, b)
-        | syntax::ExprKind::Gt(a, b)
-        | syntax::ExprKind::Le(a, b)
-        | syntax::ExprKind::Ge(a, b)
-        | syntax::ExprKind::Eq(a, b)
-        | syntax::ExprKind::Ne(a, b) => {
+        &syntax::ExprKind::Lt(a, b)
+        | &syntax::ExprKind::Gt(a, b)
+        | &syntax::ExprKind::Le(a, b)
+        | &syntax::ExprKind::Ge(a, b)
+        | &syntax::ExprKind::Eq(a, b)
+        | &syntax::ExprKind::Ne(a, b) => {
             analyze_expr(tcx, a, vars, functions, named_types, errors);
             analyze_expr(tcx, b, vars, functions, named_types, errors);
 
-            unify_expr_type(tcx.int64(), a, errors);
-            unify_expr_type(tcx.int64(), b, errors);
-            unify_expr_type(tcx.boolean(), expr, errors);
+            unify_type(tcx.int64(), a, errors);
+            unify_type(tcx.int64(), b, errors);
+            unify_type(tcx.boolean(), expr, errors);
         }
-        syntax::ExprKind::And(a, b) | syntax::ExprKind::Or(a, b) => {
+        &syntax::ExprKind::And(a, b) | &syntax::ExprKind::Or(a, b) => {
             analyze_expr(tcx, a, vars, functions, named_types, errors);
             analyze_expr(tcx, b, vars, functions, named_types, errors);
 
-            unify_expr_type(tcx.boolean(), a, errors);
-            unify_expr_type(tcx.boolean(), b, errors);
-            unify_expr_type(tcx.boolean(), expr, errors);
+            unify_type(tcx.boolean(), a, errors);
+            unify_type(tcx.boolean(), b, errors);
+            unify_type(tcx.boolean(), expr, errors);
         }
         syntax::ExprKind::Var(name) => {
             if let Some(binding) = vars.get(name) {
-                unify_expr_type(binding.ty(), expr, errors);
+                unify_type(binding.ty(), expr, errors);
             } else {
                 errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
@@ -594,7 +604,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             if let Type::Tuple(fs) = ty {
                 if *index < fs.len() {
                     // apply type
-                    unify_expr_type(fs[*index], expr, errors);
+                    unify_type(fs[*index], expr, errors);
                     return;
                 }
             }
@@ -617,7 +627,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             if let Type::Struct(struct_ty) = ty {
                 if let Some(f) = struct_ty.get_field(name) {
                     // apply type
-                    unify_expr_type(f.ty(), expr, errors);
+                    unify_type(f.ty(), expr, errors);
                     return;
                 }
             }
@@ -713,12 +723,12 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
             for (i, arg) in caller_args.iter().enumerate() {
                 analyze_expr(tcx, arg, vars, functions, named_types, errors);
-                unify_expr_type(params[i].ty(), arg, errors);
+                unify_type(params[i].ty(), *arg, errors);
             }
 
             // The return type of the called function.
             if let Some(retty) = fun.retty() {
-                unify_expr_type(retty, expr, errors);
+                unify_type(retty, expr, errors);
             } else {
                 // The return type is undefined if the function is called before
                 // defined (recursive function). In that case, we skip unification here.
@@ -731,7 +741,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             for arg in args {
                 analyze_expr(tcx, arg, vars, functions, named_types, errors);
             }
-            unify_expr_type(tcx.int64(), expr, errors);
+            unify_type(tcx.int64(), expr, errors);
         }
         syntax::ExprKind::Case {
             head,
@@ -753,7 +763,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
 
                 // Infer pattern's type and bindings
 
-                //if !unify_pat_type(dbg!(head_ty), arm.pattern(), errors) {
+                //if !unify_type(dbg!(head_ty), arm.pattern(), errors) {
                 //    return;
                 //}
                 analyze_pattern(
@@ -820,7 +830,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
             }
 
             if let Some(expr_ty) = expr_ty {
-                unify_expr_type(expr_ty, expr, errors);
+                unify_type(expr_ty, expr, errors);
             }
 
             if !errors.is_empty() {
@@ -963,17 +973,17 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
     // Infer the type of pattern from its values.
     match pat.kind() {
         PatternKind::Integer(n) => {
-            unify_pat_type(tcx.literal_int64(*n), pat, errors);
+            unify_type(tcx.literal_int64(*n), pat, errors);
         }
         PatternKind::Boolean(b) => {
-            unify_pat_type(tcx.literal_boolean(*b), pat, errors);
+            unify_type(tcx.literal_boolean(*b), pat, errors);
         }
         PatternKind::String(s) => {
-            //unify_pat_type(tcx.string(), pat, errors);
-            unify_pat_type(tcx.literal_string(s.clone()), pat, errors);
+            //unify_type(tcx.string(), pat, errors);
+            unify_type(tcx.literal_string(s.clone()), pat, errors);
         }
         PatternKind::Range { .. } => {
-            unify_pat_type(tcx.int64(), pat, errors);
+            unify_type(tcx.int64(), pat, errors);
         }
         PatternKind::Tuple(patterns) => {
             let sub_types = if let Type::Tuple(sub_types) = expected_ty {
@@ -997,7 +1007,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, named_types, errors);
             }
 
-            unify_pat_type(tcx.tuple(sub_types.clone()), pat, errors);
+            unify_type(tcx.tuple(sub_types.clone()), pat, errors);
         }
         PatternKind::Struct(struct_pat) => {
             // Struct type check
@@ -1020,7 +1030,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
                 return;
             }
 
-            if !unify_pat_type(expected_ty, pat, errors) {
+            if !unify_type(expected_ty, pat, errors) {
                 return;
             }
 
@@ -1044,11 +1054,13 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
             }
 
             // We need the type of pattern.
-            unify_pat_type(expected_ty, pat, errors);
+            unify_type(expected_ty, pat, errors);
 
             let binding = Binding::new(name.to_string(), pat.expect_ty());
-
             vars.insert(binding);
+
+            // already unified.
+            return;
         }
         PatternKind::Or(sub_pats) => {
             let mut bindings: Option<HashMap<String, &Type>> = None;
@@ -1112,7 +1124,7 @@ fn analyze_pattern<'nd: 'tcx, 'tcx>(
         PatternKind::Wildcard => {}
     };
 
-    unify_pat_type(expected_ty, pat, errors);
+    unify_type(expected_ty, pat, errors);
 }
 
 /// Try to widen a given type `ty1` to `ty2`, returns the widen if it exists.

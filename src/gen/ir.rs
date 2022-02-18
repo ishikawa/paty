@@ -1,4 +1,4 @@
-use crate::syntax::{self, PatternKind};
+use crate::syntax::{self, PatternKind, Typable};
 use crate::ty::{FunctionSignature, StructTy, Type, TypeContext, TypedField};
 use std::cell::Cell;
 use std::collections::HashSet;
