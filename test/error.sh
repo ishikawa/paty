@@ -327,6 +327,10 @@ assert 'expected type `1`, found `struct T { a: int64, b: boolean }`' '
   else
     puts(2)
   end'
+assert 'expected type `1`, found `2`' 'case 1
+when x : 2
+  puts(x)
+end'
 # literal types
 assert 'expected type `"A"`, found `"B"`' '
   case "A"
