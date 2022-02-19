@@ -589,6 +589,10 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".{}", name));
             }
+            ExprKind::GetUnionTag(operand) => {
+                self.emit_expr(operand, code);
+                code.push_str(".tag");
+            }
             ExprKind::TmpVar(t) => {
                 if let Some(expr) = t.immediate() {
                     self.emit_expr(expr, code);

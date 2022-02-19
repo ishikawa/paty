@@ -420,7 +420,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::FieldAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => true,
-            ExprKind::CondAndAssign { .. } => false,
+            ExprKind::CondAndAssign { .. } | ExprKind::GetUnionTag(_) => false,
         }
     }
 
@@ -459,6 +459,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
                     true
                 }
             }
+            ExprKind::GetUnionTag(_) => false,
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
@@ -515,6 +516,10 @@ pub enum ExprKind<'a, 'tcx> {
         cond: Option<&'a Expr<'a, 'tcx>>,
         var: &'a TmpVar<'a, 'tcx>,
     },
+    /// Get the tag of an union type.
+    /// - The operand must be an union type value.
+    /// - The return value is an int value. 0 =< n < the number of union members.
+    GetUnionTag(&'a Expr<'a, 'tcx>),
 
     // Built-in procedures
     Printf(Vec<FormatSpec<'a, 'tcx>>),
@@ -565,6 +570,9 @@ impl fmt::Display for ExprKind<'_, '_> {
                 } else {
                     write!(f, "{} = true", var)
                 }
+            }
+            ExprKind::GetUnionTag(expr) => {
+                write!(f, "{}.tag", expr)
             }
             ExprKind::Call { name, args, .. } => {
                 write!(f, "{}", name)?;
@@ -1129,6 +1137,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 while let Some(arg) = it.next() {
                     let a = self.build_expr(arg, program, stmts);
+
                     self.printf_format(a, program, stmts, &mut format_specs, false);
 
                     // separated by a space
@@ -1784,6 +1793,7 @@ impl<'a, 'tcx> Optimizer {
                     self.optimize_expr(cond);
                 }
             }
+            ExprKind::GetUnionTag(operand) => self.optimize_expr(operand),
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
