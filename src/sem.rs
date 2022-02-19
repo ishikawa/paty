@@ -103,22 +103,13 @@ pub fn analyze<'nd, 'tcx>(
 
     // 2. For all explicit type annotation/declaration(s), resolve these types.
     for top_level in body {
-        if let syntax::TopLevel::Declaration(decl) = top_level {
-            if let syntax::DeclarationKind::Struct(struct_decl) = decl.kind() {
-                resolve_type(tcx, struct_decl.ty(), &named_types, &mut errors);
-            }
-        }
+        analyze_explicit_type_annotations_top_level(tcx, top_level, &named_types, &mut errors);
     }
 
     // 3. For all function declarations, collect declarations.
     for top_level in body {
         if let syntax::TopLevel::Declaration(decl) = top_level {
             if let syntax::DeclarationKind::Function(fun) = decl.kind() {
-                // Resolved parameter types before using it as key.
-                for p in fun.params() {
-                    resolve_type(tcx, p.ty(), &named_types, &mut errors);
-                }
-
                 let sig = fun.signature();
 
                 if functions.iter().any(|f| f.signature() == sig) {
@@ -234,6 +225,59 @@ fn resolve_type<'tcx>(
     }
 }
 
+//  For all explicit type annotation/declaration(s), resolve these types.
+fn analyze_explicit_type_annotations_top_level<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    top_level: &'nd syntax::TopLevel<'nd, 'tcx>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match top_level {
+        syntax::TopLevel::Declaration(decl) => {
+            analyze_explicit_type_annotations_decl(tcx, decl, named_types, errors)
+        }
+        syntax::TopLevel::Stmt(stmt) => {
+            analyze_explicit_type_annotations_stmt(tcx, stmt, named_types, errors)
+        }
+    }
+}
+fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    decl: &'nd syntax::Declaration<'nd, 'tcx>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match decl.kind() {
+        syntax::DeclarationKind::Function(fun) => {
+            // Resolved parameter types before using it as key.
+            for p in fun.params() {
+                resolve_type(tcx, p.ty(), named_types, errors);
+            }
+        }
+        syntax::DeclarationKind::Struct(struct_decl) => {
+            resolve_type(tcx, struct_decl.ty(), named_types, errors);
+        }
+        syntax::DeclarationKind::TypeAlias(alias) => {
+            resolve_type(tcx, alias.ty(), named_types, errors);
+        }
+    }
+}
+fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    stmt: &'nd syntax::Stmt<'nd, 'tcx>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    match stmt.kind() {
+        StmtKind::Let { pattern, .. } => {
+            if let Some(ty) = pattern.ty() {
+                resolve_type(tcx, ty, named_types, errors);
+            }
+        }
+        StmtKind::Expr(_) => {}
+    }
+}
+
 fn analyze_decl<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     decl: &'nd syntax::Declaration<'nd, 'tcx>,
@@ -302,7 +346,6 @@ fn analyze_decl<'nd, 'tcx>(
         };
     }
 }
-
 fn analyze_stmts<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmts: &[syntax::Stmt<'nd, 'tcx>],
@@ -328,7 +371,6 @@ fn analyze_stmts<'nd, 'tcx>(
     }
     last_stmt_ty
 }
-
 fn analyze_stmt<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmt: &syntax::Stmt<'nd, 'tcx>,
@@ -371,7 +413,6 @@ fn analyze_stmt<'nd, 'tcx>(
         }
     }
 }
-
 fn analyze_expr<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     expr: &'nd syntax::Expr<'nd, 'tcx>,
@@ -876,7 +917,6 @@ fn analyze_let_pattern<'nd, 'tcx>(
 
     analyze_pattern(tcx, pat, expected_ty, vars, functions, named_types, errors);
 }
-
 #[allow(clippy::too_many_arguments)]
 fn analyze_pattern_struct_fields<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
@@ -967,7 +1007,6 @@ fn analyze_pattern_struct_fields<'nd, 'tcx>(
         });
     }
 }
-
 fn analyze_pattern<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
