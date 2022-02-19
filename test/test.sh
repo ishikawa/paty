@@ -863,6 +863,15 @@ def kts(s: S)
   end
 end
 kts({ pair: (900, 800) })'
+# union type
+assert '1234567
+abcdefg' '
+type ID = string | int64
+def printID(id: ID)
+  puts(id)
+end
+printID(1234567)
+printID("abcdefg")'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
