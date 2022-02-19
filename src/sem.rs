@@ -70,7 +70,8 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
 }
 
 // Analyze an AST and returns error if any.
-pub fn analyze<'nd: 'tcx, 'tcx>(
+#[allow(clippy::map_entry)]
+pub fn analyze<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     body: &'nd [syntax::TopLevel<'nd, 'tcx>],
 ) -> Result<(), Vec<SemanticError<'tcx>>> {
@@ -82,23 +83,25 @@ pub fn analyze<'nd: 'tcx, 'tcx>(
     // 1. Collect named types before analyze program.
     for top_level in body {
         if let syntax::TopLevel::Declaration(decl) = top_level {
-            match decl.kind() {
+            let (name, ty) = match decl.kind() {
                 syntax::DeclarationKind::Struct(struct_decl) => {
-                    if named_types.contains_key(struct_decl.name()) {
-                        errors.push(SemanticError::DuplicateNamedType {
-                            name: struct_decl.name().to_string(),
-                        });
-                    } else {
-                        named_types.insert(struct_decl.name().to_string(), struct_decl.ty());
-                    }
+                    (struct_decl.name().to_string(), struct_decl.ty())
                 }
-                syntax::DeclarationKind::TypeAlias(_) => todo!(),
-                syntax::DeclarationKind::Function(_) => {}
+                syntax::DeclarationKind::TypeAlias(alias) => (alias.name().to_string(), alias.ty()),
+                syntax::DeclarationKind::Function(_) => {
+                    continue;
+                }
+            };
+
+            if named_types.contains_key(&name) {
+                errors.push(SemanticError::DuplicateNamedType { name });
+            } else {
+                named_types.insert(name, ty);
             }
         }
     }
 
-    // 2. For all struct declarations, resolve field types.
+    // 2. For all explicit type annotation/declaration(s), resolve these types.
     for top_level in body {
         if let syntax::TopLevel::Declaration(decl) = top_level {
             if let syntax::DeclarationKind::Struct(struct_decl) = decl.kind() {
@@ -107,7 +110,7 @@ pub fn analyze<'nd: 'tcx, 'tcx>(
         }
     }
 
-    // 3. For all function declarations, resolve parameter type and collection declarations.
+    // 3. For all function declarations, collect declarations.
     for top_level in body {
         if let syntax::TopLevel::Declaration(decl) = top_level {
             if let syntax::DeclarationKind::Function(fun) = decl.kind() {
@@ -160,15 +163,15 @@ pub fn analyze<'nd: 'tcx, 'tcx>(
 }
 
 #[allow(clippy::needless_bool)]
-fn unify_type<'tcx, T: Typable<'tcx>>(
+fn unify_type<'tcx, T: Typable<'tcx> + std::fmt::Debug>(
     expected: &'tcx Type<'tcx>,
     node: &T,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> bool {
     if let Some(actual) = node.ty() {
         if !expect_assignable_type(expected, actual, errors) {
-            //dbg!(expected);
-            //dbg!(pat);
+            dbg!(expected);
+            dbg!(node);
             false
         } else {
             true
@@ -231,7 +234,7 @@ fn resolve_type<'tcx>(
     }
 }
 
-fn analyze_decl<'nd: 'tcx, 'tcx>(
+fn analyze_decl<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     decl: &'nd syntax::Declaration<'nd, 'tcx>,
     _vars: &mut Scope<'_, 'tcx>,
@@ -300,7 +303,7 @@ fn analyze_decl<'nd: 'tcx, 'tcx>(
     }
 }
 
-fn analyze_stmts<'nd: 'tcx, 'tcx>(
+fn analyze_stmts<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmts: &[syntax::Stmt<'nd, 'tcx>],
     vars: &mut Scope<'_, 'tcx>,
@@ -326,7 +329,7 @@ fn analyze_stmts<'nd: 'tcx, 'tcx>(
     last_stmt_ty
 }
 
-fn analyze_stmt<'nd: 'tcx, 'tcx>(
+fn analyze_stmt<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmt: &syntax::Stmt<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
@@ -369,7 +372,7 @@ fn analyze_stmt<'nd: 'tcx, 'tcx>(
     }
 }
 
-fn analyze_expr<'nd: 'tcx, 'tcx>(
+fn analyze_expr<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     expr: &'nd syntax::Expr<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
@@ -849,7 +852,7 @@ fn analyze_expr<'nd: 'tcx, 'tcx>(
     }
 }
 
-fn analyze_let_pattern<'nd: 'tcx, 'tcx>(
+fn analyze_let_pattern<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
@@ -875,7 +878,7 @@ fn analyze_let_pattern<'nd: 'tcx, 'tcx>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn analyze_pattern_struct_fields<'nd: 'tcx, 'tcx>(
+fn analyze_pattern_struct_fields<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pattern_fields: impl IntoIterator<Item = &'nd syntax::PatternFieldOrSpread<'nd, 'tcx>>,
     struct_fields: &'tcx [TypedField<'tcx>],
@@ -965,7 +968,7 @@ fn analyze_pattern_struct_fields<'nd: 'tcx, 'tcx>(
     }
 }
 
-fn analyze_pattern<'nd: 'tcx, 'tcx>(
+fn analyze_pattern<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
@@ -1307,7 +1310,7 @@ fn get_struct_ty<'tcx>(
 }
 
 /// Infer the closest possible type from a given pattern.
-fn pattern_to_type<'nd: 'tcx, 'tcx>(
+fn pattern_to_type<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &'nd syntax::Pattern<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
