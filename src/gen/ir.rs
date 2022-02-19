@@ -1130,26 +1130,23 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             }
             syntax::ExprKind::Puts(args) => {
                 // Generates `printf(...)` code for `puts(...)`.
-                let mut format_specs = vec![];
-
-                // Build format specifiers
+                //
+                // For union type values, the appropriate value is output by
+                // branching on the condition of the tag of the value. So we
+                // have to generate individual printf(...) for each arguments.
                 let mut it = args.iter().peekable();
 
                 while let Some(arg) = it.next() {
                     let a = self.build_expr(arg, program, stmts);
-
-                    self.printf_format(a, program, stmts, &mut format_specs, false);
+                    self.build_print_expr(a, program, stmts);
 
                     // separated by a space
                     if it.peek().is_some() {
-                        format_specs.push(FormatSpec::Str(" "));
+                        self.build_printf(vec![FormatSpec::Str(" ")], stmts);
                     }
                 }
-                format_specs.push(FormatSpec::Str("\n"));
 
-                // Build arguments
-                let kind = ExprKind::Printf(format_specs);
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+                self.build_printf(vec![FormatSpec::Str("\n")], stmts)
             }
             syntax::ExprKind::Case {
                 head,
@@ -1278,6 +1275,24 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
+    fn build_print_expr(
+        &mut self,
+        arg: &'a Expr<'a, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
+        let mut format_specs = Vec::with_capacity(1);
+        self.printf_format(arg, program, stmts, &mut format_specs, false);
+        self.build_printf(format_specs, stmts)
+    }
+    fn build_printf(
+        &mut self,
+        format_specs: Vec<FormatSpec<'a, 'tcx>>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
+        let kind = ExprKind::Printf(format_specs);
+        self.push_expr_kind(kind, self.tcx.int64(), stmts)
+    }
     fn printf_format_typed_fields(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
