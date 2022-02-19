@@ -107,6 +107,7 @@ impl<'nd, 'tcx> Node for Declaration<'nd, 'tcx> {
 pub enum DeclarationKind<'nd, 'tcx> {
     Function(Function<'nd, 'tcx>),
     Struct(StructDeclaration<'tcx>),
+    TypeAlias(TypeAlias<'tcx>),
 }
 
 #[derive(Debug)]
@@ -364,6 +365,32 @@ impl fmt::Display for CallExpr<'_, '_> {
             }
         }
         write!(f, ")")
+    }
+}
+
+#[derive(Debug)]
+pub struct TypeAlias<'tcx> {
+    name: String,
+    ty: &'tcx Type<'tcx>,
+}
+
+impl<'tcx> TypeAlias<'tcx> {
+    pub fn new(name: String, ty: &'tcx Type<'tcx>) -> Self {
+        Self { name, ty }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
+        self.ty
+    }
+}
+
+impl fmt::Display for TypeAlias<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "type {} = {}", self.name(), self.ty())
     }
 }
 
@@ -1030,6 +1057,8 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             Ok(r#fn)
         } else if let Some(r#struct) = self.lookahead(self.struct_decl(it))? {
             Ok(r#struct)
+        } else if let Some(type_alias) = self.lookahead(self.type_alias_decl(it))? {
+            Ok(type_alias)
         } else {
             Err(ParseError::NotParsed)
         }
@@ -1413,6 +1442,34 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         Ok(ty)
     }
 
+    fn type_alias_decl(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<Declaration<'nd, 'tcx>, ParseError<'t>> {
+        let type_token = self.try_token(it, TokenKind::Type)?;
+
+        let name_token = self.peek_token(it)?;
+        let name = if let TokenKind::Identifier(name) = name_token.kind() {
+            it.next();
+            name.clone()
+        } else {
+            return Err(ParseError::UnexpectedToken {
+                expected: "type name".to_string(),
+                actual: name_token,
+            });
+        };
+
+        self.expect_token(it, TokenKind::Operator('='))?;
+
+        let ty = self.type_specifier(it)?;
+
+        let ty_alias = TypeAlias { name, ty };
+        let mut decl = Declaration::new(DeclarationKind::TypeAlias(ty_alias));
+
+        decl.data_mut().append_comments_from_token(type_token);
+
+        Ok(decl)
+    }
     // expressions
 
     fn expr(&self, it: &mut TokenIterator<'t>) -> ParseResult<'t, 'nd, 'tcx> {

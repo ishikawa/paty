@@ -658,7 +658,7 @@ pub struct Builder<'a, 'tcx> {
     tmp_var_index: usize,
 }
 
-impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
+impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     pub fn new(
         tcx: TypeContext<'tcx>,
         expr_arena: &'a Arena<Expr<'a, 'tcx>>,
@@ -854,6 +854,9 @@ impl<'a, 'nd: 'tcx, 'tcx> Builder<'a, 'tcx> {
             }
             syntax::DeclarationKind::Struct(struct_def) => {
                 program.add_decl_type(struct_def.ty());
+            }
+            syntax::DeclarationKind::TypeAlias(alias) => {
+                program.add_decl_type(alias.ty());
             }
         }
     }

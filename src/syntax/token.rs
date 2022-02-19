@@ -91,6 +91,7 @@ pub enum TokenKind {
     // Keywords
     Def,
     Struct,
+    Type,
     Case,
     When,
     Else,
@@ -122,6 +123,7 @@ impl fmt::Display for TokenKind {
             Self::Or => write!(f, "||"),
             Self::Def => write!(f, "def"),
             Self::Struct => write!(f, "struct"),
+            Self::Type => write!(f, "type"),
             Self::Case => write!(f, "case"),
             Self::When => write!(f, "when"),
             Self::Else => write!(f, "else"),
@@ -164,6 +166,7 @@ fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let identifier = choice((
         text::keyword("def").to(TokenKind::Def),
         text::keyword("struct").to(TokenKind::Struct),
+        text::keyword("type").to(TokenKind::Type),
         text::keyword("case").to(TokenKind::Case),
         text::keyword("when").to(TokenKind::When),
         text::keyword("else").to(TokenKind::Else),
