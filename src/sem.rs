@@ -187,22 +187,16 @@ fn expect_assignable_type<'tcx>(
 }
 
 fn resolve_type<'tcx>(
-    tcx: TypeContext<'tcx>,
     ty: &'tcx Type<'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
-) {
+) -> bool {
     match ty {
-        Type::Tuple(fs) => {
-            for fty in fs {
-                resolve_type(tcx, fty, named_types, errors);
-            }
-        }
-        Type::Struct(struct_ty) => {
-            for f in struct_ty.fields() {
-                resolve_type(tcx, f.ty(), named_types, errors);
-            }
-        }
+        Type::Tuple(fs) => fs.iter().all(|fty| resolve_type(fty, named_types, errors)),
+        Type::Struct(struct_ty) => struct_ty
+            .fields()
+            .iter()
+            .all(|f| resolve_type(f.ty(), named_types, errors)),
         Type::Named(named_ty) => {
             if named_ty.ty().is_none() {
                 if let Some(ty) = named_types.get(named_ty.name()) {
@@ -210,9 +204,11 @@ fn resolve_type<'tcx>(
                 } else {
                     errors.push(SemanticError::UndefinedNamedType {
                         name: named_ty.name().to_string(),
-                    })
+                    });
+                    return false;
                 }
             }
+            true
         }
         Type::Int64
         | Type::Boolean
@@ -221,7 +217,7 @@ fn resolve_type<'tcx>(
         | Type::NativeInt
         | Type::LiteralInt64(_)
         | Type::LiteralBoolean(_)
-        | Type::LiteralString(_) => {}
+        | Type::LiteralString(_) => true,
     }
 }
 
@@ -251,14 +247,17 @@ fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
         syntax::DeclarationKind::Function(fun) => {
             // Resolved parameter types before using it as key.
             for p in fun.params() {
-                resolve_type(tcx, p.ty(), named_types, errors);
+                resolve_type(p.ty(), named_types, errors);
+            }
+            for stmt in fun.body() {
+                analyze_explicit_type_annotations_stmt(tcx, stmt, named_types, errors);
             }
         }
         syntax::DeclarationKind::Struct(struct_decl) => {
-            resolve_type(tcx, struct_decl.ty(), named_types, errors);
+            resolve_type(struct_decl.ty(), named_types, errors);
         }
         syntax::DeclarationKind::TypeAlias(alias) => {
-            resolve_type(tcx, alias.ty(), named_types, errors);
+            resolve_type(alias.ty(), named_types, errors);
         }
     }
 }
@@ -271,10 +270,26 @@ fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
     match stmt.kind() {
         StmtKind::Let { pattern, .. } => {
             if let Some(ty) = pattern.ty() {
-                resolve_type(tcx, ty, named_types, errors);
+                resolve_type(ty, named_types, errors);
             }
         }
-        StmtKind::Expr(_) => {}
+        StmtKind::Expr(expr) => {
+            analyze_explicit_type_annotations_expr(tcx, expr, named_types, errors)
+        }
+    }
+}
+fn analyze_explicit_type_annotations_expr<'nd, 'tcx>(
+    _tcx: TypeContext<'tcx>,
+    expr: &'nd syntax::Expr<'nd, 'tcx>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Vec<SemanticError<'tcx>>,
+) {
+    if let syntax::ExprKind::Case { arms, .. } = expr.kind() {
+        for arm in arms {
+            if let Some(ty) = arm.pattern().ty() {
+                resolve_type(ty, named_types, errors);
+            }
+        }
     }
 }
 
@@ -648,7 +663,7 @@ fn analyze_expr<'nd, 'tcx>(
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
 
             // index boundary check
-            let ty = operand.expect_ty();
+            let ty = operand.expect_ty().bottom_ty();
             if let Type::Tuple(fs) = ty {
                 if *index < fs.len() {
                     // apply type

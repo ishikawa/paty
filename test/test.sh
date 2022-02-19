@@ -852,6 +852,17 @@ def printCoord(pt: Point)
   puts("y value is", pt.y)
 end
 printCoord({ x: 136, y: 353 })'
+assert '900 800' '
+type K = int64
+type T = (K, K)
+type S = { pair: T }
+def kts(s: S)
+  case s
+  when x: S
+    puts(x.pair.0, x.pair.1)
+  end
+end
+kts({ pair: (900, 800) })'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
