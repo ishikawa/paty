@@ -1220,6 +1220,24 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
+    fn build_print_expr(
+        &mut self,
+        arg: &'a Expr<'a, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
+        let mut format_specs = Vec::with_capacity(1);
+        self.printf_format(arg, program, stmts, &mut format_specs, false);
+        self.build_printf(format_specs, stmts)
+    }
+    fn build_printf(
+        &mut self,
+        format_specs: Vec<FormatSpec<'a, 'tcx>>,
+        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
+        let kind = ExprKind::Printf(format_specs);
+        self.push_expr_kind(kind, self.tcx.int64(), stmts)
+    }
     fn printf_format(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
@@ -1273,25 +1291,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
-    }
-
-    fn build_print_expr(
-        &mut self,
-        arg: &'a Expr<'a, 'tcx>,
-        program: &mut Program<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-    ) -> &'a Expr<'a, 'tcx> {
-        let mut format_specs = Vec::with_capacity(1);
-        self.printf_format(arg, program, stmts, &mut format_specs, false);
-        self.build_printf(format_specs, stmts)
-    }
-    fn build_printf(
-        &mut self,
-        format_specs: Vec<FormatSpec<'a, 'tcx>>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-    ) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Printf(format_specs);
-        self.push_expr_kind(kind, self.tcx.int64(), stmts)
     }
     fn printf_format_typed_fields(
         &mut self,
