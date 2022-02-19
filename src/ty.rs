@@ -46,6 +46,10 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::Tuple(value_types))
     }
 
+    pub fn union(&self, member_types: Vec<&'tcx Type<'tcx>>) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::Union(member_types))
+    }
+
     /// Returns a struct type whose name is `name` and has no value.
     pub fn empty_struct_ty(&self, name: String) -> &'tcx Type<'tcx> {
         let struct_ty = StructTy::new_named(name, vec![]);

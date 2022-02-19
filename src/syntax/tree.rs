@@ -1094,7 +1094,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             // A type annotation can follow a pattern.
             let ty = if self.match_token(it, TokenKind::Operator(':')) {
                 it.next();
-                Some(self.type_specifier(it)?)
+                Some(self.type_annotation(it)?)
             } else {
                 None
             };
@@ -1147,7 +1147,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         // return type annotation (optional)
         let retty = if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
-            let retty = self.type_specifier(it)?;
+            let retty = self.type_annotation(it)?;
             Some(retty)
         } else {
             None
@@ -1239,7 +1239,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         self.expect_token(it, TokenKind::Operator(':'))?;
 
-        let ty = self.type_specifier(it)?;
+        let ty = self.type_annotation(it)?;
 
         let mut field = StructFieldDef::new(&name, ty);
         field.data_mut().append_comments_from_token(name_token);
@@ -1352,14 +1352,36 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 // field
                 self.expect_token(it, TokenKind::Operator(':'))?;
 
-                let ty = self.type_specifier(it)?;
+                let ty = self.type_annotation(it)?;
                 Ok(TypedField::new(name, ty))
             }
             _ => Err(ParseError::NotParsed),
         }
     }
 
-    fn type_specifier(
+    fn type_annotation(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<&'tcx Type<'tcx>, ParseError<'t>> {
+        let mut types = Vec::with_capacity(0);
+
+        loop {
+            let ty = self._type_annotation(it)?;
+            types.push(ty);
+            if self.match_token(it, TokenKind::Operator('|')) {
+                it.next();
+            } else {
+                break;
+            }
+        }
+
+        match types.len() {
+            0 => Err(ParseError::NotParsed),
+            1 => Ok(types[0]),
+            _ => Ok(self.tcx.union(types)),
+        }
+    }
+    fn _type_annotation(
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<&'tcx Type<'tcx>, ParseError<'t>> {
@@ -1384,7 +1406,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 let mut value_types = vec![];
 
                 while !self.match_token(it, TokenKind::Operator(')')) {
-                    let ty = self.type_specifier(it)?;
+                    let ty = self.type_annotation(it)?;
                     value_types.push(ty);
 
                     // trailing comma allowed, if the number of values is `1`,
@@ -1461,7 +1483,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         self.expect_token(it, TokenKind::Operator('='))?;
 
-        let ty = self.type_specifier(it)?;
+        let ty = self.type_annotation(it)?;
 
         let ty_alias = TypeAlias { name, ty };
         let mut decl = Declaration::new(DeclarationKind::TypeAlias(ty_alias));
@@ -1611,7 +1633,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         // Type annotated pattern
         if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
-            pat.assign_ty(self.type_specifier(it)?);
+            pat.assign_ty(self.type_annotation(it)?);
         }
 
         // Or-pattern?
