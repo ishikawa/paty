@@ -363,6 +363,7 @@ impl<'tcx> SplitWildcard {
             }
             Type::LiteralString(s) => vec![Constructor::Str(s.to_string())],
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
+            Type::Union(_) => todo!(),
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
             Type::NativeInt => unreachable!("Native C types are not supported."),

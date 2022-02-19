@@ -96,12 +96,10 @@ pub enum Type<'tcx> {
     Int64,
     /// `true` or `false`
     Boolean,
-    /// string
     String,
-    /// tuple
     Tuple(Vec<&'tcx Type<'tcx>>),
-    /// struct
     Struct(StructTy<'tcx>),
+    Union(Vec<&'tcx Type<'tcx>>),
 
     /// Type is specified by name and should be resolved in the later phase
     Named(NamedTy<'tcx>),
@@ -142,8 +140,9 @@ impl<'tcx> Type<'tcx> {
             | Type::LiteralBoolean(_)
             | Type::LiteralString(_)
             | Type::NativeInt => false,
-            Type::Tuple(fs) => fs.is_empty() || fs.iter().all(|x| x.is_zero_sized()),
+            Type::Tuple(fs) => fs.iter().all(|x| x.is_zero_sized()),
             Type::Struct(struct_ty) => struct_ty.fields().iter().all(|f| f.ty().is_zero_sized()),
+            Type::Union(ms) => ms.iter().all(|x| x.is_zero_sized()),
             Type::Named(named_ty) => {
                 if let Some(ty) = named_ty.ty() {
                     ty.is_zero_sized()
@@ -182,6 +181,10 @@ impl<'tcx> Type<'tcx> {
                     .zip(r0.fields())
                     .all(|(a, b)| a.name() == b.name() && a.ty().is_assignable_to(b.ty()))
             }
+            // union type
+            (Self::Union(l0), other_ty) => l0.iter().all(|x| x.is_assignable_to(other_ty)),
+            (x, Self::Union(ms)) => ms.iter().any(|m| x.is_assignable_to(m)),
+            // named type
             (Self::Named(named_ty1), ty2) => {
                 if let Some(ty1) = named_ty1.ty() {
                     ty1.is_assignable_to(ty2)
@@ -248,6 +251,7 @@ impl Hash for Type<'_> {
         match self {
             Self::Tuple(fs) => fs.hash(state),
             Self::Struct(struct_ty) => struct_ty.hash(state),
+            Self::Union(ms) => ms.hash(state),
             Self::Named(named_ty) => {
                 if let Some(ty) = named_ty.ty() {
                     ty.hash(state)
@@ -286,6 +290,17 @@ impl fmt::Display for Type<'_> {
                 write!(f, ")")
             }
             Self::Struct(struct_ty) => struct_ty.fmt(f),
+            Self::Union(member_types) => {
+                let mut it = member_types.iter().peekable();
+
+                while let Some(ty) = it.next() {
+                    write!(f, "{}", ty)?;
+                    if it.peek().is_some() {
+                        write!(f, " | ")?;
+                    }
+                }
+                Ok(())
+            }
             Self::LiteralInt64(n) => n.fmt(f),
             Self::LiteralBoolean(b) => b.fmt(f),
             Self::LiteralString(s) => write!(f, "\"{}\"", s.escape_default()),

@@ -193,6 +193,7 @@ fn resolve_type<'tcx>(
 ) -> bool {
     match ty {
         Type::Tuple(fs) => fs.iter().all(|fty| resolve_type(fty, named_types, errors)),
+        Type::Union(ms) => ms.iter().all(|mty| resolve_type(mty, named_types, errors)),
         Type::Struct(struct_ty) => struct_ty
             .fields()
             .iter()

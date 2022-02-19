@@ -24,13 +24,18 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
         // To follow forward declaration rule, add field types first.
         match ty {
             Type::Tuple(fs) => {
-                for fty in fs.iter() {
+                for fty in fs {
                     self.add_decl_type(fty);
                 }
             }
             Type::Struct(struct_ty) => {
                 for f in struct_ty.fields() {
                     self.add_decl_type(f.ty());
+                }
+            }
+            Type::Union(member_types) => {
+                for mty in member_types {
+                    self.add_decl_type(mty);
                 }
             }
             Type::Int64
@@ -1258,6 +1263,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 }
                 self.printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
             }
+            Type::Union(_) => todo!(),
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }

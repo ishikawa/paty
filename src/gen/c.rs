@@ -106,6 +106,7 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str("};\n\n");
             }
+            Type::Union(_) => todo!(),
             Type::Int64
             | Type::Boolean
             | Type::String
@@ -446,6 +447,7 @@ impl<'a, 'tcx> Emitter {
                                 Type::Tuple(_) | Type::Struct(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
                                 }
+                                Type::Union(_) => todo!(),
                                 Type::Named(name) => {
                                     unreachable!("untyped for the type named: {}", name)
                                 }
@@ -493,6 +495,7 @@ impl<'a, 'tcx> Emitter {
                                 }
                             }
                         }
+                        Type::Union(_) => todo!(),
                         Type::Tuple(_) | Type::Struct(_) => {
                             unreachable!("compound value can't be printed: {:?}", value);
                         }
@@ -622,6 +625,7 @@ fn c_type(ty: &Type) -> String {
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
         }
+        Type::Union(_) => todo!(),
         Type::Named(named_ty) => c_type(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
     }
@@ -640,6 +644,7 @@ fn zero_value(ty: &Type) -> &'static str {
         | Type::LiteralString(_) => "0",
         Type::Tuple(_) | Type::Struct(_) => "{0}",
         Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
+        Type::Union(_) => todo!(),
         Type::Undetermined => unreachable!("untyped code"),
     }
 }
@@ -745,6 +750,7 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
                 }
             }
         }
+        Type::Union(_) => todo!(),
         Type::Named(named_ty) => {
             encode_ty(named_ty.expect_ty(), buffer);
         }
