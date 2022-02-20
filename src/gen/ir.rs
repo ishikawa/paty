@@ -405,12 +405,32 @@ pub struct Expr<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Expr<'a, 'tcx> {
+    pub fn not(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Not(operand);
+        Self::new(kind, tcx.boolean())
+    }
     pub fn eq(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
         let kind = ExprKind::Eq(a, b);
         Self::new(kind, tcx.boolean())
     }
     pub fn and(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
         let kind = ExprKind::And(a, b);
+        Self::new(kind, tcx.boolean())
+    }
+    pub fn ge(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Ge(a, b);
+        Self::new(kind, tcx.boolean())
+    }
+    pub fn le(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Le(a, b);
+        Self::new(kind, tcx.boolean())
+    }
+    pub fn gt(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Gt(a, b);
+        Self::new(kind, tcx.boolean())
+    }
+    pub fn lt(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Lt(a, b);
         Self::new(kind, tcx.boolean())
     }
     pub fn printf(tcx: TypeContext<'tcx>, format_specs: Vec<FormatSpec<'a, 'tcx>>) -> Self {
@@ -1373,8 +1393,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let expr = if *b {
                     inc_used(target_expr)
                 } else {
-                    let expr = ExprKind::Not(inc_used(target_expr));
-                    self.expr_arena.alloc(Expr::new(expr, self.tcx.boolean()))
+                    self.expr_arena
+                        .alloc(Expr::not(self.tcx, inc_used(target_expr)))
                 };
                 Some(expr)
             }
@@ -1398,17 +1418,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let lo = self.int64(*lo);
                 let hi = self.int64(*hi);
 
-                let lhs = ExprKind::Ge(inc_used(target_expr), lo);
+                let lhs = Expr::ge(self.tcx, inc_used(target_expr), lo);
 
                 let rhs = match end {
-                    syntax::RangeEnd::Included => ExprKind::Le(inc_used(target_expr), hi),
-                    syntax::RangeEnd::Excluded => ExprKind::Lt(inc_used(target_expr), hi),
+                    syntax::RangeEnd::Included => Expr::le(self.tcx, inc_used(target_expr), hi),
+                    syntax::RangeEnd::Excluded => Expr::lt(self.tcx, inc_used(target_expr), hi),
                 };
 
                 let eq = Expr::and(
                     self.tcx,
-                    self.expr_arena.alloc(Expr::new(lhs, self.tcx.boolean())),
-                    self.expr_arena.alloc(Expr::new(rhs, self.tcx.boolean())),
+                    self.expr_arena.alloc(lhs),
+                    self.expr_arena.alloc(rhs),
                 );
 
                 Some(self.expr_arena.alloc(eq))
