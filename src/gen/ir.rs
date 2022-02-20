@@ -405,6 +405,11 @@ pub struct Expr<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Expr<'a, 'tcx> {
+    pub fn printf(tcx: TypeContext<'tcx>, format_specs: Vec<FormatSpec<'a, 'tcx>>) -> Self {
+        let kind = ExprKind::Printf(format_specs);
+        Self::new(kind, tcx.int64())
+    }
+
     pub fn new(kind: ExprKind<'a, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         Self { kind, ty }
     }
@@ -1164,11 +1169,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                     // separated by a space
                     if it.peek().is_some() {
-                        self.build_printf(vec![FormatSpec::Str(" ")], stmts);
+                        self._build_printf(FormatSpec::Str(" "), stmts);
                     }
                 }
 
-                self.build_printf(vec![FormatSpec::Str("\n")], stmts)
+                self._build_printf(FormatSpec::Str("\n"), stmts)
             }
             syntax::ExprKind::Case {
                 head,
@@ -1332,16 +1337,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         format_spec: FormatSpec<'a, 'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Printf(vec![format_spec]);
-        self.push_expr_kind(kind, self.tcx.int64(), stmts)
-    }
-    fn build_printf(
-        &mut self,
-        format_specs: Vec<FormatSpec<'a, 'tcx>>,
-        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
-    ) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Printf(format_specs);
-        self.push_expr_kind(kind, self.tcx.int64(), stmts)
+        let expr = Expr::printf(self.tcx, vec![format_spec]);
+        self.push_expr(self.expr_arena.alloc(expr), stmts)
     }
 
     // Returns `None` for no condition.
@@ -1749,10 +1746,10 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
             }
 
             if !format_specs.is_empty() {
-                let kind = ExprKind::Printf(format_specs);
+                let expr = Expr::printf(self.tcx, format_specs);
                 format_specs = Vec::with_capacity(0);
 
-                let init = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
+                let init = self.expr_arena.alloc(expr);
                 let d = last_tmp_def.unwrap().with_init(init);
 
                 let stmt = &*self.stmt_arena.alloc(Stmt::TmpVarDef(d));
