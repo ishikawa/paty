@@ -578,7 +578,7 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(&c_type(expr.ty()));
                 code.push(')');
 
-                // Initialize tuple struct with designated initializers.
+                // Initialize struct with designated initializers.
                 code.push('{');
 
                 let mut peekable = fs.iter().peekable();
@@ -613,6 +613,21 @@ impl<'a, 'tcx> Emitter {
             ExprKind::UnionMemberAccess { operand, tag } => {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".u._{}", tag));
+            }
+            ExprKind::PromoteToUnion { operand, tag } => {
+                // Specify struct type explicitly.
+                code.push('(');
+                code.push_str(&c_type(expr.ty()));
+                code.push(')');
+
+                // Initialize tagged union struct with designated initializers.
+                code.push('{');
+                code.push_str(&format!(".tag = {}, ", tag));
+                code.push_str(".u = {");
+                code.push_str(&format!("._{} = ", tag));
+                self.emit_expr(operand, code);
+                code.push('}');
+                code.push('}');
             }
             ExprKind::TmpVar(t) => {
                 if let Some(expr) = t.immediate() {

@@ -487,6 +487,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::FieldAccess { .. }
             | ExprKind::UnionTag(_)
             | ExprKind::UnionMemberAccess { .. }
+            | ExprKind::PromoteToUnion { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => true,
             ExprKind::CondAndAssign { .. } => false,
@@ -535,6 +536,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::FieldAccess { .. }
             | ExprKind::UnionTag(_)
             | ExprKind::UnionMemberAccess { .. }
+            | ExprKind::PromoteToUnion { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => false,
         }
@@ -604,6 +606,9 @@ pub enum ExprKind<'a, 'tcx> {
         operand: &'a Expr<'a, 'tcx>,
         name: String,
     },
+    TmpVar(&'a TmpVar<'a, 'tcx>),
+    Var(Var<'tcx>),
+    // -- Union type
     /// Get the tag of an union type.
     /// - The operand must be an union type value.
     /// - The return value is an int value. 0 =< n < the number of union members.
@@ -612,8 +617,10 @@ pub enum ExprKind<'a, 'tcx> {
         operand: &'a Expr<'a, 'tcx>,
         tag: usize,
     },
-    TmpVar(&'a TmpVar<'a, 'tcx>),
-    Var(Var<'tcx>),
+    PromoteToUnion {
+        operand: &'a Expr<'a, 'tcx>,
+        tag: usize,
+    },
 }
 
 impl fmt::Display for ExprKind<'_, '_> {
@@ -705,6 +712,7 @@ impl fmt::Display for ExprKind<'_, '_> {
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
             ExprKind::UnionTag(expr) => write!(f, "{}.tag", expr),
             ExprKind::UnionMemberAccess { operand, tag } => write!(f, "{}.u.{}", operand, tag),
+            ExprKind::PromoteToUnion { operand, .. } => write!(f, "(union){}", operand),
             ExprKind::TmpVar(var) => var.fmt(f),
             ExprKind::Var(var) => var.fmt(f),
         }
@@ -1179,17 +1187,19 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 };
 
                 let sig = call_expr.function().unwrap().signature();
+                let args = call_expr
+                    .arguments()
+                    .iter()
+                    .zip(sig.params())
+                    .map(|(arg, arg_ty)| {
+                        let arg_expr = self.build_expr(arg, program, stmts);
+                        inc_used(self.promote_to(arg_expr, arg_ty))
+                    })
+                    .collect();
                 let kind = ExprKind::Call {
                     name: call_expr.name().to_string(),
                     cc: CallingConvention::Std(sig),
-                    args: call_expr
-                        .arguments()
-                        .iter()
-                        .map(|a| {
-                            let a = self.build_expr(a, program, stmts);
-                            inc_used(a)
-                        })
-                        .collect(),
+                    args,
                 };
 
                 self.push_expr_kind(kind, expr_ty, stmts)
@@ -1282,6 +1292,32 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 self.expr_arena.alloc(Expr::tmp_var(t))
             }
+        }
+    }
+
+    /// Type promotion
+    fn promote_to(
+        &mut self,
+        operand: &'a Expr<'a, 'tcx>,
+        expected_ty: &'tcx Type<'tcx>,
+    ) -> &'a Expr<'a, 'tcx> {
+        let expected_ty = expected_ty.bottom_ty();
+
+        match (operand.ty().bottom_ty(), expected_ty) {
+            (Type::Union(_), Type::Union(_)) => todo!("promote from union"),
+            (operand_ty, Type::Union(member_types)) => {
+                for (i, mty) in member_types.iter().enumerate() {
+                    if operand_ty.is_assignable_to(mty) {
+                        let kind = ExprKind::PromoteToUnion { operand, tag: i };
+                        return self.expr_arena.alloc(Expr::new(kind, expected_ty));
+                    }
+                }
+                unreachable!(
+                    "no matched member type for union {} with operand: {}",
+                    expected_ty, operand_ty
+                );
+            }
+            _ => operand,
         }
     }
 
