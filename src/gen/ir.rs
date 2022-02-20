@@ -215,7 +215,7 @@ impl fmt::Display for TmpVar<'_, '_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TmpVarDef<'a, 'tcx> {
     var: &'a TmpVar<'a, 'tcx>,
     init: &'a Expr<'a, 'tcx>,
@@ -231,6 +231,15 @@ impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
             init,
             assignable,
             pruned: Cell::new(false),
+        }
+    }
+
+    pub fn with_init(&self, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self {
+            var: self.var,
+            init,
+            assignable: self.assignable,
+            pruned: self.pruned.clone(),
         }
     }
 
@@ -261,7 +270,7 @@ impl fmt::Display for TmpVarDef<'_, '_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarDef<'a, 'tcx> {
     name: String,
     init: &'a Expr<'a, 'tcx>,
@@ -287,7 +296,7 @@ impl fmt::Display for VarDef<'_, '_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt<'a, 'tcx> {
     // TODO: Can we unify TmpVar(Def) and Var(Def)?
     TmpVarDef(TmpVarDef<'a, 'tcx>),
@@ -352,7 +361,7 @@ impl fmt::Display for Stmt<'_, '_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Branch<'a, 'tcx> {
     pub condition: Option<&'a Expr<'a, 'tcx>>,
     pub body: Vec<Stmt<'a, 'tcx>>,
@@ -372,7 +381,7 @@ impl fmt::Display for Branch<'_, '_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr<'a, 'tcx> {
     kind: ExprKind<'a, 'tcx>,
     ty: &'tcx Type<'tcx>,
@@ -485,7 +494,7 @@ pub enum CallingConvention<'tcx> {
     Std(FunctionSignature<'tcx>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprKind<'a, 'tcx> {
     Minus(&'a Expr<'a, 'tcx>),
     Not(&'a Expr<'a, 'tcx>),
@@ -716,11 +725,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             is_entry_point: true,
         };
         program.functions.push(main);
-
-        // post process
-        let mut optimizer = Optimizer::new();
-        optimizer.optimize(&mut program);
-
         program
     }
 
@@ -1678,12 +1682,14 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     }
 }
 
-#[derive(Default, Debug)]
-pub struct Optimizer {}
+pub struct Optimizer<'a, 'tcx> {
+    tcx: TypeContext<'tcx>,
+    expr_arena: &'a Arena<Expr<'a, 'tcx>>,
+}
 
-impl<'a, 'tcx> Optimizer {
-    pub fn new() -> Self {
-        Self::default()
+impl<'a, 'tcx> Optimizer<'a, 'tcx> {
+    pub fn new(tcx: TypeContext<'tcx>, expr_arena: &'a Arena<Expr<'a, 'tcx>>) -> Self {
+        Self { tcx, expr_arena }
     }
 
     pub fn optimize(&mut self, program: &mut Program<'a, 'tcx>) {
@@ -1692,7 +1698,42 @@ impl<'a, 'tcx> Optimizer {
         }
     }
 
-    fn optimize_function(&mut self, fun: &Function<'a, 'tcx>) {
+    fn optimize_function(&mut self, fun: &mut Function<'a, 'tcx>) {
+        // Rewrite body
+        let mut body = vec![];
+        let mut it = fun.body.iter().peekable();
+
+        // Combine consecutive printf(...) into one.
+        let mut last_tmp_def = None;
+        let mut format_specs = Vec::with_capacity(0);
+
+        while let Some(stmt) = it.next() {
+            if let Stmt::TmpVarDef(t) = stmt {
+                if t.var().used() == 0 {
+                    if let ExprKind::Printf(args) = t.init().kind() {
+                        format_specs.extend(args.clone());
+                        last_tmp_def = Some(t);
+                        if it.peek().is_some() {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            if !format_specs.is_empty() {
+                let kind = ExprKind::Printf(format_specs);
+                format_specs = Vec::with_capacity(0);
+
+                let init = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
+                let d = last_tmp_def.unwrap().with_init(init);
+                body.push(Stmt::TmpVarDef(d));
+            }
+            body.push(stmt.clone());
+        }
+
+        fun.body = body;
+
+        // optimize expr
         for stmt in &fun.body {
             self.optimize_stmt(stmt);
         }

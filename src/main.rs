@@ -66,7 +66,12 @@ fn main() {
         let tmp_var_arena = Arena::new();
 
         let mut builder = gen::ir::Builder::new(tcx, &ir_expr_arena, &tmp_var_arena);
-        let program = builder.build(&body);
+        let mut program = builder.build(&body);
+        //eprintln!("---\n{}", program);
+
+        // post process
+        let mut optimizer = gen::ir::Optimizer::new(tcx, &ir_expr_arena);
+        optimizer.optimize(&mut program);
         //eprintln!("---\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
