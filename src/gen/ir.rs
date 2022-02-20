@@ -405,6 +405,14 @@ pub struct Expr<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Expr<'a, 'tcx> {
+    pub fn eq(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Eq(a, b);
+        Self::new(kind, tcx.boolean())
+    }
+    pub fn and(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::And(a, b);
+        Self::new(kind, tcx.boolean())
+    }
     pub fn printf(tcx: TypeContext<'tcx>, format_specs: Vec<FormatSpec<'a, 'tcx>>) -> Self {
         let kind = ExprKind::Printf(format_specs);
         Self::new(kind, tcx.int64())
@@ -1358,10 +1366,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         match pat.kind() {
             PatternKind::Integer(n) => {
                 let value = self.int64(*n);
-                let eq = ExprKind::Eq(inc_used(target_expr), value);
-
-                let expr = self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()));
-                Some(expr)
+                let eq = Expr::eq(self.tcx, inc_used(target_expr), value);
+                Some(self.expr_arena.alloc(eq))
             }
             PatternKind::Boolean(b) => {
                 let expr = if *b {
@@ -1384,10 +1390,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let strcmp = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
 
                 let zero = self.native_int(0);
-                let eq = ExprKind::Eq(inc_used(strcmp), zero);
+                let eq = Expr::eq(self.tcx, inc_used(strcmp), zero);
 
-                let expr = self.expr_arena.alloc(Expr::new(eq, self.tcx.boolean()));
-                Some(expr)
+                Some(self.expr_arena.alloc(eq))
             }
             PatternKind::Range { lo, hi, end } => {
                 let lo = self.int64(*lo);
@@ -1400,13 +1405,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     syntax::RangeEnd::Excluded => ExprKind::Lt(inc_used(target_expr), hi),
                 };
 
-                let kind = ExprKind::And(
+                let eq = Expr::and(
+                    self.tcx,
                     self.expr_arena.alloc(Expr::new(lhs, self.tcx.boolean())),
                     self.expr_arena.alloc(Expr::new(rhs, self.tcx.boolean())),
                 );
 
-                let expr = self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean()));
-                Some(expr)
+                Some(self.expr_arena.alloc(eq))
             }
             PatternKind::Tuple(sub_pats) => {
                 if sub_pats.is_empty() {
@@ -1425,8 +1430,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
-                            let kind = ExprKind::And(cond, sub_cond);
-                            Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
+                            Some(self.expr_arena.alloc(Expr::and(self.tcx, cond, sub_cond)))
                         }
                         (Some(cond), None) => Some(cond),
                         (None, Some(sub_cond)) => Some(sub_cond),
@@ -1493,8 +1497,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                     match (cond, sub_cond) {
                         (Some(cond), Some(sub_cond)) => {
-                            let kind = ExprKind::And(cond, sub_cond);
-                            Some(self.expr_arena.alloc(Expr::new(kind, self.tcx.boolean())))
+                            Some(self.expr_arena.alloc(Expr::and(self.tcx, cond, sub_cond)))
                         }
                         (Some(cond), None) => Some(cond),
                         (None, Some(sub_cond)) => Some(sub_cond),
