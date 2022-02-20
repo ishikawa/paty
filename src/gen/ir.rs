@@ -776,12 +776,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         let expr = self.expr_arena.alloc(Expr::new(kind, expr_ty));
-        let t = self.next_temp_var(expr.ty());
-        let stmt = Stmt::tmp_var_def(t, expr);
-        stmts.push(self.stmt_arena.alloc(stmt));
-
-        let kind = ExprKind::TmpVar(t);
-        self.expr_arena.alloc(Expr::new(kind, expr.ty()))
+        self.push_expr(expr, stmts)
     }
 
     fn int64(&self, value: i64) -> &'a Expr<'a, 'tcx> {
