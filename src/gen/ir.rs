@@ -405,6 +405,10 @@ pub struct Expr<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Expr<'a, 'tcx> {
+    pub fn tmp_var(tmp_var: &'a TmpVar<'a, 'tcx>) -> Self {
+        let kind = ExprKind::TmpVar(tmp_var);
+        Self::new(kind, tmp_var.ty())
+    }
     pub fn not(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
         let kind = ExprKind::Not(operand);
         Self::new(kind, tcx.boolean())
@@ -435,6 +439,10 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     }
     pub fn printf(tcx: TypeContext<'tcx>, format_specs: Vec<FormatSpec<'a, 'tcx>>) -> Self {
         let kind = ExprKind::Printf(format_specs);
+        Self::new(kind, tcx.int64())
+    }
+    pub fn get_union_tag(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::UnionTag(inc_used(operand));
         Self::new(kind, tcx.int64())
     }
 
@@ -477,9 +485,11 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Str(_)
             | ExprKind::IndexAccess { .. }
             | ExprKind::FieldAccess { .. }
+            | ExprKind::UnionTag(_)
+            | ExprKind::UnionMemberAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => true,
-            ExprKind::CondAndAssign { .. } | ExprKind::GetUnionTag(_) => false,
+            ExprKind::CondAndAssign { .. } => false,
         }
     }
 
@@ -518,12 +528,13 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
                     true
                 }
             }
-            ExprKind::GetUnionTag(_) => false,
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
             | ExprKind::IndexAccess { .. }
             | ExprKind::FieldAccess { .. }
+            | ExprKind::UnionTag(_)
+            | ExprKind::UnionMemberAccess { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => false,
         }
@@ -575,10 +586,6 @@ pub enum ExprKind<'a, 'tcx> {
         cond: Option<&'a Expr<'a, 'tcx>>,
         var: &'a TmpVar<'a, 'tcx>,
     },
-    /// Get the tag of an union type.
-    /// - The operand must be an union type value.
-    /// - The return value is an int value. 0 =< n < the number of union members.
-    GetUnionTag(&'a Expr<'a, 'tcx>),
 
     // Built-in procedures
     Printf(Vec<FormatSpec<'a, 'tcx>>),
@@ -596,6 +603,14 @@ pub enum ExprKind<'a, 'tcx> {
     FieldAccess {
         operand: &'a Expr<'a, 'tcx>,
         name: String,
+    },
+    /// Get the tag of an union type.
+    /// - The operand must be an union type value.
+    /// - The return value is an int value. 0 =< n < the number of union members.
+    UnionTag(&'a Expr<'a, 'tcx>),
+    UnionMemberAccess {
+        operand: &'a Expr<'a, 'tcx>,
+        tag: usize,
     },
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(Var<'tcx>),
@@ -629,9 +644,6 @@ impl fmt::Display for ExprKind<'_, '_> {
                 } else {
                     write!(f, "{} = true", var)
                 }
-            }
-            ExprKind::GetUnionTag(expr) => {
-                write!(f, "{}.tag", expr)
             }
             ExprKind::Call { name, args, .. } => {
                 write!(f, "{}", name)?;
@@ -691,6 +703,8 @@ impl fmt::Display for ExprKind<'_, '_> {
             }
             ExprKind::IndexAccess { operand, index } => write!(f, "{}.{}", operand, index),
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
+            ExprKind::UnionTag(expr) => write!(f, "{}.tag", expr),
+            ExprKind::UnionMemberAccess { operand, tag } => write!(f, "{}.u.{}", operand, tag),
             ExprKind::TmpVar(var) => var.fmt(f),
             ExprKind::Var(var) => var.fmt(f),
         }
@@ -797,9 +811,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         let t = self.next_temp_var(expr.ty());
         let stmt = Stmt::tmp_var_def(t, expr);
         stmts.push(self.stmt_arena.alloc(stmt));
-
-        let kind = ExprKind::TmpVar(t);
-        self.expr_arena.alloc(Expr::new(kind, expr.ty()))
+        self.expr_arena.alloc(Expr::tmp_var(t))
     }
 
     fn push_expr_kind(
@@ -875,8 +887,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             // Create a temporary parameter name to be able to referenced in the body.
                             // Simultaneously, we build deconstruct assignment expressions.
                             let t = self.next_temp_var(ty);
-                            let param_expr =
-                                self.expr_arena.alloc(Expr::new(ExprKind::TmpVar(t), ty));
+                            let param_expr = self.expr_arena.alloc(Expr::tmp_var(t));
 
                             self._build_let_pattern(pat, param_expr, program, &mut body_stmts);
 
@@ -1184,11 +1195,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr_ty, stmts)
             }
             syntax::ExprKind::Puts(args) => {
-                // Generates `printf(...)` code for `puts(...)`.
-                //
-                // For union type values, the appropriate value is output by
-                // branching on the condition of the tag of the value. So we
-                // have to generate individual printf(...) for each arguments.
+                // Generates `printf(...)` code for each `puts(...)`.
+                // It generates many `printf(...)` but these consequence `printf(...)`s will be
+                // combined in the optimization phase.
                 let mut it = args.iter().peekable();
 
                 while let Some(arg) = it.next() {
@@ -1271,8 +1280,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let stmt = Stmt::Cond(Cond { branches, var: t });
                 stmts.push(self.stmt_arena.alloc(stmt));
 
-                let kind = ExprKind::TmpVar(t);
-                self.expr_arena.alloc(Expr::new(kind, t.ty))
+                self.expr_arena.alloc(Expr::tmp_var(t))
             }
         }
     }
@@ -1355,7 +1363,46 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 }
                 self._build_printf(FormatSpec::Str("}"), stmts)
             }
-            Type::Union(_) => todo!(),
+            Type::Union(member_types) => {
+                // For union type values, the appropriate value is output by
+                // branching on the condition of the tag of the value.
+                let t = self.next_temp_var(self.tcx.int64());
+                let mut branches = vec![];
+
+                for (i, member_ty) in member_types.iter().enumerate() {
+                    let tag = i64::try_from(i).unwrap();
+                    let mut branch_stmts = vec![];
+
+                    // check union tag
+                    let get_union_tag = self
+                        .expr_arena
+                        .alloc(Expr::get_union_tag(self.tcx, inc_used(arg)));
+                    let cond =
+                        self.expr_arena
+                            .alloc(Expr::eq(self.tcx, get_union_tag, self.int64(tag)));
+
+                    // print union member
+                    let kind = ExprKind::UnionMemberAccess {
+                        operand: arg,
+                        tag: i,
+                    };
+                    let member = self.expr_arena.alloc(Expr::new(kind, member_ty));
+
+                    let ret = self.build_print_expr(member, quote_string, program, stmts);
+                    let phi = Stmt::phi(t, inc_used(ret));
+                    branch_stmts.push(&*self.stmt_arena.alloc(phi));
+
+                    branches.push(Branch {
+                        condition: Some(cond),
+                        body: branch_stmts,
+                    });
+                }
+
+                let stmt = Stmt::Cond(Cond { branches, var: t });
+                stmts.push(self.stmt_arena.alloc(stmt));
+
+                self.expr_arena.alloc(Expr::tmp_var(t))
+            }
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
@@ -1593,7 +1640,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 });
 
                 if let Some((i, else_value)) = v {
-                    let cfv_expr = Expr::new(ExprKind::TmpVar(cfv), cfv.ty());
+                    let cfv_expr = Expr::tmp_var(cfv);
                     let init = Expr::new(
                         ExprKind::CondValue {
                             cond: inc_used(self.expr_arena.alloc(cfv_expr)),

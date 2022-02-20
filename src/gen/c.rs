@@ -73,15 +73,15 @@ impl<'a, 'tcx> Emitter {
 
         // Emit C struct.
         // Note that C structure have to contain at least one member.
-        let emit_type = c_type(ty);
+        let c_type_str = c_type(ty);
 
-        if emitted_c_types.contains(&emit_type) {
+        if emitted_c_types.contains(&c_type_str) {
             return;
         }
 
         match ty {
             Type::Tuple(fs) => {
-                code.push_str(&emit_type);
+                code.push_str(&c_type_str);
                 code.push_str(" {\n");
 
                 for (i, fty) in fs.iter().enumerate() {
@@ -95,7 +95,7 @@ impl<'a, 'tcx> Emitter {
                 code.push_str("};\n\n");
             }
             Type::Struct(struct_ty) => {
-                code.push_str(&emit_type);
+                code.push_str(&c_type_str);
                 code.push_str(" {\n");
                 for f in struct_ty.fields() {
                     if !f.ty().is_zero_sized() {
@@ -106,7 +106,26 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str("};\n\n");
             }
-            Type::Union(_) => todo!(),
+            Type::Union(member_types) => {
+                code.push_str(&c_type_str);
+                code.push_str(" {\n");
+
+                // tag filed
+                code.push_str(&c_type(&Type::Int64));
+                code.push(' ');
+                code.push_str("tag;\n");
+
+                // union
+                code.push_str("union {\n");
+                for (tag, mty) in member_types.iter().enumerate() {
+                    code.push_str(&c_type(mty));
+                    code.push(' ');
+                    code.push_str(&format!("_{};\n", tag));
+                }
+                code.push_str("} u;\n");
+
+                code.push_str("};\n\n");
+            }
             Type::Int64
             | Type::Boolean
             | Type::String
@@ -123,7 +142,7 @@ impl<'a, 'tcx> Emitter {
             Type::Undetermined => unreachable!("untyped code"),
         };
 
-        emitted_c_types.insert(emit_type);
+        emitted_c_types.insert(c_type_str);
     }
 
     fn emit_function_declaration(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
@@ -587,9 +606,13 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".{}", name));
             }
-            ExprKind::GetUnionTag(operand) => {
+            ExprKind::UnionTag(operand) => {
                 self.emit_expr(operand, code);
                 code.push_str(".tag");
+            }
+            ExprKind::UnionMemberAccess { operand, tag } => {
+                self.emit_expr(operand, code);
+                code.push_str(&format!(".u._{}", tag));
             }
             ExprKind::TmpVar(t) => {
                 if let Some(expr) = t.immediate() {
@@ -622,12 +645,11 @@ fn c_type(ty: &Type) -> String {
         Type::Boolean | Type::LiteralBoolean(_) => "bool".to_string(),
         Type::String | Type::LiteralString(_) => "const char *".to_string(),
         Type::NativeInt => "int".to_string(),
-        Type::Tuple(_) | Type::Struct(_) => {
+        Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => {
             let mut buffer = String::new();
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
         }
-        Type::Union(_) => todo!(),
         Type::Named(named_ty) => c_type(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
     }
@@ -644,9 +666,8 @@ fn zero_value(ty: &Type) -> &'static str {
         | Type::LiteralInt64(_)
         | Type::LiteralBoolean(_)
         | Type::LiteralString(_) => "0",
-        Type::Tuple(_) | Type::Struct(_) => "{0}",
+        Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => "{0}",
         Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
-        Type::Union(_) => todo!(),
         Type::Undetermined => unreachable!("untyped code"),
     }
 }
@@ -715,6 +736,14 @@ fn escape_c_string(value: &str) -> String {
 /// +-----+-------+
 /// ```
 ///
+/// ## Union type
+///
+/// ```ignore
+/// +-----+---------------------------+---------------+
+/// | "U" | digits (number of fields) | (field types) |
+/// +-----+---------------------------+---------------+
+/// ```
+///
 /// ## Other types (including literal types)
 ///
 /// NOTE: We don't care a type is literal type or not to make it compatible in
@@ -739,6 +768,14 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
                 encode_ty(fty, buffer);
             }
         }
+        // TODO: `int64 | string` and `string | int64` should be same type.
+        Type::Union(ms) => {
+            buffer.push('U');
+            buffer.push_str(&ms.len().to_string());
+            for mty in ms {
+                encode_ty(mty, buffer);
+            }
+        }
         Type::Struct(struct_ty) => {
             buffer.push('S');
             if let Some(name) = struct_ty.name() {
@@ -752,7 +789,6 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
                 }
             }
         }
-        Type::Union(_) => todo!(),
         Type::Named(named_ty) => {
             encode_ty(named_ty.expect_ty(), buffer);
         }
