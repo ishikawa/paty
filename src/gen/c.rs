@@ -189,7 +189,7 @@ impl<'a, 'tcx> Emitter {
     fn emit_stmt(&mut self, stmt: &Stmt<'a, 'tcx>, code: &mut String) {
         match stmt {
             Stmt::TmpVarDef(def) => {
-                if !def.pruned() && !def.init().ty().is_zero_sized() {
+                if !def.init().ty().is_zero_sized() {
                     // If a temporary variable is not referenced from anywhere,
                     // we don't emit an assignment statement.
                     if def.var().used() > 0 {
@@ -224,25 +224,23 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str(";\n");
             }
-            Stmt::Phi { var, value, pruned } => {
-                if !pruned.get() {
-                    if var.used() > 0 {
-                        code.push_str(&tmp_var(var));
-                        code.push_str(" = ");
-                    }
-                    self.emit_expr(value, code);
-                    code.push_str(";\n");
+            Stmt::Phi(phi) => {
+                if phi.var().used() > 0 {
+                    code.push_str(&tmp_var(phi.var()));
+                    code.push_str(" = ");
                 }
+                self.emit_expr(phi.value(), code);
+                code.push_str(";\n");
             }
-            Stmt::Cond { branches, var } => {
-                if var.used() > 0 {
-                    code.push_str(&c_type(var.ty()));
+            Stmt::Cond(cond) => {
+                if cond.var.used() > 0 {
+                    code.push_str(&c_type(cond.var.ty()));
                     code.push(' ');
-                    code.push_str(&tmp_var(var));
+                    code.push_str(&tmp_var(cond.var));
 
                     // Initialize with zero value.
                     code.push_str(" = ");
-                    code.push_str(zero_value(var.ty()));
+                    code.push_str(zero_value(cond.var.ty()));
 
                     code.push_str(";\n");
                 }
@@ -250,7 +248,7 @@ impl<'a, 'tcx> Emitter {
                 // Construct "if-else" statement from each branches.
                 // If a branch has only one branch and it has no condition,
                 // this loop finally generate a block statement.
-                for (i, branch) in branches.iter().enumerate() {
+                for (i, branch) in cond.branches.iter().enumerate() {
                     if i > 0 {
                         code.push_str("else ");
                     }

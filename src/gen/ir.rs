@@ -1,5 +1,5 @@
 use crate::syntax::{self, PatternKind, Typable};
-use crate::ty::{FunctionSignature, StructTy, Type, TypeContext, TypedField};
+use crate::ty::{FunctionSignature, StructTy, Type, TypeContext};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::fmt;
@@ -82,7 +82,7 @@ pub struct Function<'a, 'tcx> {
     pub name: String,
     pub params: Vec<Parameter<'a, 'tcx>>,
     pub signature: FunctionSignature<'tcx>,
-    pub body: Vec<Stmt<'a, 'tcx>>,
+    pub body: Vec<&'a Stmt<'a, 'tcx>>,
     pub retty: &'tcx Type<'tcx>,
     /// Whether this function is `main` or not.
     pub is_entry_point: bool,
@@ -219,7 +219,6 @@ impl fmt::Display for TmpVar<'_, '_> {
 pub struct TmpVarDef<'a, 'tcx> {
     var: &'a TmpVar<'a, 'tcx>,
     init: &'a Expr<'a, 'tcx>,
-    pruned: Cell<bool>,
     // `true` if this variable can be updated.
     assignable: bool,
 }
@@ -230,7 +229,6 @@ impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
             var,
             init,
             assignable,
-            pruned: Cell::new(false),
         }
     }
 
@@ -239,7 +237,6 @@ impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
             var: self.var,
             init,
             assignable: self.assignable,
-            pruned: self.pruned.clone(),
         }
     }
 
@@ -250,22 +247,49 @@ impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
     pub fn init(&self) -> &'a Expr<'a, 'tcx> {
         self.init
     }
-
-    pub fn pruned(&self) -> bool {
-        self.pruned.get()
-    }
 }
 
 impl fmt::Display for TmpVarDef<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "t{} (used: {}, pruned: {}, assignable: {}) = {}",
+            "t{} (used: {}, assignable: {}) = {}",
             self.var.index,
             self.var.used.get(),
-            self.pruned.get(),
             self.assignable,
             self.init,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Phi<'a, 'tcx> {
+    var: &'a TmpVar<'a, 'tcx>,
+    value: &'a Expr<'a, 'tcx>,
+}
+
+impl<'a, 'tcx> Phi<'a, 'tcx> {
+    pub fn new(var: &'a TmpVar<'a, 'tcx>, value: &'a Expr<'a, 'tcx>) -> Self {
+        Self { var, value }
+    }
+
+    pub fn var(&self) -> &'a TmpVar<'a, 'tcx> {
+        self.var
+    }
+
+    pub fn value(&self) -> &'a Expr<'a, 'tcx> {
+        self.value
+    }
+}
+
+impl fmt::Display for Phi<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "phi(t{} (used: {}) = {:?})",
+            self.var.index,
+            self.var.used.get(),
+            self.value
         )
     }
 }
@@ -301,18 +325,11 @@ pub enum Stmt<'a, 'tcx> {
     // TODO: Can we unify TmpVar(Def) and Var(Def)?
     TmpVarDef(TmpVarDef<'a, 'tcx>),
     VarDef(VarDef<'a, 'tcx>),
-    Cond {
-        /// The index of temporary variable which holds the result.
-        var: &'a TmpVar<'a, 'tcx>,
-        branches: Vec<Branch<'a, 'tcx>>,
-    },
+    Cond(Cond<'a, 'tcx>),
     // "Phi" function for a basic block. This statement must appear at the end of
     // each branch.
-    Phi {
-        var: &'a TmpVar<'a, 'tcx>,
-        value: &'a Expr<'a, 'tcx>,
-        pruned: Cell<bool>,
-    },
+    Phi(Phi<'a, 'tcx>),
+
     // "return" statement
     Ret(&'a Expr<'a, 'tcx>),
 }
@@ -327,11 +344,7 @@ impl<'a, 'tcx> Stmt<'a, 'tcx> {
     }
 
     pub fn phi(var: &'a TmpVar<'a, 'tcx>, value: &'a Expr<'a, 'tcx>) -> Self {
-        Self::Phi {
-            var,
-            value,
-            pruned: Cell::new(false),
-        }
+        Self::Phi(Phi::new(var, value))
     }
 }
 
@@ -341,30 +354,34 @@ impl fmt::Display for Stmt<'_, '_> {
             Stmt::TmpVarDef(def) => def.fmt(f),
             Stmt::VarDef(def) => def.fmt(f),
             Stmt::Ret(expr) => write!(f, "return {}", expr),
-            Stmt::Phi { var, value, pruned } => write!(
-                f,
-                "phi(t{} (used: {}, pruned: {}) = {:?})",
-                var.index,
-                var.used.get(),
-                pruned.get(),
-                value
-            ),
-            Stmt::Cond { var: ret, branches } => {
-                write!(f, "t{} (used: {}) = ", ret.index, ret.used.get())?;
-                writeln!(f, "cond {{")?;
-                for branch in branches {
-                    writeln!(f, "  {}", branch)?;
-                }
-                write!(f, "}}")
-            }
+            Stmt::Phi(phi) => phi.fmt(f),
+            Stmt::Cond(cond) => cond.fmt(f),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Cond<'a, 'tcx> {
+    /// The index of temporary variable which holds the result.
+    pub var: &'a TmpVar<'a, 'tcx>,
+    pub branches: Vec<Branch<'a, 'tcx>>,
+}
+
+impl fmt::Display for Cond<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "t{} (used: {}) = ", self.var.index, self.var.used())?;
+        writeln!(f, "cond {{")?;
+        for branch in &self.branches {
+            writeln!(f, "  {}", branch)?;
+        }
+        write!(f, "}}")
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Branch<'a, 'tcx> {
     pub condition: Option<&'a Expr<'a, 'tcx>>,
-    pub body: Vec<Stmt<'a, 'tcx>>,
+    pub body: Vec<&'a Stmt<'a, 'tcx>>,
 }
 
 impl fmt::Display for Branch<'_, '_> {
@@ -671,8 +688,10 @@ impl fmt::Display for FormatSpec<'_, '_> {
 
 pub struct Builder<'a, 'tcx> {
     tcx: TypeContext<'tcx>,
-    /// An arena allocators for nodes.
+    // An arena allocators for instructions.
     expr_arena: &'a Arena<Expr<'a, 'tcx>>,
+    stmt_arena: &'a Arena<Stmt<'a, 'tcx>>,
+
     tmp_var_arena: &'a Arena<TmpVar<'a, 'tcx>>,
     /// The current index of temporary variables. It starts from 0 and
     /// incremented by creating a new temporary variable. This index will
@@ -684,11 +703,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     pub fn new(
         tcx: TypeContext<'tcx>,
         expr_arena: &'a Arena<Expr<'a, 'tcx>>,
+        stmt_arena: &'a Arena<Stmt<'a, 'tcx>>,
         tmp_var_arena: &'a Arena<TmpVar<'a, 'tcx>>,
     ) -> Self {
         Self {
             tcx,
             expr_arena,
+            stmt_arena,
             tmp_var_arena,
             tmp_var_index: 0,
         }
@@ -696,7 +717,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
     pub fn build(&mut self, ast: &'nd [syntax::TopLevel<'nd, 'tcx>]) -> Program<'a, 'tcx> {
         let mut program = Program::new();
-        let mut stmts = vec![];
+        let mut stmts: Vec<&'a Stmt<'a, 'tcx>> = vec![];
 
         // Build top level statements and function definitions.
         for top_level in ast {
@@ -712,7 +733,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
         // Add `return 0` statement for the entry point function if needed.
         if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
-            stmts.push(Stmt::Ret(self.native_int(0)))
+            let ret = Stmt::Ret(self.native_int(0));
+            stmts.push(self.stmt_arena.alloc(ret))
         }
 
         let signature = FunctionSignature::new("main".to_string(), vec![]);
@@ -737,11 +759,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     fn push_expr(
         &mut self,
         expr: &'a Expr<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         let t = self.next_temp_var(expr.ty());
         let stmt = Stmt::tmp_var_def(t, expr);
-        stmts.push(stmt);
+        stmts.push(self.stmt_arena.alloc(stmt));
 
         let kind = ExprKind::TmpVar(t);
         self.expr_arena.alloc(Expr::new(kind, expr.ty()))
@@ -751,12 +773,12 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         &mut self,
         kind: ExprKind<'a, 'tcx>,
         expr_ty: &'tcx Type<'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         let expr = self.expr_arena.alloc(Expr::new(kind, expr_ty));
         let t = self.next_temp_var(expr.ty());
         let stmt = Stmt::tmp_var_def(t, expr);
-        stmts.push(stmt);
+        stmts.push(self.stmt_arena.alloc(stmt));
 
         let kind = ExprKind::TmpVar(t);
         self.expr_arena.alloc(Expr::new(kind, expr.ty()))
@@ -795,7 +817,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         &mut self,
         decl: &syntax::Declaration<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
-        _stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        _stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) {
         match decl.kind() {
             syntax::DeclarationKind::Function(syntax_fun) => {
@@ -850,7 +872,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     ret = self.build_stmt(stmt, program, &mut body_stmts);
                 }
                 if let Some(ret) = ret {
-                    body_stmts.push(Stmt::Ret(inc_used(ret)));
+                    let phi = Stmt::Ret(inc_used(ret));
+                    body_stmts.push(self.stmt_arena.alloc(phi));
                 }
 
                 // Return type of the function
@@ -882,7 +905,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         &mut self,
         stmt: &syntax::Stmt<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
         match stmt.kind() {
             syntax::StmtKind::Let { pattern, rhs } => {
@@ -902,7 +925,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         &mut self,
         expr: &'nd syntax::Expr<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         match expr.kind() {
             syntax::ExprKind::Integer(n) => {
@@ -1142,7 +1165,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 while let Some(arg) = it.next() {
                     let a = self.build_expr(arg, program, stmts);
-                    self.build_print_expr(a, program, stmts);
+                    self.build_print_expr(a, false, program, stmts);
 
                     // separated by a space
                     if it.peek().is_some() {
@@ -1180,7 +1203,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             ret = self.build_stmt(stmt, program, &mut branch_stmts);
                         }
                         if let Some(ret) = ret {
-                            branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                            let phi = Stmt::phi(t, inc_used(ret));
+                            branch_stmts.push(self.stmt_arena.alloc(phi));
                         }
 
                         Branch {
@@ -1198,7 +1222,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         ret = self.build_stmt(stmt, program, &mut branch_stmts);
                     }
                     if let Some(ret) = ret {
-                        branch_stmts.push(Stmt::phi(t, inc_used(ret)));
+                        let phi = Stmt::phi(t, inc_used(ret));
+                        branch_stmts.push(self.stmt_arena.alloc(phi));
                     }
 
                     let branch = Branch {
@@ -1215,8 +1240,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     //branches[i].condition = None;
                 }
 
-                let stmt = Stmt::Cond { branches, var: t };
-                stmts.push(stmt);
+                let stmt = Stmt::Cond(Cond { branches, var: t });
+                stmts.push(self.stmt_arena.alloc(stmt));
 
                 let kind = ExprKind::TmpVar(t);
                 self.expr_arena.alloc(Expr::new(kind, t.ty))
@@ -1227,48 +1252,29 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     fn build_print_expr(
         &mut self,
         arg: &'a Expr<'a, 'tcx>,
-        program: &mut Program<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-    ) -> &'a Expr<'a, 'tcx> {
-        let mut format_specs = Vec::with_capacity(1);
-        self.printf_format(arg, program, stmts, &mut format_specs, false);
-        self.build_printf(format_specs, stmts)
-    }
-    fn build_printf(
-        &mut self,
-        format_specs: Vec<FormatSpec<'a, 'tcx>>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-    ) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Printf(format_specs);
-        self.push_expr_kind(kind, self.tcx.int64(), stmts)
-    }
-    fn printf_format(
-        &mut self,
-        arg: &'a Expr<'a, 'tcx>,
-        program: &mut Program<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-        specs: &mut Vec<FormatSpec<'a, 'tcx>>,
         quote_string: bool,
-    ) {
+        program: &mut Program<'a, 'tcx>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
         match arg.ty() {
             Type::Int64
             | Type::NativeInt
             | Type::Boolean
             | Type::LiteralInt64(_)
             | Type::LiteralBoolean(_) => {
-                specs.push(FormatSpec::Value(inc_used(arg)));
+                self._build_printf(FormatSpec::Value(inc_used(arg)), stmts)
             }
             Type::String | Type::LiteralString(_) => {
                 if quote_string {
-                    specs.push(FormatSpec::Quoted(inc_used(arg)));
+                    self._build_printf(FormatSpec::Quoted(inc_used(arg)), stmts)
                 } else {
-                    specs.push(FormatSpec::Value(inc_used(arg)));
+                    self._build_printf(FormatSpec::Value(inc_used(arg)), stmts)
                 }
             }
             Type::Tuple(fs) => {
                 let mut it = fs.iter().enumerate().peekable();
 
-                specs.push(FormatSpec::Str("("));
+                self._build_printf(FormatSpec::Str("("), stmts);
                 while let Some((i, sub_ty)) = it.next() {
                     let kind = ExprKind::IndexAccess {
                         operand: inc_used(arg),
@@ -1276,62 +1282,71 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     };
 
                     let ir_expr = self.push_expr_kind(kind, sub_ty, stmts);
-                    self.printf_format(ir_expr, program, stmts, specs, true);
+                    self.build_print_expr(ir_expr, true, program, stmts);
 
                     if it.peek().is_some() {
-                        specs.push(FormatSpec::Str(", "));
+                        self._build_printf(FormatSpec::Str(", "), stmts);
                     }
                 }
-                specs.push(FormatSpec::Str(")"));
+                self._build_printf(FormatSpec::Str(")"), stmts)
             }
             Type::Struct(struct_ty) => {
                 if let Some(name) = struct_ty.name() {
-                    specs.push(FormatSpec::Value(self.const_string(name)));
-                    specs.push(FormatSpec::Str(" "));
+                    self._build_printf(FormatSpec::Value(self.const_string(name)), stmts);
+                    self._build_printf(FormatSpec::Str(" "), stmts);
                 }
-                self.printf_format_typed_fields(arg, struct_ty.fields(), program, stmts, specs);
+
+                // print typed fields
+                let mut it = struct_ty.fields().iter().peekable();
+                let empty = it.peek().is_none();
+
+                self._build_printf(FormatSpec::Str("{"), stmts);
+                if !empty {
+                    self._build_printf(FormatSpec::Str(" "), stmts);
+                }
+
+                while let Some(f) = it.next() {
+                    self._build_printf(FormatSpec::Value(self.const_string(f.name())), stmts);
+                    self._build_printf(FormatSpec::Str(": "), stmts);
+
+                    let kind = ExprKind::FieldAccess {
+                        operand: inc_used(arg),
+                        name: f.name().to_string(),
+                    };
+
+                    let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
+                    self.build_print_expr(ir_expr, true, program, stmts);
+
+                    if it.peek().is_some() {
+                        self._build_printf(FormatSpec::Str(", "), stmts);
+                    }
+                }
+
+                if !empty {
+                    self._build_printf(FormatSpec::Str(" "), stmts);
+                }
+                self._build_printf(FormatSpec::Str("}"), stmts)
             }
             Type::Union(_) => todo!(),
             Type::Named(name) => unreachable!("untyped for the type named: {}", name),
             Type::Undetermined => unreachable!("untyped code"),
         }
     }
-    fn printf_format_typed_fields(
+    fn _build_printf(
         &mut self,
-        arg: &'a Expr<'a, 'tcx>,
-        fields: &[TypedField<'tcx>],
-        program: &mut Program<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-        specs: &mut Vec<FormatSpec<'a, 'tcx>>,
-    ) {
-        let mut it = fields.iter().peekable();
-        let empty = it.peek().is_none();
-        specs.push(FormatSpec::Str("{"));
-        if !empty {
-            specs.push(FormatSpec::Str(" "));
-        }
-
-        while let Some(f) = it.next() {
-            specs.push(FormatSpec::Value(self.const_string(f.name())));
-            specs.push(FormatSpec::Str(": "));
-
-            let kind = ExprKind::FieldAccess {
-                operand: inc_used(arg),
-                name: f.name().to_string(),
-            };
-
-            let ir_expr = self.push_expr_kind(kind, f.ty(), stmts);
-            self.printf_format(ir_expr, program, stmts, specs, true);
-
-            if it.peek().is_some() {
-                specs.push(FormatSpec::Str(", "));
-            }
-        }
-
-        if !empty {
-            specs.push(FormatSpec::Str(" "));
-        }
-        specs.push(FormatSpec::Str("}"));
+        format_spec: FormatSpec<'a, 'tcx>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
+        let kind = ExprKind::Printf(vec![format_spec]);
+        self.push_expr_kind(kind, self.tcx.int64(), stmts)
+    }
+    fn build_printf(
+        &mut self,
+        format_specs: Vec<FormatSpec<'a, 'tcx>>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
+        let kind = ExprKind::Printf(format_specs);
+        self.push_expr_kind(kind, self.tcx.int64(), stmts)
     }
 
     // Returns `None` for no condition.
@@ -1340,8 +1355,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         target_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
         program: &mut Program<'a, 'tcx>,
-        outer_stmts: &mut Vec<Stmt<'a, 'tcx>>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        outer_stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
         // zero-sized type is always matched with a value.
         if pat.expect_ty().is_zero_sized() {
@@ -1460,10 +1475,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             .expr_arena
                             .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
 
-                        stmts.push(Stmt::VarDef(VarDef::new(
+                        let var_def = Stmt::VarDef(VarDef::new(
                             spread_name.to_string(),
                             inc_used(struct_value),
-                        )));
+                        ));
+                        stmts.push(self.stmt_arena.alloc(var_def));
                     }
                 }
 
@@ -1495,10 +1511,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 })
             }
             PatternKind::Var(name) => {
-                stmts.push(Stmt::VarDef(VarDef::new(
-                    name.clone(),
-                    inc_used(target_expr),
-                )));
+                let stmt = Stmt::VarDef(VarDef::new(name.clone(), inc_used(target_expr)));
+                stmts.push(self.stmt_arena.alloc(stmt));
 
                 None
             }
@@ -1509,7 +1523,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 sub_pats.iter().fold(None, |cond, sub_pat| {
                     // control flow variable
                     let cfv = self.next_temp_var(bool_ty);
-                    outer_stmts.push(Stmt::assignable_tmp_var_def(cfv, self.bool(false)));
+                    let stmt = Stmt::assignable_tmp_var_def(cfv, self.bool(false));
+                    outer_stmts.push(self.stmt_arena.alloc(stmt));
 
                     let mut inner_stmts = vec![];
                     let mut sub_cond = self.build_pattern(
@@ -1548,8 +1563,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     fn merge_var_decl_stmts(
         &self,
         cfv: &'a TmpVar<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
-        inner_stmts: &[Stmt<'a, 'tcx>],
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+        inner_stmts: &[&'a Stmt<'a, 'tcx>],
     ) {
         for stmt in inner_stmts {
             if let Stmt::VarDef(def) = stmt {
@@ -1577,13 +1592,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         self.expr_arena.alloc(init),
                     ));
 
-                    stmts.push(new_var_def);
+                    stmts.push(self.stmt_arena.alloc(new_var_def));
                     stmts.swap_remove(i);
                 } else {
-                    stmts.push(Stmt::VarDef(VarDef::new(
-                        def.name().to_string(),
-                        def.init(),
-                    )));
+                    let var_def = Stmt::VarDef(VarDef::new(def.name().to_string(), def.init()));
+                    stmts.push(self.stmt_arena.alloc(var_def));
                 }
             } else {
                 unreachable!("stmt must be var def: {}", stmt);
@@ -1596,12 +1609,12 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         pattern: &'nd syntax::Pattern<'nd, 'tcx>,
         init: &'a Expr<'a, 'tcx>,
         program: &mut Program<'a, 'tcx>,
-        stmts: &mut Vec<Stmt<'a, 'tcx>>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) {
         match pattern.kind() {
             PatternKind::Var(name) => {
                 let stmt = Stmt::VarDef(VarDef::new(name.to_string(), inc_used(init)));
-                stmts.push(stmt);
+                stmts.push(self.stmt_arena.alloc(stmt));
             }
             PatternKind::Wildcard => {
                 // no bound variable to `_`
@@ -1642,10 +1655,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                     .expr_arena
                                     .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
 
-                                stmts.push(Stmt::VarDef(VarDef::new(
+                                let def = Stmt::VarDef(VarDef::new(
                                     spread_name.to_string(),
                                     inc_used(struct_value),
-                                )));
+                                ));
+                                stmts.push(self.stmt_arena.alloc(def));
                             }
                         }
                     }
@@ -1685,11 +1699,20 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 pub struct Optimizer<'a, 'tcx> {
     tcx: TypeContext<'tcx>,
     expr_arena: &'a Arena<Expr<'a, 'tcx>>,
+    stmt_arena: &'a Arena<Stmt<'a, 'tcx>>,
 }
 
 impl<'a, 'tcx> Optimizer<'a, 'tcx> {
-    pub fn new(tcx: TypeContext<'tcx>, expr_arena: &'a Arena<Expr<'a, 'tcx>>) -> Self {
-        Self { tcx, expr_arena }
+    pub fn new(
+        tcx: TypeContext<'tcx>,
+        expr_arena: &'a Arena<Expr<'a, 'tcx>>,
+        stmt_arena: &'a Arena<Stmt<'a, 'tcx>>,
+    ) -> Self {
+        Self {
+            tcx,
+            expr_arena,
+            stmt_arena,
+        }
     }
 
     pub fn optimize(&mut self, program: &mut Program<'a, 'tcx>) {
@@ -1699,15 +1722,25 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
     }
 
     fn optimize_function(&mut self, fun: &mut Function<'a, 'tcx>) {
-        // Rewrite body
+        // Remove pruned stmts
         let mut body = vec![];
-        let mut it = fun.body.iter().peekable();
+
+        for stmt in &fun.body {
+            if let Some(stmt) = self.prune_unused_stmt(stmt) {
+                body.push(stmt);
+            }
+        }
+
+        // -- Peephole optimization.
+        // Rewrite body
+        let mut it = body.iter().peekable();
+        let mut body = vec![];
 
         // Combine consecutive printf(...) into one.
         let mut last_tmp_def = None;
         let mut format_specs = Vec::with_capacity(0);
 
-        while let Some(stmt) = it.next() {
+        while let Some(&stmt) = it.next() {
             if let Stmt::TmpVarDef(t) = stmt {
                 if t.var().used() == 0 {
                     if let ExprKind::Printf(args) = t.init().kind() {
@@ -1726,137 +1759,69 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
 
                 let init = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
                 let d = last_tmp_def.unwrap().with_init(init);
-                body.push(Stmt::TmpVarDef(d));
+
+                let stmt = &*self.stmt_arena.alloc(Stmt::TmpVarDef(d));
+                body.push(stmt);
             }
-            body.push(stmt.clone());
+            body.push(stmt);
         }
 
+        // -- Rewrite body by cloning
         fun.body = body;
-
-        // optimize expr
-        for stmt in &fun.body {
-            self.optimize_stmt(stmt);
-        }
     }
 
-    fn optimize_stmt(&mut self, stmt: &Stmt<'a, 'tcx>) {
+    /// Returns `None` if pruned
+    fn prune_unused_stmt(&mut self, stmt: &'a Stmt<'a, 'tcx>) -> Option<&'a Stmt<'a, 'tcx>> {
         match stmt {
             Stmt::TmpVarDef(def) => {
                 if def.assignable {
                     // We can remove a definition of a temporary variable which is assigned
                     // but never referred. To do this, however, we have to remove the assignment
                     // expression.
-                    if def.var.used.get() == 0 {
-                        def.pruned.set(true);
+                    if def.var.used() == 0 {
+                        return None;
                     }
-                } else if def.var.used.get() == 1 || def.init.can_be_immediate() {
+                } else if def.var.used() == 1 || def.init.can_be_immediate() {
                     // This temporary variable is used only once, so it could be
                     // replaced with the expression.
                     def.var.immediate.set(Some(def.init));
-                    def.pruned.set(true);
+                    return None;
                 }
-                self.optimize_expr(def.init);
             }
-            Stmt::VarDef(def) => {
-                self.optimize_expr(def.init());
-            }
-            Stmt::Ret(expr) => {
-                self.optimize_expr(expr);
-            }
-            Stmt::Phi { var, value, pruned } => {
-                if var.used.get() == 0 {
+            Stmt::Phi(phi) => {
+                if phi.var().used() == 0 {
                     // The result of cond expression is unused.
                     // So decrement the used count of a value because we increment it in
                     // Builder::build().
-                    if dcr_used_and_prunable(value) {
-                        pruned.set(true);
-                        return;
+                    if dcr_used_and_prunable(phi.value()) {
+                        return None;
                     }
                 }
-
-                self.optimize_expr(value);
             }
-            Stmt::Cond { branches, .. } => {
-                // Construct "if-else" statement from each branches.
-                for branch in branches {
-                    if let Some(condition) = branch.condition {
-                        self.optimize_expr(condition);
-                    }
-
-                    // body
+            Stmt::Cond(cond) => {
+                let mut branches = vec![];
+                for branch in &cond.branches {
+                    let mut body = vec![];
                     for stmt in &branch.body {
-                        self.optimize_stmt(stmt);
+                        if let Some(stmt) = self.prune_unused_stmt(stmt) {
+                            body.push(stmt);
+                        }
                     }
+                    branches.push(Branch {
+                        body,
+                        condition: branch.condition,
+                    })
                 }
-            }
-        }
-    }
 
-    fn optimize_expr(&mut self, expr: &Expr<'a, 'tcx>) {
-        match expr.kind() {
-            ExprKind::Minus(operand) | ExprKind::Not(operand) => {
-                self.optimize_expr(operand);
+                let cond = Cond {
+                    branches,
+                    var: cond.var,
+                };
+                return Some(self.stmt_arena.alloc(Stmt::Cond(cond)));
             }
-            ExprKind::Add(lhs, rhs)
-            | ExprKind::Sub(lhs, rhs)
-            | ExprKind::Mul(lhs, rhs)
-            | ExprKind::Div(lhs, rhs)
-            | ExprKind::Eq(lhs, rhs)
-            | ExprKind::Ne(lhs, rhs)
-            | ExprKind::Lt(lhs, rhs)
-            | ExprKind::Le(lhs, rhs)
-            | ExprKind::Ge(lhs, rhs)
-            | ExprKind::Gt(lhs, rhs)
-            | ExprKind::And(lhs, rhs)
-            | ExprKind::Or(lhs, rhs) => {
-                self.optimize_expr(lhs);
-                self.optimize_expr(rhs);
-            }
-            ExprKind::CondValue {
-                cond,
-                then_value,
-                else_value,
-            } => {
-                self.optimize_expr(cond);
-                self.optimize_expr(then_value);
-                self.optimize_expr(else_value);
-            }
-            ExprKind::Call { args, .. } => {
-                for arg in args {
-                    self.optimize_expr(arg);
-                }
-            }
-            ExprKind::Printf(specs) => {
-                for spec in specs {
-                    if let FormatSpec::Value(expr) = spec {
-                        self.optimize_expr(expr);
-                    }
-                }
-            }
-            ExprKind::Tuple(fs) => {
-                for value in fs {
-                    self.optimize_expr(value);
-                }
-            }
-            ExprKind::StructValue(fs) => {
-                for (_, value) in fs {
-                    self.optimize_expr(value);
-                }
-            }
-            ExprKind::CondAndAssign { var: _, cond } => {
-                if let Some(cond) = cond {
-                    self.optimize_expr(cond);
-                }
-            }
-            ExprKind::GetUnionTag(operand) => self.optimize_expr(operand),
-            ExprKind::Int64(_)
-            | ExprKind::Bool(_)
-            | ExprKind::Str(_)
-            | ExprKind::IndexAccess { .. }
-            | ExprKind::FieldAccess { .. }
-            | ExprKind::TmpVar(_)
-            | ExprKind::Var(_) => {}
+            _ => {}
         }
+        Some(stmt)
     }
 }
 

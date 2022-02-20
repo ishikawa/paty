@@ -63,14 +63,16 @@ fn main() {
 
     {
         let ir_expr_arena = Arena::new();
+        let ir_stmt_arena = Arena::new();
         let tmp_var_arena = Arena::new();
 
-        let mut builder = gen::ir::Builder::new(tcx, &ir_expr_arena, &tmp_var_arena);
+        let mut builder =
+            gen::ir::Builder::new(tcx, &ir_expr_arena, &ir_stmt_arena, &tmp_var_arena);
         let mut program = builder.build(&body);
         //eprintln!("---\n{}", program);
 
         // post process
-        let mut optimizer = gen::ir::Optimizer::new(tcx, &ir_expr_arena);
+        let mut optimizer = gen::ir::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
         optimizer.optimize(&mut program);
         //eprintln!("---\n{}", program);
 
