@@ -872,6 +872,22 @@ def printID(id: ID)
 end
 printID(1234567)
 printID("abcdefg")'
+assert 'a = true
+b = false
+c = on
+d = off' '
+struct Option {
+  name: string,
+  value: boolean | "on" | "off",
+}
+def show_option(opt: Option)
+  puts(opt.name, "=", opt.value)
+end
+show_option(Option { name: "a", value: true })
+show_option(Option { name: "b", value: false })
+show_option(Option { name: "c", value: "on" })
+show_option(Option { name: "d", value: "off" })'
+
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

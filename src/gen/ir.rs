@@ -984,8 +984,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::String(s) => {
-                let expr = self.const_string(s);
-                self.push_expr(expr, stmts)
+                let kind = ExprKind::Str(s.clone());
+                self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Tuple(sub_exprs) => {
                 // Add tuple type to declaration types, because we have to
@@ -1005,11 +1005,14 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, tuple_ty, stmts)
             }
             syntax::ExprKind::Struct(struct_value) => {
+                let expr_ty = expr.expect_ty().bottom_ty();
+                let struct_ty = expr_ty.struct_ty().unwrap();
+
                 if struct_value.name().is_none() {
                     // Add anonymous struct type to declaration types, because we have to
                     // declare a type as a struct type in C.
                     // However, the Zero-sized struct should not have a definition.
-                    program.add_decl_type(expr.expect_ty());
+                    program.add_decl_type(expr_ty);
                 }
 
                 // Latter initializer can override previous initializers.
@@ -1021,7 +1024,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     match field_or_spread {
                         syntax::ValueFieldOrSpread::ValueField(field) => {
                             if !initialized_fields.contains(&field.name()) {
+                                let expected_field = struct_ty.get_field(field.name()).unwrap();
+
                                 let value = self.build_expr(field.value(), program, stmts);
+                                let value = self.promote_to(value, expected_field.ty());
+
                                 value_fields.push((field.name().to_string(), inc_used(value)));
                                 initialized_fields.insert(field.name());
                             }
@@ -1058,7 +1065,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 value_fields.reverse();
 
                 let kind = ExprKind::StructValue(value_fields);
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+                self.push_expr_kind(kind, expr_ty, stmts)
             }
             syntax::ExprKind::Minus(a) => {
                 let a = self.build_expr(a, program, stmts);

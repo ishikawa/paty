@@ -134,6 +134,14 @@ impl<'tcx> Type<'tcx> {
         }
     }
 
+    pub fn struct_ty(&self) -> Option<&StructTy<'tcx>> {
+        if let Type::Struct(struct_ty) = self {
+            Some(struct_ty)
+        } else {
+            None
+        }
+    }
+
     /// Returns `true` if the type is zero-sized.
     pub fn is_zero_sized(&self) -> bool {
         match self {
