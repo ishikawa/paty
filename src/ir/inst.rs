@@ -183,7 +183,6 @@ pub struct TmpVar<'a, 'tcx> {
 
     /// The initial value for immutable variable. `None` for mutable variable.
     value: Cell<Option<&'a Expr<'a, 'tcx>>>,
-    immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
 
     /// `true` if this temporary variable can be updated.
     mutable: bool,
@@ -196,7 +195,6 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
             ty,
             used: Cell::new(0),
             value: Cell::new(None),
-            immediate: Cell::new(None),
             mutable,
         }
     }
@@ -225,18 +223,14 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
         self.value.set(Some(value));
     }
 
-    pub fn immediate(&self) -> Option<&'a Expr<'a, 'tcx>> {
-        self.immediate.get()
-    }
-
-    pub fn set_immediate(&self, value: &'a Expr<'a, 'tcx>) {
-        self.immediate.set(Some(value));
-    }
-
     pub fn inc_used(&self) -> usize {
         let u = self.used.get() + 1;
         self.used.set(u);
         u
+    }
+
+    pub fn reset_used(&self) {
+        self.used.set(0);
     }
 
     pub fn dcr_used(&self) -> usize {
@@ -251,11 +245,7 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
 
 impl fmt::Display for TmpVar<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "t{}", self.index)?;
-        if let Some(value) = self.immediate.get() {
-            write!(f, ": {}", value)?;
-        }
-        Ok(())
+        write!(f, "t{}", self.index)
     }
 }
 
@@ -315,7 +305,7 @@ impl fmt::Display for Phi<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "phi(t{} (used: {}) = {:?})",
+            "phi(t{} (used: {}) = {})",
             self.var.index,
             self.var.used.get(),
             self.value
@@ -424,9 +414,9 @@ impl fmt::Display for Branch<'_, '_> {
 
         writeln!(f, "{{")?;
         for stmt in &self.body {
-            writeln!(f, "  {}", stmt)?;
+            writeln!(f, "    {}", stmt)?;
         }
-        write!(f, "}}")
+        write!(f, "  }}")
     }
 }
 
@@ -505,19 +495,19 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     pub fn can_be_immediate(&self) -> bool {
         match &self.kind {
             ExprKind::Minus(a) | ExprKind::Not(a) => a.can_be_immediate(),
-            ExprKind::Add(_, _)
-            | ExprKind::Sub(_, _)
-            | ExprKind::Mul(_, _)
-            | ExprKind::Div(_, _)
-            | ExprKind::Eq(_, _)
-            | ExprKind::Ne(_, _)
-            | ExprKind::Lt(_, _)
-            | ExprKind::Le(_, _)
-            | ExprKind::Gt(_, _)
-            | ExprKind::Ge(_, _)
-            | ExprKind::And(_, _)
-            | ExprKind::Or(_, _)
-            | ExprKind::CondValue { .. } => false,
+            ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Le(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Ge(a, b)
+            | ExprKind::And(a, b)
+            | ExprKind::Or(a, b) => a.can_be_immediate() && b.can_be_immediate(),
+            ExprKind::CondValue { .. } => false,
             ExprKind::Tuple(_)
             | ExprKind::StructValue(_)
             | ExprKind::Call { .. }

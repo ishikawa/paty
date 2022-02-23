@@ -217,11 +217,9 @@ impl<'a, 'tcx> Emitter {
                         code.push_str(" = ");
                     }
 
-                    // Emit init statement if needed
-                    if def.var().used() > 0 || def.init().has_side_effect() {
-                        self.emit_expr(def.init(), code);
-                        code.push_str(";\n");
-                    }
+                    // Emit init statement
+                    self.emit_expr(def.init(), code);
+                    code.push_str(";\n");
                 }
             }
             Stmt::VarDef(def) => {
@@ -499,7 +497,7 @@ impl<'a, 'tcx> Emitter {
                             self.emit_expr(value, code);
                         }
                         Type::Boolean | Type::LiteralBoolean(_) => {
-                            match immediate(value).kind() {
+                            match value.kind() {
                                 ExprKind::Bool(true) => code.push_str("\"true\""),
                                 ExprKind::Bool(false) => code.push_str("\"false\""),
                                 _ => {
@@ -629,24 +627,11 @@ impl<'a, 'tcx> Emitter {
                 code.push('}');
             }
             ExprKind::TmpVar(t) => {
-                if let Some(expr) = t.immediate() {
-                    self.emit_expr(expr, code);
-                } else {
-                    code.push_str(&tmp_var(t));
-                }
+                code.push_str(&tmp_var(t));
             }
             ExprKind::Var(var) => code.push_str(var.name()),
         }
     }
-}
-
-fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
-    if let ExprKind::TmpVar(t) = expr.kind() {
-        if let Some(expr) = t.immediate() {
-            return expr;
-        }
-    }
-    expr
 }
 
 fn tmp_var(t: &TmpVar) -> String {

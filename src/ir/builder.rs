@@ -192,7 +192,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     ret = self.build_stmt(stmt, program, &mut body_stmts);
                 }
                 if let Some(ret) = ret {
-                    let phi = Stmt::Ret(inc_used(ret));
+                    let phi = Stmt::Ret(ret);
                     body_stmts.push(self.stmt_arena.alloc(phi));
                 }
 
@@ -273,7 +273,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 for (sub, fty) in sub_exprs.iter().zip(tuple_fs) {
                     let value = self.build_expr(sub, program, stmts);
                     let value = self.promote_to(value, fty, stmts);
-                    values.push(inc_used(value));
+                    values.push(value);
                 }
 
                 let kind = ExprKind::Tuple(values);
@@ -304,7 +304,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                 let value = self.build_expr(field.value(), program, stmts);
                                 let value = self.promote_to(value, expected_field.ty(), stmts);
 
-                                value_fields.push((field.name().to_string(), inc_used(value)));
+                                value_fields.push((field.name().to_string(), value));
                                 initialized_fields.insert(field.name());
                             }
                         }
@@ -326,10 +326,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                                 let kind = ExprKind::FieldAccess {
                                     name: field.name().to_string(),
-                                    operand: inc_used(spread_value),
+                                    operand: spread_value,
                                 };
                                 let expr = self.expr_arena.alloc(Expr::new(kind, field.ty()));
-                                value_fields.push((field.name().to_string(), inc_used(expr)));
+                                value_fields.push((field.name().to_string(), expr));
                                 initialized_fields.insert(field.name());
                             }
                         }
@@ -344,91 +344,91 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             }
             syntax::ExprKind::Minus(a) => {
                 let a = self.build_expr(a, program, stmts);
-                let kind = ExprKind::Minus(inc_used(a));
+                let kind = ExprKind::Minus(a);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Add(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Add(inc_used(a), inc_used(b));
+                let kind = ExprKind::Add(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Sub(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Sub(inc_used(a), inc_used(b));
+                let kind = ExprKind::Sub(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Mul(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Mul(inc_used(a), inc_used(b));
+                let kind = ExprKind::Mul(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Div(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Div(inc_used(a), inc_used(b));
+                let kind = ExprKind::Div(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Eq(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Eq(inc_used(a), inc_used(b));
+                let kind = ExprKind::Eq(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Ne(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Ne(inc_used(a), inc_used(b));
+                let kind = ExprKind::Ne(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Lt(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Lt(inc_used(a), inc_used(b));
+                let kind = ExprKind::Lt(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Gt(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Gt(inc_used(a), inc_used(b));
+                let kind = ExprKind::Gt(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Le(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Le(inc_used(a), inc_used(b));
+                let kind = ExprKind::Le(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Ge(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Ge(inc_used(a), inc_used(b));
+                let kind = ExprKind::Ge(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::And(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::And(inc_used(a), inc_used(b));
+                let kind = ExprKind::And(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::Or(a, b) => {
                 let a = self.build_expr(a, program, stmts);
                 let b = self.build_expr(b, program, stmts);
-                let kind = ExprKind::Or(inc_used(a), inc_used(b));
+                let kind = ExprKind::Or(a, b);
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
@@ -436,19 +436,16 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Var(Var::new(name, expr.expect_ty()));
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
-            syntax::ExprKind::IndexAccess(operand, index) => {
+            &syntax::ExprKind::IndexAccess(operand, index) => {
                 let operand = self.build_expr(operand, program, stmts);
-                let kind = ExprKind::IndexAccess {
-                    operand: inc_used(operand),
-                    index: *index,
-                };
+                let kind = ExprKind::IndexAccess { operand, index };
 
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::FieldAccess(operand, name) => {
                 let operand = self.build_expr(operand, program, stmts);
                 let kind = ExprKind::FieldAccess {
-                    operand: inc_used(operand),
+                    operand,
                     name: name.to_string(),
                 };
 
@@ -475,7 +472,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     .zip(sig.params())
                     .map(|(arg, arg_ty)| {
                         let arg_expr = self.build_expr(arg, program, stmts);
-                        inc_used(self.promote_to(arg_expr, arg_ty, stmts))
+                        self.promote_to(arg_expr, arg_ty, stmts)
                     })
                     .collect();
                 let kind = ExprKind::Call {
@@ -532,7 +529,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             ret = self.build_stmt(stmt, program, &mut branch_stmts);
                         }
                         if let Some(ret) = ret {
-                            let phi = Stmt::phi(t, inc_used(ret));
+                            let phi = Stmt::phi(t, ret);
                             branch_stmts.push(self.stmt_arena.alloc(phi));
                         }
 
@@ -551,7 +548,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         ret = self.build_stmt(stmt, program, &mut branch_stmts);
                     }
                     if let Some(ret) = ret {
-                        let phi = Stmt::phi(t, inc_used(ret));
+                        let phi = Stmt::phi(t, ret);
                         branch_stmts.push(self.stmt_arena.alloc(phi));
                     }
 
@@ -605,7 +602,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     .iter()
                     .enumerate()
                     .map(|(i, fty)| {
-                        let expr = Expr::index_access(self.tcx, inc_used(operand), i);
+                        let expr = Expr::index_access(self.tcx, operand, i);
                         self.promote_to(self.expr_arena.alloc(expr), fty, stmts)
                     })
                     .collect();
@@ -627,14 +624,12 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             | Type::NativeInt
             | Type::Boolean
             | Type::LiteralInt64(_)
-            | Type::LiteralBoolean(_) => {
-                self._build_printf(FormatSpec::Value(inc_used(arg)), stmts)
-            }
+            | Type::LiteralBoolean(_) => self._build_printf(FormatSpec::Value(arg), stmts),
             Type::String | Type::LiteralString(_) => {
                 if quote_string {
-                    self._build_printf(FormatSpec::Quoted(inc_used(arg)), stmts)
+                    self._build_printf(FormatSpec::Quoted(arg), stmts)
                 } else {
-                    self._build_printf(FormatSpec::Value(inc_used(arg)), stmts)
+                    self._build_printf(FormatSpec::Value(arg), stmts)
                 }
             }
             Type::Tuple(fs) => {
@@ -643,7 +638,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self._build_printf(FormatSpec::Str("("), stmts);
                 while let Some((i, sub_ty)) = it.next() {
                     let kind = ExprKind::IndexAccess {
-                        operand: inc_used(arg),
+                        operand: arg,
                         index: i,
                     };
 
@@ -676,7 +671,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     self._build_printf(FormatSpec::Str(": "), stmts);
 
                     let kind = ExprKind::FieldAccess {
-                        operand: inc_used(arg),
+                        operand: arg,
                         name: f.name().to_string(),
                     };
 
@@ -704,9 +699,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     let mut branch_stmts = vec![];
 
                     // check union tag
-                    let get_union_tag = self
-                        .expr_arena
-                        .alloc(Expr::get_union_tag(self.tcx, inc_used(arg)));
+                    let get_union_tag = self.expr_arena.alloc(Expr::get_union_tag(self.tcx, arg));
                     let cond =
                         self.expr_arena
                             .alloc(Expr::eq(self.tcx, get_union_tag, self.int64(tag)));
@@ -718,8 +711,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     };
                     let member = self.expr_arena.alloc(Expr::new(kind, member_ty));
 
-                    let ret = self.build_print_expr(member, quote_string, program, stmts);
-                    let phi = Stmt::phi(t, inc_used(ret));
+                    let ret =
+                        self.build_print_expr(member, quote_string, program, &mut branch_stmts);
+                    let phi = Stmt::phi(t, ret);
                     branch_stmts.push(&*self.stmt_arena.alloc(phi));
 
                     branches.push(Branch {
@@ -763,15 +757,14 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         match pat.kind() {
             PatternKind::Integer(n) => {
                 let value = self.int64(*n);
-                let eq = Expr::eq(self.tcx, inc_used(target_expr), value);
+                let eq = Expr::eq(self.tcx, target_expr, value);
                 Some(self.expr_arena.alloc(eq))
             }
             PatternKind::Boolean(b) => {
                 let expr = if *b {
-                    inc_used(target_expr)
+                    target_expr
                 } else {
-                    self.expr_arena
-                        .alloc(Expr::not(self.tcx, inc_used(target_expr)))
+                    self.expr_arena.alloc(Expr::not(self.tcx, target_expr))
                 };
                 Some(expr)
             }
@@ -782,12 +775,12 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let kind = ExprKind::Call {
                     name: "strcmp".to_string(),
                     cc: CallingConvention::C,
-                    args: vec![inc_used(target_expr), value],
+                    args: vec![target_expr, value],
                 };
                 let strcmp = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
 
                 let zero = self.native_int(0);
-                let eq = Expr::eq(self.tcx, inc_used(strcmp), zero);
+                let eq = Expr::eq(self.tcx, strcmp, zero);
 
                 Some(self.expr_arena.alloc(eq))
             }
@@ -795,11 +788,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let lo = self.int64(*lo);
                 let hi = self.int64(*hi);
 
-                let lhs = Expr::ge(self.tcx, inc_used(target_expr), lo);
+                let lhs = Expr::ge(self.tcx, target_expr, lo);
 
                 let rhs = match end {
-                    syntax::RangeEnd::Included => Expr::le(self.tcx, inc_used(target_expr), hi),
-                    syntax::RangeEnd::Excluded => Expr::lt(self.tcx, inc_used(target_expr), hi),
+                    syntax::RangeEnd::Included => Expr::le(self.tcx, target_expr, hi),
+                    syntax::RangeEnd::Excluded => Expr::lt(self.tcx, target_expr, hi),
                 };
 
                 let eq = Expr::and(
@@ -819,7 +812,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 sub_pats.iter().enumerate().fold(None, |cond, (i, pat)| {
                     let kind = ExprKind::IndexAccess {
-                        operand: inc_used(target_expr),
+                        operand: target_expr,
                         index: i,
                     };
                     let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
@@ -868,17 +861,15 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             .expr_arena
                             .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
 
-                        let var_def = Stmt::VarDef(VarDef::new(
-                            spread_name.to_string(),
-                            inc_used(struct_value),
-                        ));
+                        let var_def =
+                            Stmt::VarDef(VarDef::new(spread_name.to_string(), struct_value));
                         stmts.push(self.stmt_arena.alloc(var_def));
                     }
                 }
 
                 pattern_fields.iter().fold(None, |cond, pat_field| {
                     let kind = ExprKind::FieldAccess {
-                        operand: inc_used(target_expr),
+                        operand: target_expr,
                         name: pat_field.name().to_string(),
                     };
                     let operand = self
@@ -903,7 +894,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 })
             }
             PatternKind::Var(name) => {
-                let stmt = Stmt::VarDef(VarDef::new(name.clone(), inc_used(target_expr)));
+                let stmt = Stmt::VarDef(VarDef::new(name.clone(), target_expr));
                 stmts.push(self.stmt_arena.alloc(stmt));
 
                 None
@@ -973,9 +964,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     let cfv_expr = Expr::tmp_var(cfv);
                     let init = Expr::new(
                         ExprKind::CondValue {
-                            cond: inc_used(self.expr_arena.alloc(cfv_expr)),
-                            then_value: inc_used(def.init()),
-                            else_value: inc_used(else_value),
+                            cond: self.expr_arena.alloc(cfv_expr),
+                            then_value: def.init(),
+                            else_value,
                         },
                         def.init().ty(),
                     );
@@ -1005,7 +996,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) {
         match pattern.kind() {
             PatternKind::Var(name) => {
-                let stmt = Stmt::VarDef(VarDef::new(name.to_string(), inc_used(init)));
+                let stmt = Stmt::VarDef(VarDef::new(name.to_string(), init));
                 stmts.push(self.stmt_arena.alloc(stmt));
             }
             PatternKind::Wildcard => {
@@ -1014,7 +1005,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             PatternKind::Tuple(fs) => {
                 for (i, sub_pat) in fs.iter().enumerate() {
                     let kind = ExprKind::IndexAccess {
-                        operand: inc_used(init),
+                        operand: init,
                         index: i,
                     };
                     let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
@@ -1027,7 +1018,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     match f {
                         syntax::PatternFieldOrSpread::PatternField(pat_field) => {
                             let kind = ExprKind::FieldAccess {
-                                operand: inc_used(init),
+                                operand: init,
                                 name: pat_field.name().to_string(),
                             };
                             let field = self
@@ -1049,7 +1040,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                                 let def = Stmt::VarDef(VarDef::new(
                                     spread_name.to_string(),
-                                    inc_used(struct_value),
+                                    struct_value,
                                 ));
                                 stmts.push(self.stmt_arena.alloc(def));
                             }
@@ -1077,7 +1068,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             .iter()
             .map(|f| {
                 let kind = ExprKind::FieldAccess {
-                    operand: inc_used(init),
+                    operand: init,
                     name: f.name().to_string(),
                 };
                 let v = self.expr_arena.alloc(Expr::new(kind, f.ty()));
@@ -1086,14 +1077,4 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             })
             .collect::<Vec<_>>()
     }
-}
-
-// Temporary variable used (refed) counting
-
-fn inc_used<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
-    if let ExprKind::TmpVar(t) = expr.kind() {
-        t.inc_used();
-    }
-
-    expr
 }

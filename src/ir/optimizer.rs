@@ -34,35 +34,56 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
         }
     }
 
+    /// Returns `true` if optimized code is changed.
     pub fn run_stmt_pass(
         &self,
         pass: &dyn StmtOptimizerPass<'a, 'tcx>,
         program: &mut Program<'a, 'tcx>,
-    ) {
+    ) -> bool {
+        let mut modified = false;
+
         for fun in program.functions_mut() {
-            fun.body = self._run_stmt_pass_with_stmts(pass, &fun.body);
+            if let Some(body) = self._run_stmt_pass_with_stmts(pass, &fun.body) {
+                fun.body = body;
+                modified = true;
+            }
         }
+
+        modified
     }
 
     fn _run_stmt_pass_with_stmts(
         &self,
         pass: &dyn StmtOptimizerPass<'a, 'tcx>,
         stmts: &[&'a Stmt<'a, 'tcx>],
-    ) -> Vec<&'a Stmt<'a, 'tcx>> {
+    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>> {
         let mut body = Vec::with_capacity(stmts.len());
+        let mut modified = false;
 
         for stmt in stmts {
-            let mut new_stmt = if let Some(stmt) = pass.optimize_stmt(&self.ctx, stmt) {
-                stmt
-            } else {
-                continue;
+            let mut new_stmt = match pass.optimize_stmt(&self.ctx, stmt) {
+                StmtOptimizerPassResult::Eliminated => {
+                    modified = true;
+                    continue;
+                }
+                StmtOptimizerPassResult::Unmodified => stmt,
+                StmtOptimizerPassResult::Modified(stmt) => {
+                    modified = true;
+                    stmt
+                }
             };
 
             // sub statements
             new_stmt = if let Stmt::Cond(cond) = new_stmt {
                 let mut branches = vec![];
                 for branch in &cond.branches {
-                    let body = self._run_stmt_pass_with_stmts(pass, &branch.body);
+                    let body =
+                        if let Some(body) = self._run_stmt_pass_with_stmts(pass, &branch.body) {
+                            modified = true;
+                            body
+                        } else {
+                            branch.body.clone()
+                        };
                     branches.push(Branch {
                         body,
                         condition: branch.condition,
@@ -80,84 +101,123 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
 
             body.push(new_stmt);
         }
-        body
+
+        if modified {
+            Some(body)
+        } else {
+            None
+        }
     }
 
+    /// Returns `true` if optimized code is changed.
     pub fn run_expr_stmt_pass(
         &self,
         pass: &dyn ExprOptimizerPass<'a, 'tcx>,
         program: &mut Program<'a, 'tcx>,
-    ) {
+    ) -> bool {
+        let mut modified = false;
+
         for fun in program.functions_mut() {
-            fun.body = self._run_expr_pass_with_stmts(pass, &fun.body);
+            if let Some(body) = self._run_expr_pass_with_stmts(pass, &fun.body) {
+                modified = true;
+                fun.body = body;
+            }
         }
+
+        modified
     }
 
     fn _run_expr_pass_with_stmts(
         &self,
         pass: &dyn ExprOptimizerPass<'a, 'tcx>,
         stmts: &[&'a Stmt<'a, 'tcx>],
-    ) -> Vec<&'a Stmt<'a, 'tcx>> {
+    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>> {
+        let mut modified = false;
         let mut body = Vec::with_capacity(stmts.len());
 
         for stmt in stmts {
-            body.push(self._run_expr_pass_with_stmt(pass, stmt));
+            if let Some(stmt) = self._run_expr_pass_with_stmt(pass, stmt) {
+                modified = true;
+                body.push(stmt);
+            } else {
+                body.push(stmt);
+            }
         }
-        body
+
+        if modified {
+            Some(body)
+        } else {
+            None
+        }
     }
 
     fn _run_expr_pass_with_stmt(
         &self,
         pass: &dyn ExprOptimizerPass<'a, 'tcx>,
         stmt: &'a Stmt<'a, 'tcx>,
-    ) -> &'a Stmt<'a, 'tcx> {
+    ) -> Option<&'a Stmt<'a, 'tcx>> {
         match stmt {
             Stmt::TmpVarDef(def) => {
                 if let Some(expr) = self._run_expr_pass_with_expr(pass, def.init()) {
-                    return self
-                        .ctx
-                        .stmt_arena
-                        .alloc(Stmt::TmpVarDef(def.with_init(expr)));
+                    return Some(
+                        self.ctx
+                            .stmt_arena
+                            .alloc(Stmt::TmpVarDef(def.with_init(expr))),
+                    );
                 }
             }
             Stmt::VarDef(def) => {
                 if let Some(expr) = self._run_expr_pass_with_expr(pass, def.init()) {
-                    return self.ctx.stmt_arena.alloc(Stmt::VarDef(def.with_init(expr)));
+                    return Some(self.ctx.stmt_arena.alloc(Stmt::VarDef(def.with_init(expr))));
                 }
             }
             Stmt::Phi(phi) => {
                 if let Some(expr) = self._run_expr_pass_with_expr(pass, phi.value()) {
-                    return self
-                        .ctx
-                        .stmt_arena
-                        .alloc(Stmt::Phi(Phi::new(phi.var(), expr)));
+                    return Some(
+                        self.ctx
+                            .stmt_arena
+                            .alloc(Stmt::Phi(Phi::new(phi.var(), expr))),
+                    );
                 }
             }
             Stmt::Ret(ret) => {
                 if let Some(expr) = self._run_expr_pass_with_expr(pass, ret) {
-                    return self.ctx.stmt_arena.alloc(Stmt::Ret(expr));
+                    return Some(self.ctx.stmt_arena.alloc(Stmt::Ret(expr)));
                 }
             }
             Stmt::Cond(cond) => {
-                let branches = cond
-                    .branches
-                    .iter()
-                    .map(|b| Branch {
-                        condition: b
-                            .condition
-                            .and_then(|c| self._run_expr_pass_with_expr(pass, c).or(b.condition)),
-                        body: self._run_expr_pass_with_stmts(pass, &b.body),
-                    })
-                    .collect();
+                let mut branches_modified = false;
+                let mut branches = Vec::with_capacity(cond.branches.len());
 
-                return self.ctx.stmt_arena.alloc(Stmt::Cond(Cond {
-                    var: cond.var,
-                    branches,
-                }));
+                for b in &cond.branches {
+                    let condition = b.condition.and_then(|c| {
+                        self._run_expr_pass_with_expr(pass, c)
+                            .map(|c| {
+                                branches_modified = true;
+                                c
+                            })
+                            .or(b.condition)
+                    });
+                    let body = self
+                        ._run_expr_pass_with_stmts(pass, &b.body)
+                        .map(|stmts| {
+                            branches_modified = true;
+                            stmts
+                        })
+                        .unwrap_or_else(|| b.body.clone());
+                    branches.push(Branch { condition, body });
+                }
+
+                if branches_modified {
+                    return Some(self.ctx.stmt_arena.alloc(Stmt::Cond(Cond {
+                        var: cond.var,
+                        branches,
+                    })));
+                }
             }
         }
 
-        stmt
+        None
     }
 
     fn _run_expr_pass_with_expr(
@@ -426,14 +486,11 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
                     return Some(ExprKind::PromoteToUnion { operand, tag });
                 }
             }
-            ExprKind::TmpVar(var) => {
-                if let Some(value) = var.immediate() {
-                    if let Some(value) = self._run_expr_pass_with_expr(pass, value) {
-                        var.set_immediate(value);
-                    }
-                }
-            }
-            ExprKind::Int64(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::Var(_) => {}
+            ExprKind::TmpVar(_)
+            | ExprKind::Int64(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::Var(_) => {}
         }
 
         None
@@ -454,13 +511,21 @@ pub trait FunctionOptimizerPass<'a, 'tcx> {
     fn optimize_function(&self, ctx: &OptimizerPassContext<'a, 'tcx>, fun: &mut Function<'a, 'tcx>);
 }
 
+pub enum StmtOptimizerPassResult<'a, 'tcx> {
+    Unmodified,
+    /// A statement should be replaced with a new one.
+    Modified(&'a Stmt<'a, 'tcx>),
+    /// A statement should be remove from the function body.
+    Eliminated,
+}
+
 pub trait StmtOptimizerPass<'a, 'tcx> {
     /// Returns `None` if the stmt should be removed from function body.
     fn optimize_stmt(
         &self,
         ctx: &OptimizerPassContext<'a, 'tcx>,
         stmt: &'a Stmt<'a, 'tcx>,
-    ) -> Option<&'a Stmt<'a, 'tcx>>;
+    ) -> StmtOptimizerPassResult<'a, 'tcx>;
 }
 
 pub trait ExprOptimizerPass<'a, 'tcx> {
@@ -481,14 +546,14 @@ impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for UpdateTmpVarValue {
         &self,
         _ctx: &OptimizerPassContext<'a, 'tcx>,
         stmt: &'a Stmt<'a, 'tcx>,
-    ) -> Option<&'a Stmt<'a, 'tcx>> {
+    ) -> StmtOptimizerPassResult<'a, 'tcx> {
         if let Stmt::TmpVarDef(def) = stmt {
             if !def.var().is_mutable() {
                 def.var().set_value(def.init());
             }
         }
 
-        Some(stmt)
+        StmtOptimizerPassResult::Unmodified
     }
 }
 
@@ -499,20 +564,9 @@ pub struct EliminateDeadStmts {}
 impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for EliminateDeadStmts {
     fn optimize_stmt(
         &self,
-        ctx: &OptimizerPassContext<'a, 'tcx>,
-        stmt: &'a Stmt<'a, 'tcx>,
-    ) -> Option<&'a Stmt<'a, 'tcx>> {
-        self.eliminate_dead_stmt(ctx, stmt)
-    }
-}
-
-impl<'a, 'tcx> EliminateDeadStmts {
-    /// Returns `None` if pruned
-    fn eliminate_dead_stmt(
-        &self,
         _ctx: &OptimizerPassContext<'a, 'tcx>,
         stmt: &'a Stmt<'a, 'tcx>,
-    ) -> Option<&'a Stmt<'a, 'tcx>> {
+    ) -> StmtOptimizerPassResult<'a, 'tcx> {
         match stmt {
             Stmt::TmpVarDef(def) => {
                 if def.var().is_mutable() {
@@ -520,35 +574,22 @@ impl<'a, 'tcx> EliminateDeadStmts {
                     // but never referred. To do this, however, we have to remove the assignment
                     // expression.
                     if def.var().used() == 0 {
-                        return None;
+                        return StmtOptimizerPassResult::Eliminated;
                     }
-                } else if def.var().used() == 1 || def.init().can_be_immediate() {
-                    // This temporary variable is used only once, so it could be
-                    // replaced with the expression.
-                    def.var().set_immediate(def.init());
-                    return None;
+                } else if def.var().used() == 0 && !def.init().has_side_effect() {
+                    // dead code
+                    return StmtOptimizerPassResult::Eliminated;
                 }
             }
             Stmt::Phi(phi) => {
                 if phi.var().used() == 0 {
                     // The result of cond expression is unused.
-                    // So decrement the used count of a value because we increment it in
-                    // Builder::build().
-                    if Self::dcr_used_and_prunable(phi.value()) {
-                        return None;
-                    }
+                    return StmtOptimizerPassResult::Eliminated;
                 }
             }
             _ => {}
         }
-        Some(stmt)
-    }
-
-    fn dcr_used_and_prunable(expr: &Expr<'_, '_>) -> bool {
-        if let ExprKind::TmpVar(t) = expr.kind() {
-            return t.dcr_used() == 0 && t.immediate().is_none();
-        }
-        false
+        StmtOptimizerPassResult::Unmodified
     }
 }
 
@@ -611,17 +652,106 @@ impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for OptimizeIndexAccess {
         _ctx: &OptimizerPassContext<'a, 'tcx>,
         expr: &'a Expr<'a, 'tcx>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
-        if let &ExprKind::IndexAccess { operand, index } = expr.kind() {
-            if let ExprKind::TmpVar(t) = operand.kind() {
-                if let Some(v) = t.value() {
-                    if let ExprKind::Tuple(fs) = v.kind() {
-                        let fv = fs[index];
-                        if fv.can_be_immediate() {
-                            // Replace `t.N` access with direct tuple field.
-                            //eprintln!("Found = {} - {}", expr, fs[index]);
-                            t.dcr_used();
-                            return Some(fv);
+        match *expr.kind() {
+            ExprKind::IndexAccess { operand, index } => {
+                if let ExprKind::TmpVar(t) = operand.kind() {
+                    if let Some(v) = t.value() {
+                        if let ExprKind::Tuple(fs) = v.kind() {
+                            let fv = fs[index];
+                            if fv.can_be_immediate() {
+                                // Replace `t.N` access with direct tuple field.
+                                //eprintln!("Found = {} - {}", expr, fs[index]);
+                                t.dcr_used();
+                                return Some(fv);
+                            }
                         }
+                    }
+                }
+            }
+            ExprKind::TmpVar(var) => {
+                if let Some(v) = var.value() {
+                    if v.can_be_immediate() {
+                        var.dcr_used();
+                        return Some(v);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        None
+    }
+}
+
+/// Reset used count for a temporary variable.
+#[derive(Debug, Default)]
+pub struct ResetTmpVarUsed {}
+
+impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for ResetTmpVarUsed {
+    fn optimize_expr(
+        &self,
+        _ctx: &OptimizerPassContext<'a, 'tcx>,
+        expr: &'a Expr<'a, 'tcx>,
+    ) -> Option<&'a Expr<'a, 'tcx>> {
+        if let &ExprKind::TmpVar(var) = expr.kind() {
+            var.reset_used();
+        }
+
+        None
+    }
+}
+
+impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for ResetTmpVarUsed {
+    fn optimize_stmt(
+        &self,
+        _ctx: &OptimizerPassContext<'a, 'tcx>,
+        stmt: &'a Stmt<'a, 'tcx>,
+    ) -> StmtOptimizerPassResult<'a, 'tcx> {
+        match stmt {
+            Stmt::TmpVarDef(def) => def.var().reset_used(),
+            Stmt::Phi(phi) => phi.var().reset_used(),
+            _ => {}
+        }
+        StmtOptimizerPassResult::Unmodified
+    }
+}
+
+/// Increments used count for a temporary variable.
+#[derive(Debug, Default)]
+pub struct MarkTmpVarUsed {}
+
+impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for MarkTmpVarUsed {
+    fn optimize_expr(
+        &self,
+        _ctx: &OptimizerPassContext<'a, 'tcx>,
+        expr: &'a Expr<'a, 'tcx>,
+    ) -> Option<&'a Expr<'a, 'tcx>> {
+        if let &ExprKind::TmpVar(var) = expr.kind() {
+            var.inc_used();
+        }
+
+        None
+    }
+}
+
+/// Replace a temporary variable that has been used only once with a definition.
+#[derive(Debug, Default)]
+pub struct ReplaceTmpVarUsedOnlyOnce {}
+
+impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for ReplaceTmpVarUsedOnlyOnce {
+    fn optimize_expr(
+        &self,
+        _ctx: &OptimizerPassContext<'a, 'tcx>,
+        expr: &'a Expr<'a, 'tcx>,
+    ) -> Option<&'a Expr<'a, 'tcx>> {
+        if let &ExprKind::TmpVar(var) = expr.kind() {
+            if !var.is_mutable() && var.used() == 1 {
+                if let Some(value) = var.value() {
+                    if !value.has_side_effect() {
+                        // This temporary variable is used only once, so it could be
+                        // replaced with the expression.
+                        var.dcr_used();
+                        return Some(value);
                     }
                 }
             }
