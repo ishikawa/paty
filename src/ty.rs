@@ -134,6 +134,14 @@ impl<'tcx> Type<'tcx> {
         }
     }
 
+    pub fn tuple_ty(&self) -> Option<&[&Type<'tcx>]> {
+        if let Type::Tuple(fs) = self {
+            Some(fs)
+        } else {
+            None
+        }
+    }
+
     pub fn struct_ty(&self) -> Option<&StructTy<'tcx>> {
         if let Type::Struct(struct_ty) = self {
             Some(struct_ty)

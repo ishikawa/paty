@@ -887,7 +887,14 @@ show_option(Option { name: "a", value: true })
 show_option(Option { name: "b", value: false })
 show_option(Option { name: "c", value: "on" })
 show_option(Option { name: "d", value: "off" })'
-
+assert 'a = 102030
+b = true' '
+type Field = (string, int64 | boolean)
+def print_field(t: Field)
+  puts(t.0, "=", t.1)
+end
+print_field(("a", 102030))
+print_field(("b", true))'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

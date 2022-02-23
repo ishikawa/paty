@@ -442,8 +442,21 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         Self::new(kind, tcx.int64())
     }
     pub fn get_union_tag(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
+        assert!(matches!(operand.ty(), Type::Union(_)));
         let kind = ExprKind::UnionTag(inc_used(operand));
         Self::new(kind, tcx.int64())
+    }
+    pub fn index_access(
+        _tcx: TypeContext<'tcx>,
+        operand: &'a Expr<'a, 'tcx>,
+        index: usize,
+    ) -> Self {
+        let tuple_ty = operand.ty().tuple_ty().expect("operand must be a tuple");
+        let kind = ExprKind::IndexAccess {
+            operand: inc_used(operand),
+            index,
+        };
+        Self::new(kind, tuple_ty[index])
     }
 
     pub fn new(kind: ExprKind<'a, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
@@ -991,18 +1004,20 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 // Add tuple type to declaration types, because we have to
                 // declare tuple type as a struct type in C.
                 // However, the Zero-sized struct should not have a definition.
-                let tuple_ty = expr.expect_ty();
-                program.add_decl_type(tuple_ty);
+                let expr_ty = expr.expect_ty().bottom_ty();
+                program.add_decl_type(expr_ty);
 
+                let tuple_fs = expr_ty.tuple_ty().unwrap();
                 let mut values = vec![];
 
-                for sub in sub_exprs {
+                for (sub, fty) in sub_exprs.iter().zip(tuple_fs) {
                     let value = self.build_expr(sub, program, stmts);
+                    let value = self.promote_to(value, fty);
                     values.push(inc_used(value));
                 }
 
                 let kind = ExprKind::Tuple(values);
-                self.push_expr_kind(kind, tuple_ty, stmts)
+                self.push_expr_kind(kind, expr_ty, stmts)
             }
             syntax::ExprKind::Struct(struct_value) => {
                 let expr_ty = expr.expect_ty().bottom_ty();
@@ -1323,6 +1338,18 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     "no matched member type for union {} with operand: {}",
                     expected_ty, operand_ty
                 );
+            }
+            (Type::Tuple(_), Type::Tuple(fs2)) => {
+                let m = (fs2)
+                    .iter()
+                    .enumerate()
+                    .map(|(i, fty)| {
+                        let expr = Expr::index_access(self.tcx, operand, i);
+                        self.promote_to(self.expr_arena.alloc(expr), fty)
+                    })
+                    .collect();
+                let value = Expr::new(ExprKind::Tuple(m), expected_ty);
+                self.expr_arena.alloc(value)
             }
             _ => operand,
         }
