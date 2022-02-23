@@ -1,10 +1,9 @@
 //! C code generator
-use std::collections::HashSet;
-
-use super::ir::{
+use crate::ir::inst::{
     CallingConvention, Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar,
 };
 use crate::ty::{FunctionSignature, Type};
+use std::collections::HashSet;
 
 #[derive(Debug)]
 pub struct Emitter {}

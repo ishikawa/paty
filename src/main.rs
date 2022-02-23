@@ -1,4 +1,5 @@
 use paty::gen;
+use paty::ir;
 use paty::sem;
 use paty::syntax;
 use paty::ty::TypeContext;
@@ -67,14 +68,14 @@ fn main() {
         let tmp_var_arena = Arena::new();
 
         let mut builder =
-            gen::ir::Builder::new(tcx, &ir_expr_arena, &ir_stmt_arena, &tmp_var_arena);
+            ir::builder::Builder::new(tcx, &ir_expr_arena, &ir_stmt_arena, &tmp_var_arena);
         let mut program = builder.build(&body);
-        //eprintln!("---\n{}", program);
+        //eprintln!("--- (not optimized)\n{}", program);
 
         // post process
-        let mut optimizer = gen::ir::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
+        let mut optimizer = ir::optimizer::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
         optimizer.optimize(&mut program);
-        //eprintln!("---\n{}", program);
+        //eprintln!("--- (optimized)\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
         let code = emitter.emit(&program);
