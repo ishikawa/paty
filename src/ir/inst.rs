@@ -181,15 +181,19 @@ pub struct TmpVar<'a, 'tcx> {
     ty: &'tcx Type<'tcx>,
     used: Cell<usize>,
     immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
+
+    // `true` if this temporary variable can be updated.
+    mutable: bool,
 }
 
 impl<'a, 'tcx> TmpVar<'a, 'tcx> {
-    pub fn new(index: usize, ty: &'tcx Type<'tcx>) -> Self {
+    pub fn new(index: usize, ty: &'tcx Type<'tcx>, mutable: bool) -> Self {
         Self {
             index,
             ty,
             used: Cell::new(0),
             immediate: Cell::new(None),
+            mutable,
         }
     }
 
@@ -199,6 +203,10 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
+    }
+
+    pub fn is_mutable(&self) -> bool {
+        self.mutable
     }
 
     pub fn used(&self) -> usize {
@@ -243,24 +251,17 @@ impl fmt::Display for TmpVar<'_, '_> {
 pub struct TmpVarDef<'a, 'tcx> {
     var: &'a TmpVar<'a, 'tcx>,
     init: &'a Expr<'a, 'tcx>,
-    // `true` if this variable can be updated.
-    assignable: bool,
 }
 
 impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
-    pub fn new(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>, assignable: bool) -> Self {
-        Self {
-            var,
-            init,
-            assignable,
-        }
+    pub fn new(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self { var, init }
     }
 
     pub fn with_init(&self, init: &'a Expr<'a, 'tcx>) -> Self {
         Self {
             var: self.var,
             init,
-            assignable: self.assignable,
         }
     }
 
@@ -271,21 +272,12 @@ impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
     pub fn init(&self) -> &'a Expr<'a, 'tcx> {
         self.init
     }
-
-    pub fn is_assignable(&self) -> bool {
-        self.assignable
-    }
 }
 
 impl fmt::Display for TmpVarDef<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "t{}", self.var.index)?;
-        write!(f, "\t(")?;
-        write!(f, "used: {}", self.var.used.get())?;
-        if self.assignable {
-            write!(f, ", assignable")?;
-        }
-        write!(f, ") ")?;
+        write!(f, "\t(used: {})", self.var.used.get())?;
         write!(f, "= {}", self.init,)
     }
 }
@@ -371,11 +363,7 @@ pub enum Stmt<'a, 'tcx> {
 
 impl<'a, 'tcx> Stmt<'a, 'tcx> {
     pub fn tmp_var_def(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>) -> Self {
-        Self::TmpVarDef(TmpVarDef::new(var, init, false))
-    }
-
-    pub fn assignable_tmp_var_def(var: &'a TmpVar<'a, 'tcx>, init: &'a Expr<'a, 'tcx>) -> Self {
-        Self::TmpVarDef(TmpVarDef::new(var, init, true))
+        Self::TmpVarDef(TmpVarDef::new(var, init))
     }
 
     pub fn phi(var: &'a TmpVar<'a, 'tcx>, value: &'a Expr<'a, 'tcx>) -> Self {

@@ -498,7 +498,7 @@ impl<'a, 'tcx> EliminateDeadStmts {
     ) -> Option<&'a Stmt<'a, 'tcx>> {
         match stmt {
             Stmt::TmpVarDef(def) => {
-                if def.is_assignable() {
+                if def.var().is_mutable() {
                     // We can remove a definition of a temporary variable which is assigned
                     // but never referred. To do this, however, we have to remove the assignment
                     // expression.

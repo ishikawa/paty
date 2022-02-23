@@ -74,7 +74,14 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     fn next_temp_var(&mut self, ty: &'tcx Type<'tcx>) -> &'a TmpVar<'a, 'tcx> {
         let t = self.tmp_var_index;
         self.tmp_var_index += 1;
-        self.tmp_var_arena.alloc(TmpVar::new(t, ty))
+        self.tmp_var_arena.alloc(TmpVar::new(t, ty, false))
+    }
+
+    fn next_control_flow_var(&mut self) -> &'a TmpVar<'a, 'tcx> {
+        let t = self.tmp_var_index;
+        self.tmp_var_index += 1;
+        self.tmp_var_arena
+            .alloc(TmpVar::new(t, self.tcx.boolean(), true))
     }
 
     fn push_expr(
@@ -907,8 +914,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 sub_pats.iter().fold(None, |cond, sub_pat| {
                     // control flow variable
-                    let cfv = self.next_temp_var(bool_ty);
-                    let stmt = Stmt::assignable_tmp_var_def(cfv, self.bool(false));
+                    let cfv = self.next_control_flow_var();
+                    let stmt = Stmt::tmp_var_def(cfv, self.bool(false));
                     outer_stmts.push(self.stmt_arena.alloc(stmt));
 
                     let mut inner_stmts = vec![];
