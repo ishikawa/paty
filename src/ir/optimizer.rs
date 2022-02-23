@@ -472,6 +472,27 @@ pub trait ExprOptimizerPass<'a, 'tcx> {
     ) -> Option<&'a Expr<'a, 'tcx>>;
 }
 
+/// Updates the initial value of all (immutable) temporary variables.
+#[derive(Debug, Default)]
+pub struct UpdateTmpVarValue {}
+
+impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for UpdateTmpVarValue {
+    fn optimize_stmt(
+        &self,
+        _ctx: &OptimizerPassContext<'a, 'tcx>,
+        stmt: &'a Stmt<'a, 'tcx>,
+    ) -> Option<&'a Stmt<'a, 'tcx>> {
+        if let Stmt::TmpVarDef(def) = stmt {
+            if !def.var().is_mutable() {
+                def.var().set_value(def.init());
+            }
+        }
+
+        Some(stmt)
+    }
+}
+
+/// Eliminates dead code
 #[derive(Debug, Default)]
 pub struct EliminateDeadStmts {}
 
@@ -486,10 +507,6 @@ impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for EliminateDeadStmts {
 }
 
 impl<'a, 'tcx> EliminateDeadStmts {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Returns `None` if pruned
     fn eliminate_dead_stmt(
         &self,
@@ -584,12 +601,6 @@ impl<'a, 'tcx> FunctionOptimizerPass<'a, 'tcx> for ConcatAdjacentPrintf {
     }
 }
 
-impl<'a, 'tcx> ConcatAdjacentPrintf {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// Replace an index access instruction with its tuple value if possible.
 #[derive(Debug, Default)]
 pub struct OptimizeIndexAccess {}
@@ -600,18 +611,22 @@ impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for OptimizeIndexAccess {
         _ctx: &OptimizerPassContext<'a, 'tcx>,
         expr: &'a Expr<'a, 'tcx>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
-        if let ExprKind::IndexAccess { operand, .. } = expr.kind() {
-            if let ExprKind::TmpVar(_) = operand.kind() {
-                //eprintln!("Found = {}", expr);
+        if let &ExprKind::IndexAccess { operand, index } = expr.kind() {
+            if let ExprKind::TmpVar(t) = operand.kind() {
+                if let Some(v) = t.value() {
+                    if let ExprKind::Tuple(fs) = v.kind() {
+                        let fv = fs[index];
+                        if fv.can_be_immediate() {
+                            // Replace `t.N` access with direct tuple field.
+                            //eprintln!("Found = {} - {}", expr, fs[index]);
+                            t.dcr_used();
+                            return Some(fv);
+                        }
+                    }
+                }
             }
         }
 
         None
-    }
-}
-
-impl<'a, 'tcx> OptimizeIndexAccess {
-    pub fn new() -> Self {
-        Self::default()
     }
 }

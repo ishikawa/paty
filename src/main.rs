@@ -71,16 +71,19 @@ fn main() {
         let mut builder =
             ir::builder::Builder::new(tcx, &ir_expr_arena, &ir_stmt_arena, &tmp_var_arena);
         let mut program = builder.build(&body);
-        //eprintln!("--- (not optimized)\n{}", program);
+        eprintln!("--- (not optimized)\n{}", program);
 
         // post process
         let optimizer = optimizer::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
 
-        let pass = optimizer::EliminateDeadStmts::new();
+        let pass = optimizer::EliminateDeadStmts::default();
         optimizer.run_stmt_pass(&pass, &mut program);
-        let pass = optimizer::OptimizeIndexAccess::new();
+        let pass = optimizer::UpdateTmpVarValue::default();
+        //eprintln!("--- (optimized)\n{}", program);
+        optimizer.run_stmt_pass(&pass, &mut program);
+        let pass = optimizer::OptimizeIndexAccess::default();
         optimizer.run_expr_stmt_pass(&pass, &mut program);
-        let pass = optimizer::ConcatAdjacentPrintf::new();
+        let pass = optimizer::ConcatAdjacentPrintf::default();
         optimizer.run_function_pass(&pass, &mut program);
         //eprintln!("--- (optimized)\n{}", program);
 

@@ -180,9 +180,12 @@ pub struct TmpVar<'a, 'tcx> {
     index: usize,
     ty: &'tcx Type<'tcx>,
     used: Cell<usize>,
+
+    /// The initial value for immutable variable. `None` for mutable variable.
+    value: Cell<Option<&'a Expr<'a, 'tcx>>>,
     immediate: Cell<Option<&'a Expr<'a, 'tcx>>>,
 
-    // `true` if this temporary variable can be updated.
+    /// `true` if this temporary variable can be updated.
     mutable: bool,
 }
 
@@ -192,6 +195,7 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
             index,
             ty,
             used: Cell::new(0),
+            value: Cell::new(None),
             immediate: Cell::new(None),
             mutable,
         }
@@ -211,6 +215,14 @@ impl<'a, 'tcx> TmpVar<'a, 'tcx> {
 
     pub fn used(&self) -> usize {
         self.used.get()
+    }
+
+    pub fn value(&self) -> Option<&'a Expr<'a, 'tcx>> {
+        self.value.get()
+    }
+
+    pub fn set_value(&self, value: &'a Expr<'a, 'tcx>) {
+        self.value.set(Some(value));
     }
 
     pub fn immediate(&self) -> Option<&'a Expr<'a, 'tcx>> {
@@ -259,10 +271,7 @@ impl<'a, 'tcx> TmpVarDef<'a, 'tcx> {
     }
 
     pub fn with_init(&self, init: &'a Expr<'a, 'tcx>) -> Self {
-        Self {
-            var: self.var,
-            init,
-        }
+        Self::new(self.var, init)
     }
 
     pub fn var(&self) -> &'a TmpVar<'a, 'tcx> {
@@ -278,7 +287,7 @@ impl fmt::Display for TmpVarDef<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "t{}", self.var.index)?;
         write!(f, "\t(used: {})", self.var.used.get())?;
-        write!(f, "= {}", self.init,)
+        write!(f, " = {}", self.init,)
     }
 }
 
