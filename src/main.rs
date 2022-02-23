@@ -76,7 +76,7 @@ fn main() {
         // post process
         let optimizer = optimizer::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
 
-        let pass = optimizer::PruneUnusedTempVars::new();
+        let pass = optimizer::EliminateDeadStmts::new();
         optimizer.run_stmt_pass(&pass, &mut program);
         let pass = optimizer::OptimizeIndexAccess::new();
         optimizer.run_expr_stmt_pass(&pass, &mut program);

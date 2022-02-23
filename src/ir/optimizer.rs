@@ -40,15 +40,23 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
         program: &mut Program<'a, 'tcx>,
     ) {
         for fun in program.functions_mut() {
-            let mut body = vec![];
-
-            for stmt in &fun.body {
-                if let Some(stmt) = pass.optimize_stmt(&self.ctx, stmt) {
-                    body.push(stmt);
-                }
-            }
-            fun.body = body;
+            fun.body = self._run_stmt_pass_with_stmts(pass, &fun.body);
         }
+    }
+
+    fn _run_stmt_pass_with_stmts(
+        &self,
+        pass: &dyn StmtOptimizerPass<'a, 'tcx>,
+        stmts: &[&'a Stmt<'a, 'tcx>],
+    ) -> Vec<&'a Stmt<'a, 'tcx>> {
+        let mut body = Vec::with_capacity(stmts.len());
+
+        for stmt in stmts {
+            if let Some(stmt) = pass.optimize_stmt(&self.ctx, stmt) {
+                body.push(stmt);
+            }
+        }
+        body
     }
 
     pub fn run_expr_stmt_pass(
@@ -441,25 +449,25 @@ pub trait ExprOptimizerPass<'a, 'tcx> {
 }
 
 #[derive(Debug, Default)]
-pub struct PruneUnusedTempVars {}
+pub struct EliminateDeadStmts {}
 
-impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for PruneUnusedTempVars {
+impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for EliminateDeadStmts {
     fn optimize_stmt(
         &self,
         ctx: &OptimizerPassContext<'a, 'tcx>,
         stmt: &'a Stmt<'a, 'tcx>,
     ) -> Option<&'a Stmt<'a, 'tcx>> {
-        self.prune_unused_stmt(ctx, stmt)
+        self.eliminate_dead_stmt(ctx, stmt)
     }
 }
 
-impl<'a, 'tcx> PruneUnusedTempVars {
+impl<'a, 'tcx> EliminateDeadStmts {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Returns `None` if pruned
-    fn prune_unused_stmt(
+    fn eliminate_dead_stmt(
         &self,
         ctx: &OptimizerPassContext<'a, 'tcx>,
         stmt: &'a Stmt<'a, 'tcx>,
@@ -495,7 +503,7 @@ impl<'a, 'tcx> PruneUnusedTempVars {
                 for branch in &cond.branches {
                     let mut body = vec![];
                     for stmt in &branch.body {
-                        if let Some(stmt) = self.prune_unused_stmt(ctx, stmt) {
+                        if let Some(stmt) = self.eliminate_dead_stmt(ctx, stmt) {
                             body.push(stmt);
                         }
                     }
