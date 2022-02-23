@@ -1,5 +1,6 @@
 use paty::gen;
 use paty::ir;
+use paty::ir::optimizer;
 use paty::sem;
 use paty::syntax;
 use paty::ty::TypeContext;
@@ -73,8 +74,12 @@ fn main() {
         //eprintln!("--- (not optimized)\n{}", program);
 
         // post process
-        let mut optimizer = ir::optimizer::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
-        optimizer.optimize(&mut program);
+        let optimizer = optimizer::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
+        let pass = optimizer::PruneUnusedTempVars::new();
+        optimizer.run_stmt_pass(&pass, &mut program);
+        let pass = optimizer::ConcatAdjacentPrintf::new();
+        optimizer.run_function_pass(&pass, &mut program);
+
         //eprintln!("--- (optimized)\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
