@@ -333,6 +333,13 @@ impl<'a, 'tcx> VarDef<'a, 'tcx> {
         Self { name, init }
     }
 
+    pub fn with_init(&self, init: &'a Expr<'a, 'tcx>) -> Self {
+        Self {
+            name: self.name.clone(),
+            init,
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
