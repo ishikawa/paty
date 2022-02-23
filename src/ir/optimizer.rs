@@ -52,9 +52,33 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
         let mut body = Vec::with_capacity(stmts.len());
 
         for stmt in stmts {
-            if let Some(stmt) = pass.optimize_stmt(&self.ctx, stmt) {
-                body.push(stmt);
-            }
+            let mut new_stmt = if let Some(stmt) = pass.optimize_stmt(&self.ctx, stmt) {
+                stmt
+            } else {
+                continue;
+            };
+
+            // sub statements
+            new_stmt = if let Stmt::Cond(cond) = new_stmt {
+                let mut branches = vec![];
+                for branch in &cond.branches {
+                    let body = self._run_stmt_pass_with_stmts(pass, &branch.body);
+                    branches.push(Branch {
+                        body,
+                        condition: branch.condition,
+                    })
+                }
+
+                let cond = Cond {
+                    branches,
+                    var: cond.var,
+                };
+                self.ctx.stmt_arena.alloc(Stmt::Cond(cond))
+            } else {
+                new_stmt
+            };
+
+            body.push(new_stmt);
         }
         body
     }
@@ -469,7 +493,7 @@ impl<'a, 'tcx> EliminateDeadStmts {
     /// Returns `None` if pruned
     fn eliminate_dead_stmt(
         &self,
-        ctx: &OptimizerPassContext<'a, 'tcx>,
+        _ctx: &OptimizerPassContext<'a, 'tcx>,
         stmt: &'a Stmt<'a, 'tcx>,
     ) -> Option<&'a Stmt<'a, 'tcx>> {
         match stmt {
@@ -497,27 +521,6 @@ impl<'a, 'tcx> EliminateDeadStmts {
                         return None;
                     }
                 }
-            }
-            Stmt::Cond(cond) => {
-                let mut branches = vec![];
-                for branch in &cond.branches {
-                    let mut body = vec![];
-                    for stmt in &branch.body {
-                        if let Some(stmt) = self.eliminate_dead_stmt(ctx, stmt) {
-                            body.push(stmt);
-                        }
-                    }
-                    branches.push(Branch {
-                        body,
-                        condition: branch.condition,
-                    })
-                }
-
-                let cond = Cond {
-                    branches,
-                    var: cond.var,
-                };
-                return Some(ctx.stmt_arena.alloc(Stmt::Cond(cond)));
             }
             _ => {}
         }
