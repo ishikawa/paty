@@ -882,6 +882,15 @@ x = 1234567
 printID(x)
 y = "abcdefg"
 printID(y)'
+assert 'a = 102030
+b = true' '
+type Field = (string, int64 | boolean)
+def print_field(t: Field)
+  puts(t.0, "=", t.1)
+end
+print_field(("a", 102030))
+t = ("b", true)
+print_field(t)'
 assert 'a = true
 b = false
 c = on
@@ -896,15 +905,23 @@ end
 show_option(Option { name: "a", value: true })
 show_option(Option { name: "b", value: false })
 show_option(Option { name: "c", value: "on" })
-show_option(Option { name: "d", value: "off" })'
-assert 'a = 102030
-b = true' '
-type Field = (string, int64 | boolean)
-def print_field(t: Field)
-  puts(t.0, "=", t.1)
+opt = Option { name: "d", value: "off" }
+show_option(opt)'
+assert 'a = true
+b = false
+c = on
+d = off' '
+def show_option(opt: { name: string, value: boolean | "on" | "off" })
+  puts(opt.name, "=", opt.value)
 end
-print_field(("a", 102030))
-print_field(("b", true))'
+show_option({ name: "a", value: true })
+fv = { value: false }
+show_option({ name: "b", ...fv })
+opt1 = { name: "c", value: "on" }
+show_option(opt1)
+off = { value: "off" }
+opt2 = { name: "d", ...off }
+show_option(opt2)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

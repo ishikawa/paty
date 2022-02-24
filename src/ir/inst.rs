@@ -477,6 +477,17 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         let kind = ExprKind::IndexAccess { operand, index };
         Self::new(kind, tuple_ty[index])
     }
+    pub fn field_access(_tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>, name: &str) -> Self {
+        let struct_ty = operand.ty().struct_ty().expect("operand must be a struct");
+        let field = struct_ty
+            .get_field(name)
+            .unwrap_or_else(|| panic!("field {} not found", name));
+        let kind = ExprKind::FieldAccess {
+            operand,
+            name: name.to_string(),
+        };
+        Self::new(kind, field.ty())
+    }
 
     pub fn new(kind: ExprKind<'a, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         Self { kind, ty }

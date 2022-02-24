@@ -34,6 +34,7 @@ assert() {
 
 # undefined variable
 assert 'cannot find variable `x` in scope' "x"
+assert 'cannot find variable `x` in scope' "a = x"
 # undefined function
 assert 'cannot find function `foo` in scope' "foo()"
 # unreachable pattern

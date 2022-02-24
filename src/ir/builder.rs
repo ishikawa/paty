@@ -597,8 +597,27 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     expected_ty, operand_ty
                 );
             }
-            (Type::Tuple(_), Type::Tuple(fs2)) => {
-                let m = (fs2)
+            // Unnamed types don't have a definition, so it must be promoted here.
+            (Type::Struct(_), Type::Struct(struct_ty)) => {
+                if struct_ty.name().is_some() {
+                    return operand;
+                }
+
+                let promoted_fields = struct_ty
+                    .fields()
+                    .iter()
+                    .map(|f| {
+                        let expr = Expr::field_access(self.tcx, operand, f.name());
+                        let value = self.promote_to(self.expr_arena.alloc(expr), f.ty(), stmts);
+
+                        (f.name().to_string(), value)
+                    })
+                    .collect();
+
+                self.push_expr_kind(ExprKind::StructValue(promoted_fields), expected_ty, stmts)
+            }
+            (Type::Tuple(_), Type::Tuple(fs)) => {
+                let m = fs
                     .iter()
                     .enumerate()
                     .map(|(i, fty)| {

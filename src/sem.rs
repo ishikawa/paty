@@ -398,6 +398,9 @@ fn analyze_stmt<'nd, 'tcx>(
     match stmt.kind() {
         &syntax::StmtKind::Let { pattern, rhs } => {
             analyze_expr(tcx, rhs, vars, functions, named_types, errors);
+            if !errors.is_empty() {
+                return;
+            }
 
             if let Some(pattern_ty) = pattern.ty() {
                 // the pattern has an explicit type annotation.

@@ -590,8 +590,8 @@ impl<'ir, 'tcx> FunctionOptimizerPass<'ir, 'tcx> for ReplaceRedundantTmpVars {
         _ctx: &OptimizerPassContext<'ir, 'tcx>,
         expr: &'ir Expr<'ir, 'tcx>,
     ) -> Option<&'ir Expr<'ir, 'tcx>> {
-        match *expr.kind() {
-            ExprKind::IndexAccess { operand, index } => {
+        match expr.kind() {
+            &ExprKind::IndexAccess { operand, index } => {
                 if let ExprKind::TmpVar(t) = operand.kind() {
                     if let Some(v) = t.value() {
                         if let ExprKind::Tuple(fs) = v.kind() {
@@ -600,6 +600,21 @@ impl<'ir, 'tcx> FunctionOptimizerPass<'ir, 'tcx> for ReplaceRedundantTmpVars {
                                 // Replace `t.N` access with direct tuple field.
                                 t.dcr_used();
                                 return Some(fv);
+                            }
+                        }
+                    }
+                }
+            }
+            ExprKind::FieldAccess { operand, name } => {
+                if let ExprKind::TmpVar(t) = operand.kind() {
+                    if let Some(value) = t.value() {
+                        if let ExprKind::StructValue(values) = value.kind() {
+                            if let Some((_, v)) = values.iter().find(|(k, _)| k == name) {
+                                if v.can_be_immediate() {
+                                    // Replace `t.N` access with direct tuple field.
+                                    t.dcr_used();
+                                    return Some(v);
+                                }
                             }
                         }
                     }
