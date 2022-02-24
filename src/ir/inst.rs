@@ -709,7 +709,7 @@ impl fmt::Display for ExprKind<'_, '_> {
             }
             ExprKind::Int64(i) => i.fmt(f),
             ExprKind::Bool(b) => b.fmt(f),
-            ExprKind::Str(s) => s.escape_default().fmt(f),
+            ExprKind::Str(s) => write!(f, "\"{}\"", s.escape_default()),
             ExprKind::Tuple(fs) => {
                 write!(f, "(")?;
                 let mut it = fs.iter().peekable();

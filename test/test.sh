@@ -872,6 +872,16 @@ def printID(id: ID)
 end
 printID(1234567)
 printID("abcdefg")'
+assert '1234567
+abcdefg' '
+type ID = string | int64
+def printID(id: ID)
+  puts(id)
+end
+x = 1234567
+printID(x)
+y = "abcdefg"
+printID(y)'
 assert 'a = true
 b = false
 c = on
