@@ -2,15 +2,15 @@ use super::inst::{Branch, Cond, Expr, ExprKind, FormatSpec, Function, Phi, Progr
 use crate::ty::TypeContext;
 use typed_arena::Arena;
 
-pub struct Optimizer<'a, 'tcx> {
-    ctx: OptimizerPassContext<'a, 'tcx>,
+pub struct Optimizer<'ir, 'tcx> {
+    ctx: OptimizerPassContext<'ir, 'tcx>,
 }
 
-impl<'a, 'tcx> Optimizer<'a, 'tcx> {
+impl<'ir, 'tcx> Optimizer<'ir, 'tcx> {
     pub fn new(
         tcx: TypeContext<'tcx>,
-        expr_arena: &'a Arena<Expr<'a, 'tcx>>,
-        stmt_arena: &'a Arena<Stmt<'a, 'tcx>>,
+        expr_arena: &'ir Arena<Expr<'ir, 'tcx>>,
+        stmt_arena: &'ir Arena<Stmt<'ir, 'tcx>>,
     ) -> Self {
         let ctx = OptimizerPassContext {
             tcx,
@@ -20,14 +20,14 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
         Self { ctx }
     }
 
-    pub fn run_pass(&self, pass: &dyn OptimizerPass<'a, 'tcx>, program: &mut Program<'a, 'tcx>) {
+    pub fn run_pass(&self, pass: &dyn OptimizerPass<'ir, 'tcx>, program: &mut Program<'ir, 'tcx>) {
         pass.optimize(&self.ctx, program)
     }
 
     pub fn run_function_pass(
         &self,
-        pass: &dyn FunctionOptimizerPass<'a, 'tcx>,
-        program: &mut Program<'a, 'tcx>,
+        pass: &dyn FunctionOptimizerPass<'ir, 'tcx>,
+        program: &mut Program<'ir, 'tcx>,
     ) {
         for fun in program.functions_mut() {
             pass.optimize_function(&self.ctx, fun);
@@ -37,26 +37,18 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
     /// Returns `true` if optimized code is changed.
     pub fn run_stmt_pass(
         &self,
-        pass: &dyn StmtOptimizerPass<'a, 'tcx>,
-        program: &mut Program<'a, 'tcx>,
+        pass: &dyn StmtOptimizerPass<'ir, 'tcx>,
+        program: &mut Program<'ir, 'tcx>,
     ) -> bool {
-        let mut modified = false;
-
-        for fun in program.functions_mut() {
-            if let Some(body) = self._run_stmt_pass_with_stmts(pass, &fun.body) {
-                fun.body = body;
-                modified = true;
-            }
-        }
-
-        modified
+        let runner = OptimizerStmtOptimizerPassRunner { pass };
+        self.run_block_pass(&runner, program)
     }
 
     /// Returns `true` if optimized code is changed.
     pub fn run_block_pass(
         &self,
-        pass: &dyn BlockOptimizerPass<'a, 'tcx>,
-        program: &mut Program<'a, 'tcx>,
+        pass: &dyn BlockOptimizerPass<'ir, 'tcx>,
+        program: &mut Program<'ir, 'tcx>,
     ) -> bool {
         let mut modified = false;
 
@@ -73,8 +65,8 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
     /// Returns `true` if optimized code is changed.
     pub fn run_expr_stmt_pass(
         &self,
-        pass: &dyn ExprOptimizerPass<'a, 'tcx>,
-        program: &mut Program<'a, 'tcx>,
+        pass: &dyn ExprOptimizerPass<'ir, 'tcx>,
+        program: &mut Program<'ir, 'tcx>,
     ) -> bool {
         let mut modified = false;
 
@@ -88,68 +80,11 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
         modified
     }
 
-    fn _run_stmt_pass_with_stmts(
-        &self,
-        pass: &dyn StmtOptimizerPass<'a, 'tcx>,
-        stmts: &[&'a Stmt<'a, 'tcx>],
-    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>> {
-        let mut body = Vec::with_capacity(stmts.len());
-        let mut modified = false;
-
-        for stmt in stmts {
-            let mut new_stmt = match pass.optimize_stmt(&self.ctx, stmt) {
-                StmtOptimizerPassResult::Eliminated => {
-                    modified = true;
-                    continue;
-                }
-                StmtOptimizerPassResult::Unmodified => stmt,
-                StmtOptimizerPassResult::Modified(stmt) => {
-                    modified = true;
-                    stmt
-                }
-            };
-
-            // sub statements
-            new_stmt = if let Stmt::Cond(cond) = new_stmt {
-                let mut branches = vec![];
-                for branch in &cond.branches {
-                    let body =
-                        if let Some(body) = self._run_stmt_pass_with_stmts(pass, &branch.body) {
-                            modified = true;
-                            body
-                        } else {
-                            branch.body.clone()
-                        };
-                    branches.push(Branch {
-                        body,
-                        condition: branch.condition,
-                    })
-                }
-
-                let cond = Cond {
-                    branches,
-                    var: cond.var,
-                };
-                self.ctx.stmt_arena.alloc(Stmt::Cond(cond))
-            } else {
-                new_stmt
-            };
-
-            body.push(new_stmt);
-        }
-
-        if modified {
-            Some(body)
-        } else {
-            None
-        }
-    }
-
     fn _run_block_pass_with_stmts(
         &self,
-        pass: &dyn BlockOptimizerPass<'a, 'tcx>,
-        stmts: &[&'a Stmt<'a, 'tcx>],
-    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>> {
+        pass: &dyn BlockOptimizerPass<'ir, 'tcx>,
+        stmts: &[&'ir Stmt<'ir, 'tcx>],
+    ) -> Option<Vec<&'ir Stmt<'ir, 'tcx>>> {
         let mut modified = false;
 
         let mut block = if let Some(block) = pass.optimize_stmts(&self.ctx, stmts) {
@@ -191,18 +126,14 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
             }
         }
 
-        if modified {
-            Some(block)
-        } else {
-            None
-        }
+        modified.then(|| block)
     }
 
     fn _run_expr_pass_with_stmts(
         &self,
-        pass: &dyn ExprOptimizerPass<'a, 'tcx>,
-        stmts: &[&'a Stmt<'a, 'tcx>],
-    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>> {
+        pass: &dyn ExprOptimizerPass<'ir, 'tcx>,
+        stmts: &[&'ir Stmt<'ir, 'tcx>],
+    ) -> Option<Vec<&'ir Stmt<'ir, 'tcx>>> {
         let mut modified = false;
         let mut body = Vec::with_capacity(stmts.len());
 
@@ -224,9 +155,9 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
 
     fn _run_expr_pass_with_stmt(
         &self,
-        pass: &dyn ExprOptimizerPass<'a, 'tcx>,
-        stmt: &'a Stmt<'a, 'tcx>,
-    ) -> Option<&'a Stmt<'a, 'tcx>> {
+        pass: &dyn ExprOptimizerPass<'ir, 'tcx>,
+        stmt: &'ir Stmt<'ir, 'tcx>,
+    ) -> Option<&'ir Stmt<'ir, 'tcx>> {
         match stmt {
             Stmt::TmpVarDef(def) => {
                 if let Some(expr) = self._run_expr_pass_with_expr(pass, def.init()) {
@@ -293,9 +224,9 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
 
     fn _run_expr_pass_with_expr(
         &self,
-        pass: &dyn ExprOptimizerPass<'a, 'tcx>,
-        expr: &'a Expr<'a, 'tcx>,
-    ) -> Option<&'a Expr<'a, 'tcx>> {
+        pass: &dyn ExprOptimizerPass<'ir, 'tcx>,
+        expr: &'ir Expr<'ir, 'tcx>,
+    ) -> Option<&'ir Expr<'ir, 'tcx>> {
         if let Some(expr) = pass.optimize_expr(&self.ctx, expr) {
             // Don't optimize an expression recursively.
             return Some(expr);
@@ -311,9 +242,9 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
 
     fn _run_expr_pass_with_expr_kind(
         &self,
-        pass: &dyn ExprOptimizerPass<'a, 'tcx>,
-        kind: &ExprKind<'a, 'tcx>,
-    ) -> Option<ExprKind<'a, 'tcx>> {
+        pass: &dyn ExprOptimizerPass<'ir, 'tcx>,
+        kind: &ExprKind<'ir, 'tcx>,
+    ) -> Option<ExprKind<'ir, 'tcx>> {
         match kind {
             &ExprKind::Minus(operand) => {
                 if let Some(operand) = self._run_expr_pass_with_expr(pass, operand) {
@@ -568,64 +499,100 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
     }
 }
 
-pub struct OptimizerPassContext<'a, 'tcx> {
+// Optimizer internal
+struct OptimizerStmtOptimizerPassRunner<'a, 'ir, 'tcx> {
+    pass: &'a dyn StmtOptimizerPass<'ir, 'tcx>,
+}
+
+impl<'a, 'ir, 'tcx> BlockOptimizerPass<'ir, 'tcx>
+    for OptimizerStmtOptimizerPassRunner<'a, 'ir, 'tcx>
+{
+    fn optimize_stmts(
+        &self,
+        ctx: &OptimizerPassContext<'ir, 'tcx>,
+        stmts: &[&'ir Stmt<'ir, 'tcx>],
+    ) -> Option<Vec<&'ir Stmt<'ir, 'tcx>>> {
+        let mut body = Vec::with_capacity(stmts.len());
+        let mut modified = false;
+        for &stmt in stmts {
+            match self.pass.optimize_stmt(ctx, stmt) {
+                StmtOptimizerPassResult::Eliminated => {
+                    modified = true;
+                }
+                StmtOptimizerPassResult::Unmodified => body.push(stmt),
+                StmtOptimizerPassResult::Modified(stmt) => {
+                    modified = true;
+                    body.push(stmt);
+                }
+            };
+        }
+
+        modified.then(|| body)
+    }
+}
+
+pub struct OptimizerPassContext<'ir, 'tcx> {
     pub tcx: TypeContext<'tcx>,
-    pub expr_arena: &'a Arena<Expr<'a, 'tcx>>,
-    pub stmt_arena: &'a Arena<Stmt<'a, 'tcx>>,
+    pub expr_arena: &'ir Arena<Expr<'ir, 'tcx>>,
+    pub stmt_arena: &'ir Arena<Stmt<'ir, 'tcx>>,
 }
 
-pub trait OptimizerPass<'a, 'tcx> {
-    fn optimize(&self, ctx: &OptimizerPassContext<'a, 'tcx>, program: &mut Program<'a, 'tcx>);
+pub trait OptimizerPass<'ir, 'tcx> {
+    fn optimize(&self, ctx: &OptimizerPassContext<'ir, 'tcx>, program: &mut Program<'ir, 'tcx>);
 }
 
-pub trait FunctionOptimizerPass<'a, 'tcx> {
-    fn optimize_function(&self, ctx: &OptimizerPassContext<'a, 'tcx>, fun: &mut Function<'a, 'tcx>);
+pub trait FunctionOptimizerPass<'ir, 'tcx> {
+    fn optimize_function(
+        &self,
+        ctx: &OptimizerPassContext<'ir, 'tcx>,
+        fun: &mut Function<'ir, 'tcx>,
+    );
 }
 
-pub enum StmtOptimizerPassResult<'a, 'tcx> {
+pub enum StmtOptimizerPassResult<'ir, 'tcx> {
     Unmodified,
     /// A statement should be replaced with a new one.
-    Modified(&'a Stmt<'a, 'tcx>),
+    Modified(&'ir Stmt<'ir, 'tcx>),
     /// A statement should be remove from the function body.
     Eliminated,
 }
 
-pub trait StmtOptimizerPass<'a, 'tcx> {
+pub trait StmtOptimizerPass<'ir, 'tcx> {
     fn optimize_stmt(
         &self,
-        ctx: &OptimizerPassContext<'a, 'tcx>,
-        stmt: &'a Stmt<'a, 'tcx>,
-    ) -> StmtOptimizerPassResult<'a, 'tcx>;
+        ctx: &OptimizerPassContext<'ir, 'tcx>,
+        stmt: &'ir Stmt<'ir, 'tcx>,
+    ) -> StmtOptimizerPassResult<'ir, 'tcx>;
 }
 
-pub trait BlockOptimizerPass<'a, 'tcx> {
+pub trait BlockOptimizerPass<'ir, 'tcx> {
     /// Returns `None` if statements are not modified.
     fn optimize_stmts(
         &self,
-        ctx: &OptimizerPassContext<'a, 'tcx>,
-        stmts: &[&'a Stmt<'a, 'tcx>],
-    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>>;
+        ctx: &OptimizerPassContext<'ir, 'tcx>,
+        stmts: &[&'ir Stmt<'ir, 'tcx>],
+    ) -> Option<Vec<&'ir Stmt<'ir, 'tcx>>>;
 }
 
-pub trait ExprOptimizerPass<'a, 'tcx> {
+pub trait ExprOptimizerPass<'ir, 'tcx> {
     /// Returns `None` if the expression is not modified.
     fn optimize_expr(
         &self,
-        ctx: &OptimizerPassContext<'a, 'tcx>,
-        expr: &'a Expr<'a, 'tcx>,
-    ) -> Option<&'a Expr<'a, 'tcx>>;
+        ctx: &OptimizerPassContext<'ir, 'tcx>,
+        expr: &'ir Expr<'ir, 'tcx>,
+    ) -> Option<&'ir Expr<'ir, 'tcx>>;
 }
 
 /// Updates the initial value of all (immutable) temporary variables.
 #[derive(Debug, Default)]
 pub struct UpdateTmpVarValue {}
 
-impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for UpdateTmpVarValue {
+impl<'ir, 'tcx> StmtOptimizerPass<'ir, 'tcx> for UpdateTmpVarValue {
     fn optimize_stmt(
         &self,
-        _ctx: &OptimizerPassContext<'a, 'tcx>,
-        stmt: &'a Stmt<'a, 'tcx>,
-    ) -> StmtOptimizerPassResult<'a, 'tcx> {
+        _ctx: &OptimizerPassContext<'ir, 'tcx>,
+        stmt: &'ir Stmt<'ir, 'tcx>,
+    ) -> StmtOptimizerPassResult<'ir, 'tcx> {
         if let Stmt::TmpVarDef(def) = stmt {
             if !def.var().is_mutable() {
                 def.var().set_value(def.init());
@@ -640,12 +607,12 @@ impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for UpdateTmpVarValue {
 #[derive(Debug, Default)]
 pub struct EliminateDeadStmts {}
 
-impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for EliminateDeadStmts {
+impl<'ir, 'tcx> StmtOptimizerPass<'ir, 'tcx> for EliminateDeadStmts {
     fn optimize_stmt(
         &self,
-        _ctx: &OptimizerPassContext<'a, 'tcx>,
-        stmt: &'a Stmt<'a, 'tcx>,
-    ) -> StmtOptimizerPassResult<'a, 'tcx> {
+        _ctx: &OptimizerPassContext<'ir, 'tcx>,
+        stmt: &'ir Stmt<'ir, 'tcx>,
+    ) -> StmtOptimizerPassResult<'ir, 'tcx> {
         match stmt {
             Stmt::TmpVarDef(def) => {
                 if def.var().is_mutable() {
@@ -676,12 +643,12 @@ impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for EliminateDeadStmts {
 #[derive(Debug, Default)]
 pub struct ConcatAdjacentPrintf {}
 
-impl<'a, 'tcx> BlockOptimizerPass<'a, 'tcx> for ConcatAdjacentPrintf {
+impl<'ir, 'tcx> BlockOptimizerPass<'ir, 'tcx> for ConcatAdjacentPrintf {
     fn optimize_stmts(
         &self,
-        ctx: &OptimizerPassContext<'a, 'tcx>,
-        stmts: &[&'a Stmt<'a, 'tcx>],
-    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>> {
+        ctx: &OptimizerPassContext<'ir, 'tcx>,
+        stmts: &[&'ir Stmt<'ir, 'tcx>],
+    ) -> Option<Vec<&'ir Stmt<'ir, 'tcx>>> {
         // -- Peephole optimization.
         // Rewrite body
         let mut it = stmts.iter().peekable();
@@ -735,12 +702,12 @@ impl<'a, 'tcx> BlockOptimizerPass<'a, 'tcx> for ConcatAdjacentPrintf {
 #[derive(Debug, Default)]
 pub struct ReplaceRedundantTmpVars {}
 
-impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for ReplaceRedundantTmpVars {
+impl<'ir, 'tcx> ExprOptimizerPass<'ir, 'tcx> for ReplaceRedundantTmpVars {
     fn optimize_expr(
         &self,
-        _ctx: &OptimizerPassContext<'a, 'tcx>,
-        expr: &'a Expr<'a, 'tcx>,
-    ) -> Option<&'a Expr<'a, 'tcx>> {
+        _ctx: &OptimizerPassContext<'ir, 'tcx>,
+        expr: &'ir Expr<'ir, 'tcx>,
+    ) -> Option<&'ir Expr<'ir, 'tcx>> {
         match *expr.kind() {
             ExprKind::IndexAccess { operand, index } => {
                 if let ExprKind::TmpVar(t) = operand.kind() {
@@ -784,12 +751,12 @@ impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for ReplaceRedundantTmpVars {
 #[derive(Debug, Default)]
 pub struct ResetTmpVarUsed {}
 
-impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for ResetTmpVarUsed {
+impl<'ir, 'tcx> ExprOptimizerPass<'ir, 'tcx> for ResetTmpVarUsed {
     fn optimize_expr(
         &self,
-        _ctx: &OptimizerPassContext<'a, 'tcx>,
-        expr: &'a Expr<'a, 'tcx>,
-    ) -> Option<&'a Expr<'a, 'tcx>> {
+        _ctx: &OptimizerPassContext<'ir, 'tcx>,
+        expr: &'ir Expr<'ir, 'tcx>,
+    ) -> Option<&'ir Expr<'ir, 'tcx>> {
         if let &ExprKind::TmpVar(var) = expr.kind() {
             var.reset_used();
         }
@@ -798,12 +765,12 @@ impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for ResetTmpVarUsed {
     }
 }
 
-impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for ResetTmpVarUsed {
+impl<'ir, 'tcx> StmtOptimizerPass<'ir, 'tcx> for ResetTmpVarUsed {
     fn optimize_stmt(
         &self,
-        _ctx: &OptimizerPassContext<'a, 'tcx>,
-        stmt: &'a Stmt<'a, 'tcx>,
-    ) -> StmtOptimizerPassResult<'a, 'tcx> {
+        _ctx: &OptimizerPassContext<'ir, 'tcx>,
+        stmt: &'ir Stmt<'ir, 'tcx>,
+    ) -> StmtOptimizerPassResult<'ir, 'tcx> {
         match stmt {
             Stmt::TmpVarDef(def) => def.var().reset_used(),
             Stmt::Phi(phi) => phi.var().reset_used(),
@@ -817,12 +784,12 @@ impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for ResetTmpVarUsed {
 #[derive(Debug, Default)]
 pub struct MarkTmpVarUsed {}
 
-impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for MarkTmpVarUsed {
+impl<'ir, 'tcx> ExprOptimizerPass<'ir, 'tcx> for MarkTmpVarUsed {
     fn optimize_expr(
         &self,
-        _ctx: &OptimizerPassContext<'a, 'tcx>,
-        expr: &'a Expr<'a, 'tcx>,
-    ) -> Option<&'a Expr<'a, 'tcx>> {
+        _ctx: &OptimizerPassContext<'ir, 'tcx>,
+        expr: &'ir Expr<'ir, 'tcx>,
+    ) -> Option<&'ir Expr<'ir, 'tcx>> {
         if let &ExprKind::TmpVar(var) = expr.kind() {
             var.inc_used();
         }

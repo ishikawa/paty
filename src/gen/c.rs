@@ -378,7 +378,7 @@ impl<'a, 'tcx> Emitter {
             }
             ExprKind::CondAndAssign { cond, var } => {
                 code.push('(');
-                // TODO: Move to optimization pass
+                // TODO: Optimization: replace CondAndAssign with Expr if used == 0
                 if var.used() == 0 {
                     if let Some(cond) = cond {
                         self.emit_expr(cond, code);
