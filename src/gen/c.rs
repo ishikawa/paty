@@ -377,27 +377,23 @@ impl<'a, 'tcx> Emitter {
                 code.push(')');
             }
             ExprKind::CondAndAssign { cond, var } => {
-                let mut emitted = false;
-
                 code.push('(');
-                if let Some(cond) = cond {
-                    self.emit_expr(cond, code);
-                    emitted = true;
-                }
-
-                if var.used() > 0 {
-                    if emitted {
+                // TODO: Move to optimization pass
+                if var.used() == 0 {
+                    if let Some(cond) = cond {
+                        self.emit_expr(cond, code);
+                    } else {
+                        code.push_str("true");
+                    }
+                } else {
+                    if let Some(cond) = cond {
+                        self.emit_expr(cond, code);
                         code.push_str(" && ");
                     }
                     code.push('(');
                     code.push_str(&tmp_var(var));
                     code.push_str(" = true");
                     code.push(')');
-                    emitted = true;
-                }
-
-                if !emitted {
-                    code.push_str("true");
                 }
                 code.push(')');
             }
