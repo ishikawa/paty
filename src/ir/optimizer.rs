@@ -642,11 +642,11 @@ impl<'a, 'tcx> FunctionOptimizerPass<'a, 'tcx> for ConcatAdjacentPrintf {
     }
 }
 
-/// Replace an index access instruction with its tuple value if possible.
+/// Remove redundant temporary variables by replacing variables with its value.
 #[derive(Debug, Default)]
-pub struct OptimizeIndexAccess {}
+pub struct RemoveRedundantTmpVars {}
 
-impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for OptimizeIndexAccess {
+impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for RemoveRedundantTmpVars {
     fn optimize_expr(
         &self,
         _ctx: &OptimizerPassContext<'a, 'tcx>,
@@ -660,7 +660,6 @@ impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for OptimizeIndexAccess {
                             let fv = fs[index];
                             if fv.can_be_immediate() {
                                 // Replace `t.N` access with direct tuple field.
-                                //eprintln!("Found = {} - {}", expr, fs[index]);
                                 t.dcr_used();
                                 return Some(fv);
                             }
