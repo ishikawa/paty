@@ -82,26 +82,23 @@ fn main() {
             let mut changed = false;
             let pass = optimizer::UpdateTmpVarValue::default();
             optimizer
-                .run_stmt_pass(&pass, &mut program)
+                .run_function_pass(&pass, &mut program)
                 .then(|| changed = true);
             let pass = optimizer::ResetTmpVarUsed::default();
             optimizer
-                .run_stmt_pass(&pass, &mut program)
-                .then(|| changed = true);
-            optimizer
-                .run_expr_stmt_pass(&pass, &mut program)
+                .run_function_pass(&pass, &mut program)
                 .then(|| changed = true);
             let pass = optimizer::MarkTmpVarUsed::default();
             optimizer
-                .run_expr_stmt_pass(&pass, &mut program)
+                .run_function_pass(&pass, &mut program)
                 .then(|| changed = true);
             let pass = optimizer::EliminateDeadStmts::default();
             optimizer
-                .run_stmt_pass(&pass, &mut program)
+                .run_function_pass(&pass, &mut program)
                 .then(|| changed = true);
             let pass = optimizer::ReplaceRedundantTmpVars::default();
             optimizer
-                .run_expr_stmt_pass(&pass, &mut program)
+                .run_function_pass(&pass, &mut program)
                 .then(|| changed = true);
             if !changed {
                 break;
@@ -109,7 +106,7 @@ fn main() {
         }
 
         let pass = optimizer::ConcatAdjacentPrintf::default();
-        optimizer.run_block_pass(&pass, &mut program);
+        optimizer.run_function_pass(&pass, &mut program);
         //eprintln!("--- (optimized)\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
