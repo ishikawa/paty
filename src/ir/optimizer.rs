@@ -52,6 +52,42 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
         modified
     }
 
+    /// Returns `true` if optimized code is changed.
+    pub fn run_block_pass(
+        &self,
+        pass: &dyn BlockOptimizerPass<'a, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+    ) -> bool {
+        let mut modified = false;
+
+        for fun in program.functions_mut() {
+            if let Some(body) = self._run_block_pass_with_stmts(pass, &fun.body) {
+                fun.body = body;
+                modified = true;
+            }
+        }
+
+        modified
+    }
+
+    /// Returns `true` if optimized code is changed.
+    pub fn run_expr_stmt_pass(
+        &self,
+        pass: &dyn ExprOptimizerPass<'a, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+    ) -> bool {
+        let mut modified = false;
+
+        for fun in program.functions_mut() {
+            if let Some(body) = self._run_expr_pass_with_stmts(pass, &fun.body) {
+                modified = true;
+                fun.body = body;
+            }
+        }
+
+        modified
+    }
+
     fn _run_stmt_pass_with_stmts(
         &self,
         pass: &dyn StmtOptimizerPass<'a, 'tcx>,
@@ -109,22 +145,57 @@ impl<'a, 'tcx> Optimizer<'a, 'tcx> {
         }
     }
 
-    /// Returns `true` if optimized code is changed.
-    pub fn run_expr_stmt_pass(
+    fn _run_block_pass_with_stmts(
         &self,
-        pass: &dyn ExprOptimizerPass<'a, 'tcx>,
-        program: &mut Program<'a, 'tcx>,
-    ) -> bool {
+        pass: &dyn BlockOptimizerPass<'a, 'tcx>,
+        stmts: &[&'a Stmt<'a, 'tcx>],
+    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>> {
         let mut modified = false;
 
-        for fun in program.functions_mut() {
-            if let Some(body) = self._run_expr_pass_with_stmts(pass, &fun.body) {
-                modified = true;
-                fun.body = body;
+        let mut block = if let Some(block) = pass.optimize_stmts(&self.ctx, stmts) {
+            modified = true;
+            block
+        } else {
+            stmts.to_vec()
+        };
+
+        // Iterate by index and modify element in place.
+        for stmt in &mut block {
+            if let Stmt::Cond(cond) = stmt {
+                let mut branches = vec![];
+                let mut branches_modified = false;
+
+                for branch in &cond.branches {
+                    let body =
+                        if let Some(body) = self._run_block_pass_with_stmts(pass, &branch.body) {
+                            branches_modified = true;
+                            modified = true;
+                            body
+                        } else {
+                            branch.body.clone()
+                        };
+                    branches.push(Branch {
+                        body,
+                        condition: branch.condition,
+                    })
+                }
+
+                if branches_modified {
+                    let cond = Cond {
+                        branches,
+                        var: cond.var,
+                    };
+
+                    *stmt = self.ctx.stmt_arena.alloc(Stmt::Cond(cond));
+                }
             }
         }
 
-        modified
+        if modified {
+            Some(block)
+        } else {
+            None
+        }
     }
 
     fn _run_expr_pass_with_stmts(
@@ -520,12 +591,20 @@ pub enum StmtOptimizerPassResult<'a, 'tcx> {
 }
 
 pub trait StmtOptimizerPass<'a, 'tcx> {
-    /// Returns `None` if the stmt should be removed from function body.
     fn optimize_stmt(
         &self,
         ctx: &OptimizerPassContext<'a, 'tcx>,
         stmt: &'a Stmt<'a, 'tcx>,
     ) -> StmtOptimizerPassResult<'a, 'tcx>;
+}
+
+pub trait BlockOptimizerPass<'a, 'tcx> {
+    /// Returns `None` if statements are not modified.
+    fn optimize_stmts(
+        &self,
+        ctx: &OptimizerPassContext<'a, 'tcx>,
+        stmts: &[&'a Stmt<'a, 'tcx>],
+    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>>;
 }
 
 pub trait ExprOptimizerPass<'a, 'tcx> {
@@ -593,33 +672,42 @@ impl<'a, 'tcx> StmtOptimizerPass<'a, 'tcx> for EliminateDeadStmts {
     }
 }
 
+/// This is an optimization that merges consecutive `printf(...)`s into one.
 #[derive(Debug, Default)]
 pub struct ConcatAdjacentPrintf {}
 
-impl<'a, 'tcx> FunctionOptimizerPass<'a, 'tcx> for ConcatAdjacentPrintf {
-    fn optimize_function(
+impl<'a, 'tcx> BlockOptimizerPass<'a, 'tcx> for ConcatAdjacentPrintf {
+    fn optimize_stmts(
         &self,
         ctx: &OptimizerPassContext<'a, 'tcx>,
-        fun: &mut Function<'a, 'tcx>,
-    ) {
+        stmts: &[&'a Stmt<'a, 'tcx>],
+    ) -> Option<Vec<&'a Stmt<'a, 'tcx>>> {
         // -- Peephole optimization.
         // Rewrite body
-        let mut it = fun.body.iter().peekable();
-        let mut body = vec![];
+        let mut it = stmts.iter().peekable();
+        let mut body = Vec::with_capacity(stmts.len());
 
-        // Combine consecutive printf(...) into one.
+        // Merge consecutive printf(...) into one.
         let mut last_tmp_def = None;
+        let mut last_stmt;
         let mut format_specs = Vec::with_capacity(0);
 
         while let Some(&stmt) = it.next() {
+            last_stmt = Some(stmt);
+
             if let Stmt::TmpVarDef(t) = stmt {
-                if t.var().used() == 0 {
-                    if let ExprKind::Printf(args) = t.init().kind() {
-                        format_specs.extend(args.clone());
-                        last_tmp_def = Some(t);
-                        if it.peek().is_some() {
-                            continue;
-                        }
+                if let ExprKind::Printf(args) = t.init().kind() {
+                    // The statement is `t0 = @printf(...)`
+
+                    // If the result of the statement is unused, we safely
+                    // merge it into one. Otherwise, merging printf should be
+                    // stopped here.
+                    format_specs.extend(args.clone());
+                    last_tmp_def = Some(t);
+                    last_stmt = None;
+
+                    if t.var().used() == 0 && it.peek().is_some() {
+                        continue;
                     }
                 }
             }
@@ -631,22 +719,23 @@ impl<'a, 'tcx> FunctionOptimizerPass<'a, 'tcx> for ConcatAdjacentPrintf {
                 let init = ctx.expr_arena.alloc(expr);
                 let d = last_tmp_def.unwrap().with_init(init);
 
-                let stmt = &*ctx.stmt_arena.alloc(Stmt::TmpVarDef(d));
+                let printf_stmt = &*ctx.stmt_arena.alloc(Stmt::TmpVarDef(d));
+                body.push(printf_stmt);
+            }
+            if let Some(stmt) = last_stmt {
                 body.push(stmt);
             }
-            body.push(stmt);
         }
 
-        // -- Rewrite body by cloning
-        fun.body = body;
+        Some(body)
     }
 }
 
 /// Remove redundant temporary variables by replacing variables with its value.
 #[derive(Debug, Default)]
-pub struct RemoveRedundantTmpVars {}
+pub struct ReplaceRedundantTmpVars {}
 
-impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for RemoveRedundantTmpVars {
+impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for ReplaceRedundantTmpVars {
     fn optimize_expr(
         &self,
         _ctx: &OptimizerPassContext<'a, 'tcx>,
@@ -668,10 +757,19 @@ impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for RemoveRedundantTmpVars {
                 }
             }
             ExprKind::TmpVar(var) => {
-                if let Some(v) = var.value() {
-                    if v.can_be_immediate() {
+                if var.is_mutable() {
+                    // mutable variable shouldn't be replaced.
+                    return None;
+                }
+
+                if let Some(value) = var.value() {
+                    if value.can_be_immediate() || // value is immediate value.
+                        // This temporary variable is used only once, so it could be
+                        // replaced with the expression.
+                        (var.used() == 1 && !value.has_side_effect())
+                    {
                         var.dcr_used();
-                        return Some(v);
+                        return Some(value);
                     }
                 }
             }
@@ -727,33 +825,6 @@ impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for MarkTmpVarUsed {
     ) -> Option<&'a Expr<'a, 'tcx>> {
         if let &ExprKind::TmpVar(var) = expr.kind() {
             var.inc_used();
-        }
-
-        None
-    }
-}
-
-/// Replace a temporary variable that has been used only once with a definition.
-#[derive(Debug, Default)]
-pub struct ReplaceTmpVarUsedOnlyOnce {}
-
-impl<'a, 'tcx> ExprOptimizerPass<'a, 'tcx> for ReplaceTmpVarUsedOnlyOnce {
-    fn optimize_expr(
-        &self,
-        _ctx: &OptimizerPassContext<'a, 'tcx>,
-        expr: &'a Expr<'a, 'tcx>,
-    ) -> Option<&'a Expr<'a, 'tcx>> {
-        if let &ExprKind::TmpVar(var) = expr.kind() {
-            if !var.is_mutable() && var.used() == 1 {
-                if let Some(value) = var.value() {
-                    if !value.has_side_effect() {
-                        // This temporary variable is used only once, so it could be
-                        // replaced with the expression.
-                        var.dcr_used();
-                        return Some(value);
-                    }
-                }
-            }
         }
 
         None

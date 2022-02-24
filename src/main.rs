@@ -84,14 +84,6 @@ fn main() {
             optimizer
                 .run_stmt_pass(&pass, &mut program)
                 .then(|| changed = true);
-            let pass = optimizer::OptimizeIndexAccess::default();
-            optimizer
-                .run_expr_stmt_pass(&pass, &mut program)
-                .then(|| changed = true);
-            let pass = optimizer::UpdateTmpVarValue::default();
-            optimizer
-                .run_stmt_pass(&pass, &mut program)
-                .then(|| changed = true);
             let pass = optimizer::ResetTmpVarUsed::default();
             optimizer
                 .run_stmt_pass(&pass, &mut program)
@@ -103,25 +95,21 @@ fn main() {
             optimizer
                 .run_expr_stmt_pass(&pass, &mut program)
                 .then(|| changed = true);
-            let pass = optimizer::ReplaceTmpVarUsedOnlyOnce::default();
+            let pass = optimizer::EliminateDeadStmts::default();
+            optimizer
+                .run_stmt_pass(&pass, &mut program)
+                .then(|| changed = true);
+            let pass = optimizer::ReplaceRedundantTmpVars::default();
             optimizer
                 .run_expr_stmt_pass(&pass, &mut program)
                 .then(|| changed = true);
-
             if !changed {
                 break;
             }
         }
 
-        let pass = optimizer::EliminateDeadStmts::default();
-        optimizer.run_stmt_pass(&pass, &mut program);
         let pass = optimizer::ConcatAdjacentPrintf::default();
-        optimizer.run_function_pass(&pass, &mut program);
-        let pass = optimizer::ResetTmpVarUsed::default();
-        optimizer.run_stmt_pass(&pass, &mut program);
-        optimizer.run_expr_stmt_pass(&pass, &mut program);
-        let pass = optimizer::MarkTmpVarUsed::default();
-        optimizer.run_expr_stmt_pass(&pass, &mut program);
+        optimizer.run_block_pass(&pass, &mut program);
         //eprintln!("--- (optimized)\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
