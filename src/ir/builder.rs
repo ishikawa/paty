@@ -910,7 +910,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     outer_stmts.push(self.stmt_arena.alloc(stmt));
 
                     let mut inner_stmts = vec![];
-                    let mut sub_cond = self.build_pattern(
+                    let sub_cond = self.build_pattern(
                         target_expr,
                         sub_pat,
                         program,
@@ -920,22 +920,19 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                     self.merge_var_decl_stmts(cfv, stmts, &inner_stmts);
 
-                    sub_cond = Some(self.expr_arena.alloc(Expr::new(
+                    let cond_and_assign = self.expr_arena.alloc(Expr::new(
                         ExprKind::CondAndAssign {
                             cond: sub_cond,
                             var: cfv,
                         },
                         bool_ty,
-                    )));
+                    ));
 
-                    match (cond, sub_cond) {
-                        (Some(cond), Some(sub_cond)) => {
-                            let kind = ExprKind::Or(cond, sub_cond);
-                            Some(self.expr_arena.alloc(Expr::new(kind, bool_ty)))
-                        }
-                        (Some(cond), None) => Some(cond),
-                        (None, Some(sub_cond)) => Some(sub_cond),
-                        (None, None) => None,
+                    if let Some(cond) = cond {
+                        let kind = ExprKind::Or(cond, cond_and_assign);
+                        Some(self.expr_arena.alloc(Expr::new(kind, bool_ty)))
+                    } else {
+                        Some(cond_and_assign)
                     }
                 })
             }
