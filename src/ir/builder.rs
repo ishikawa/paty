@@ -913,7 +913,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 })
             }
             PatternKind::Var(name) => {
-                let stmt = Stmt::VarDef(VarDef::new(name.clone(), target_expr));
+                let value = self.promote_to(target_expr, dbg!(pat.expect_ty()), stmts);
+                let stmt = Stmt::VarDef(VarDef::new(name.clone(), value));
                 stmts.push(self.stmt_arena.alloc(stmt));
 
                 None
@@ -1012,7 +1013,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) {
         match pattern.kind() {
             PatternKind::Var(name) => {
-                let stmt = Stmt::VarDef(VarDef::new(name.to_string(), init));
+                program.add_decl_type(pattern.expect_ty());
+
+                let value = self.promote_to(init, pattern.expect_ty(), stmts);
+                let stmt = Stmt::VarDef(VarDef::new(name.to_string(), value));
                 stmts.push(self.stmt_arena.alloc(stmt));
             }
             PatternKind::Wildcard => {

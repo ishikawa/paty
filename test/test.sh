@@ -922,6 +922,9 @@ show_option(opt1)
 off = { value: "off" }
 opt2 = { name: "d", ...off }
 show_option(opt2)'
+assert '105' '
+a: int64 | string = 105
+puts(a)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
