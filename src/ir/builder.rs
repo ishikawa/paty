@@ -186,18 +186,21 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     params.push(param);
                 }
 
-                // return
-                let mut ret = None;
-                for stmt in syntax_fun.body() {
-                    ret = self.build_stmt(stmt, program, &mut body_stmts);
-                }
-                if let Some(ret) = ret {
-                    let phi = Stmt::Ret(ret);
-                    body_stmts.push(self.stmt_arena.alloc(phi));
-                }
-
-                // Return type of the function
+                // Return value and type of the function
                 let retty = syntax_fun.retty().expect("return type");
+                program.add_decl_type(retty);
+
+                let last_expr = syntax_fun
+                    .body()
+                    .iter()
+                    .map(|stmt| self.build_stmt(stmt, program, &mut body_stmts))
+                    .last()
+                    .flatten();
+
+                if let Some(last_expr) = last_expr {
+                    let value = self.promote_to(last_expr, retty, &mut body_stmts);
+                    body_stmts.push(self.stmt_arena.alloc(Stmt::Ret(value)));
+                }
 
                 let fun = Function {
                     name: syntax_fun.name().to_string(),

@@ -925,6 +925,11 @@ show_option(opt2)'
 assert '105' '
 a: int64 | string = 105
 puts(a)'
+assert 'false true' '
+def foo(n): int64 | boolean
+  n > 0
+end
+puts(foo(0), foo(1))'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
