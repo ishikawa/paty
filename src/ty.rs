@@ -135,7 +135,7 @@ impl<'tcx> Type<'tcx> {
     }
 
     pub fn tuple_ty(&self) -> Option<&[&Type<'tcx>]> {
-        if let Type::Tuple(fs) = self {
+        if let Type::Tuple(fs) = self.bottom_ty() {
             Some(fs)
         } else {
             None
@@ -143,7 +143,7 @@ impl<'tcx> Type<'tcx> {
     }
 
     pub fn struct_ty(&self) -> Option<&StructTy<'tcx>> {
-        if let Type::Struct(struct_ty) = self {
+        if let Type::Struct(struct_ty) = self.bottom_ty() {
             Some(struct_ty)
         } else {
             None

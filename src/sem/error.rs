@@ -36,6 +36,8 @@ pub enum SemanticError<'tcx> {
         name: String,
         struct_ty: &'tcx Type<'tcx>,
     },
+    #[error("no field `{name}` on type `{ty}`")]
+    FieldNotFound { name: String, ty: &'tcx Type<'tcx> },
     #[error("named field `{name}` is defined more than once in `{struct_ty}`")]
     DuplicateStructField {
         name: String,
@@ -71,8 +73,6 @@ pub enum SemanticError<'tcx> {
     },
     #[error("return type of function `{signature}` cannot be inferred.")]
     UnrecognizedReturnType { signature: FunctionSignature<'tcx> },
-    #[error("no field `{name}` on type `{ty}`")]
-    FieldNotFound { name: String, ty: &'tcx Type<'tcx> },
     // pattern match errors
     #[error("uncovered fields {names} in struct pattern `{struct_ty}`")]
     UncoveredStructFields {

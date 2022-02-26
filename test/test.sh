@@ -943,6 +943,15 @@ a: U = "ok"
 b: U = "error"
 foo(a)
 bar(b)'
+assert 'hundred
+TRUE' '
+struct T1 { name: string, value: int64 }
+struct T2 { name: string, value: boolean }
+def print_name(t: T1 | T2)
+  puts(t.name)
+end
+print_name(T1 { name: "hundred", value: 100 })
+print_name(T2 { name: "TRUE", value: true })'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

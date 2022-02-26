@@ -7,6 +7,12 @@ use crate::ty::{FunctionSignature, StructTy, Type, TypeContext};
 use std::collections::HashSet;
 use typed_arena::Arena;
 
+struct BuilderContext<'a, 'tcx> {
+    tcx: TypeContext<'tcx>,
+    // An arena allocators for instructions.
+    expr_arena: &'a Arena<Expr<'a, 'tcx>>,
+}
+
 pub struct Builder<'a, 'tcx> {
     tcx: TypeContext<'tcx>,
     // An arena allocators for instructions.
@@ -33,6 +39,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             stmt_arena,
             tmp_var_arena,
             tmp_var_index: 0,
+        }
+    }
+
+    fn builder_context(&self) -> BuilderContext<'a, 'tcx> {
+        BuilderContext {
+            tcx: self.tcx,
+            expr_arena: self.expr_arena,
         }
     }
 
@@ -103,17 +116,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) -> &'a Expr<'a, 'tcx> {
         let expr = self.expr_arena.alloc(Expr::new(kind, expr_ty));
         self.push_expr(expr, stmts)
-    }
-
-    fn usize(&self, value: usize) -> &'a Expr<'a, 'tcx> {
-        self.int64(i64::try_from(value).unwrap())
-    }
-
-    fn int64(&self, value: i64) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Int64(value);
-        let ty = self.tcx.int64();
-
-        self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
     fn native_int(&self, value: i64) -> &'a Expr<'a, 'tcx> {
@@ -450,13 +452,34 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             syntax::ExprKind::FieldAccess(operand, name) => {
+                let expected_ty = expr.expect_ty().bottom_ty();
                 let operand = self.build_expr(operand, program, stmts);
-                let kind = ExprKind::FieldAccess {
-                    operand,
-                    name: name.to_string(),
-                };
 
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+                match operand.ty().bottom_ty() {
+                    Type::Struct(_) => {
+                        let expr = Expr::struct_field_access(operand, name);
+                        self.push_expr(self.expr_arena.alloc(expr), stmts)
+                    }
+                    Type::Union(operand_member_types) => {
+                        let ctx = self.builder_context();
+                        build_union_member_value(
+                            &ctx,
+                            operand,
+                            operand_member_types,
+                            expected_ty,
+                            |_, member_value| {
+                                // Pre: member_value is a struct value which have the field.
+                                let kind = ExprKind::FieldAccess {
+                                    operand: member_value,
+                                    name: name.to_string(),
+                                };
+
+                                self.expr_arena.alloc(Expr::new(kind, expected_ty))
+                            },
+                        )
+                    }
+                    ty => unreachable!("unsupported type: {}", ty),
+                }
             }
             syntax::ExprKind::Call(call_expr) => {
                 // The type of call expression can be not yet inferred due to
@@ -593,18 +616,16 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
         match (operand_ty, expected_ty) {
             (Type::Union(operand_member_types), Type::Union(expected_member_types)) => {
-                // condition and value conversion.
-                let vs: Vec<_> = operand_member_types
-                    .iter()
-                    .enumerate()
-                    .map(|(tag, member_ty)| {
-                        let union_tag = self.expr_arena.alloc(Expr::union_tag(self.tcx, operand));
-                        let cond =
-                            self.expr_arena
-                                .alloc(Expr::eq(self.tcx, union_tag, self.usize(tag)));
-
+                let ctx = self.builder_context();
+                build_union_member_value(
+                    &ctx,
+                    operand,
+                    operand_member_types,
+                    expected_ty,
+                    |tag, member_value| {
                         // Find an expected member type which is compatible with
                         // this member type. it must exist.
+                        let member_ty = member_value.ty();
                         let (expected_tag, expected_member_ty) = expected_member_types
                             .iter()
                             .enumerate()
@@ -617,7 +638,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             });
                         let member_value = self
                             .expr_arena
-                            .alloc(Expr::union_member_access(self.tcx, operand, tag, member_ty));
+                            .alloc(Expr::union_member_access(operand, tag, member_ty));
                         let member_value = self.promote_to(member_value, expected_member_ty, stmts);
 
                         let union_value = self.expr_arena.alloc(Expr::union_value(
@@ -626,27 +647,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             expected_tag,
                             expected_ty,
                         ));
-                        (&*cond, &*union_value)
-                    })
-                    .collect();
 
-                // Constructs (?... :...) to initialize an union value.
-                // Note, the last condition will be ignored as `else` condition because
-                // the these conditions must be exhausted.
-                assert!(!vs.is_empty());
-                let cond_value_expr = vs.iter().rev().skip(1).fold(
-                    vs.last().unwrap().1,
-                    |else_value, (cond, then_value)| {
-                        let kind = ExprKind::CondValue {
-                            cond,
-                            then_value,
-                            else_value,
-                        };
-                        self.expr_arena.alloc(Expr::new(kind, expected_ty))
+                        &*union_value
                     },
-                );
-
-                cond_value_expr
+                )
             }
             (operand_ty, Type::Union(member_types)) => {
                 for (tag, mty) in member_types.iter().enumerate() {
@@ -673,7 +677,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     .fields()
                     .iter()
                     .map(|f| {
-                        let expr = Expr::field_access(self.tcx, operand, f.name());
+                        let expr = Expr::struct_field_access(operand, f.name());
                         let value = self.promote_to(self.expr_arena.alloc(expr), f.ty(), stmts);
 
                         (f.name().to_string(), value)
@@ -687,7 +691,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     .iter()
                     .enumerate()
                     .map(|(i, fty)| {
-                        let expr = Expr::index_access(self.tcx, operand, i);
+                        let expr = Expr::tuple_index_access(operand, i);
                         self.promote_to(self.expr_arena.alloc(expr), fty, stmts)
                     })
                     .collect();
@@ -784,9 +788,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                     // check union tag
                     let get_union_tag = self.expr_arena.alloc(Expr::union_tag(self.tcx, arg));
-                    let cond =
-                        self.expr_arena
-                            .alloc(Expr::eq(self.tcx, get_union_tag, self.usize(tag)));
+                    let value = self.expr_arena.alloc(Expr::usize(self.tcx, tag));
+                    let cond = self
+                        .expr_arena
+                        .alloc(Expr::eq(self.tcx, get_union_tag, value));
 
                     // print union member
                     let kind = ExprKind::UnionMemberAccess { operand: arg, tag };
@@ -836,8 +841,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         }
 
         match pat.kind() {
-            PatternKind::Integer(n) => {
-                let value = self.int64(*n);
+            &PatternKind::Integer(n) => {
+                let value = self.expr_arena.alloc(Expr::int64(self.tcx, n));
                 let eq = Expr::eq(self.tcx, target_expr, value);
                 Some(self.expr_arena.alloc(eq))
             }
@@ -865,9 +870,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 Some(self.expr_arena.alloc(eq))
             }
-            PatternKind::Range { lo, hi, end } => {
-                let lo = self.int64(*lo);
-                let hi = self.int64(*hi);
+            &PatternKind::Range { lo, hi, end } => {
+                let lo = self.expr_arena.alloc(Expr::int64(self.tcx, lo));
+                let hi = self.expr_arena.alloc(Expr::int64(self.tcx, hi));
 
                 let lhs = Expr::ge(self.tcx, target_expr, lo);
 
@@ -1159,4 +1164,53 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             })
             .collect::<Vec<_>>()
     }
+}
+
+fn build_union_member_value<'a, 'tcx, F>(
+    ctx: &BuilderContext<'a, 'tcx>,
+    operand: &'a Expr<'a, 'tcx>,
+    operand_member_types: &[&'tcx Type<'tcx>],
+    expected_ty: &'tcx Type<'tcx>,
+    mut member_value_mapper: F,
+) -> &'a Expr<'a, 'tcx>
+where
+    F: FnMut(usize, &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx>,
+{
+    // condition and value conversion.
+    let vs: Vec<_> = operand_member_types
+        .iter()
+        .enumerate()
+        .map(|(tag, member_ty)| {
+            let union_tag = ctx.expr_arena.alloc(Expr::union_tag(ctx.tcx, operand));
+            let value = ctx.expr_arena.alloc(Expr::usize(ctx.tcx, tag));
+            let cond = ctx.expr_arena.alloc(Expr::eq(ctx.tcx, union_tag, value));
+
+            // member access
+            let member_value = ctx
+                .expr_arena
+                .alloc(Expr::union_member_access(operand, tag, member_ty));
+
+            let result = member_value_mapper(tag, member_value);
+            (&*cond, result)
+        })
+        .collect();
+
+    // Constructs (?... :...) to initialize an union value.
+    // Note, the last condition will be ignored as `else` condition because
+    // the these conditions must be exhausted.
+    assert!(!vs.is_empty());
+    let cond_value_expr =
+        vs.iter()
+            .rev()
+            .skip(1)
+            .fold(vs.last().unwrap().1, |else_value, (cond, then_value)| {
+                let kind = ExprKind::CondValue {
+                    cond,
+                    then_value,
+                    else_value,
+                };
+                ctx.expr_arena.alloc(Expr::new(kind, expected_ty))
+            });
+
+    cond_value_expr
 }

@@ -427,6 +427,15 @@ pub struct Expr<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Expr<'a, 'tcx> {
+    pub fn usize(tcx: TypeContext<'tcx>, value: usize) -> Self {
+        Self::int64(tcx, i64::try_from(value).unwrap())
+    }
+    pub fn int64(tcx: TypeContext<'tcx>, value: i64) -> Self {
+        let kind = ExprKind::Int64(value);
+        let ty = tcx.int64();
+
+        Self::new(kind, ty)
+    }
     pub fn tmp_var(tmp_var: &'a TmpVar<'a, 'tcx>) -> Self {
         let kind = ExprKind::TmpVar(tmp_var);
         Self::new(kind, tmp_var.ty())
@@ -468,16 +477,12 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         let kind = ExprKind::UnionTag(operand);
         Self::new(kind, tcx.int64())
     }
-    pub fn index_access(
-        _tcx: TypeContext<'tcx>,
-        operand: &'a Expr<'a, 'tcx>,
-        index: usize,
-    ) -> Self {
+    pub fn tuple_index_access(operand: &'a Expr<'a, 'tcx>, index: usize) -> Self {
         let tuple_ty = operand.ty().tuple_ty().expect("operand must be a tuple");
         let kind = ExprKind::IndexAccess { operand, index };
         Self::new(kind, tuple_ty[index])
     }
-    pub fn field_access(_tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>, name: &str) -> Self {
+    pub fn struct_field_access(operand: &'a Expr<'a, 'tcx>, name: &str) -> Self {
         let struct_ty = operand.ty().struct_ty().expect("operand must be a struct");
         let field = struct_ty
             .get_field(name)
@@ -489,7 +494,6 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         Self::new(kind, field.ty())
     }
     pub fn union_member_access(
-        _tcx: TypeContext<'tcx>,
         operand: &'a Expr<'a, 'tcx>,
         tag: usize,
         member_ty: &'tcx Type<'tcx>,

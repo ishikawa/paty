@@ -6,6 +6,7 @@ use crate::{
     syntax,
     ty::{Type, TypeContext},
 };
+use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
 mod error;
@@ -666,9 +667,14 @@ fn analyze_expr<'nd, 'tcx>(
         syntax::ExprKind::IndexAccess(operand, index) => {
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
 
+            let operand_ty = if let Some(ty) = operand.ty() {
+                ty.bottom_ty()
+            } else {
+                return;
+            };
+
             // index boundary check
-            let ty = operand.expect_ty().bottom_ty();
-            if let Type::Tuple(fs) = ty {
+            if let Type::Tuple(fs) = operand_ty {
                 if *index < fs.len() {
                     // apply type
                     unify_type(fs[*index], expr, errors);
@@ -678,20 +684,20 @@ fn analyze_expr<'nd, 'tcx>(
 
             errors.push(SemanticError::FieldNotFound {
                 name: index.to_string(),
-                ty,
+                ty: operand_ty,
             });
         }
         syntax::ExprKind::FieldAccess(operand, name) => {
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
 
-            if operand.ty().is_none() {
+            let operand_ty = if let Some(ty) = operand.ty() {
+                ty.bottom_ty()
+            } else {
                 return;
-            }
+            };
 
-            // index boundary check
-            let ty = operand.expect_ty().bottom_ty();
-
-            if let Type::Struct(struct_ty) = ty {
+            // The field of struct type.
+            if let Type::Struct(struct_ty) = operand_ty {
                 if let Some(f) = struct_ty.get_field(name) {
                     // apply type
                     unify_type(f.ty(), expr, errors);
@@ -699,9 +705,43 @@ fn analyze_expr<'nd, 'tcx>(
                 }
             }
 
+            // If we have a value that is a union type, we can access members
+            // that are common to all types in the union. And the type of
+            // a field can be a new union type too.
+            //
+            // For example:
+            //
+            //     type U = { value: int64 } | { value: string }
+            //     ...
+            //     u.value # int64 | string
+            if let Type::Union(member_types) = operand_ty {
+                let common_field_types: Vec<_> = member_types
+                    .iter()
+                    .filter_map(|ty| {
+                        ty.struct_ty()
+                            .and_then(|struct_ty| struct_ty.get_field(name))
+                    })
+                    .map(|f| f.ty())
+                    .collect();
+                if common_field_types.len() == member_types.len() {
+                    // common field found. constructs the type for field.
+                    let tys: Vec<_> = common_field_types.into_iter().unique().collect();
+                    assert!(!tys.is_empty());
+
+                    let field_ty = if tys.len() == 1 {
+                        tys[0]
+                    } else {
+                        tcx.union(tys)
+                    };
+
+                    unify_type(field_ty, expr, errors);
+                    return;
+                }
+            }
+
             errors.push(SemanticError::FieldNotFound {
                 name: name.to_string(),
-                ty,
+                ty: operand_ty,
             });
         }
         syntax::ExprKind::Call(call_expr) => {
