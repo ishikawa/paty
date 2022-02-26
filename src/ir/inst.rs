@@ -2,7 +2,7 @@ use crate::ty::{FunctionSignature, Type, TypeContext};
 use std::cell::Cell;
 use std::fmt;
 
-const DISPLAY_INDENT: &'static str = "  ";
+const DISPLAY_INDENT: &str = "  ";
 
 #[derive(Debug, Default)]
 pub struct Program<'a, 'tcx> {
@@ -110,7 +110,7 @@ impl fmt::Display for Function<'_, '_> {
             let lines = stmt.to_string();
             let lines = lines.split('\n');
             for line in lines {
-                write!(f, "{}", DISPLAY_INDENT.repeat(1))?;
+                write!(f, "{}", DISPLAY_INDENT)?;
                 writeln!(f, "{}", line)?;
             }
         }
@@ -403,7 +403,7 @@ impl<'a, 'tcx> Cond<'a, 'tcx> {
         writeln!(f, "cond {{")?;
         for branch in &self.branches {
             branch._fmt(f, indent + 1)?;
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
         write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
         write!(f, "}}")
@@ -432,7 +432,7 @@ impl<'a, 'tcx> Branch<'a, 'tcx> {
 
         for stmt in &self.body {
             stmt._fmt(f, indent + 1)?;
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
         write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
         write!(f, "}}")
@@ -568,16 +568,16 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             ExprKind::CondValue { .. } => false,
             ExprKind::Tuple(_)
             | ExprKind::StructValue(_)
+            | ExprKind::UnionValue { .. }
             | ExprKind::Call { .. }
             | ExprKind::Printf(_) => false,
+            ExprKind::IndexAccess { operand, .. }
+            | ExprKind::FieldAccess { operand, .. }
+            | ExprKind::UnionTag(operand)
+            | ExprKind::UnionMemberAccess { operand, .. } => operand.can_be_immediate(),
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
-            | ExprKind::IndexAccess { .. }
-            | ExprKind::FieldAccess { .. }
-            | ExprKind::UnionTag(_)
-            | ExprKind::UnionMemberAccess { .. }
-            | ExprKind::UnionValue { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => true,
             ExprKind::CondAndAssign { .. } => false,

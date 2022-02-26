@@ -71,24 +71,21 @@ fn main() {
         let mut builder =
             ir::builder::Builder::new(tcx, &ir_expr_arena, &ir_stmt_arena, &tmp_var_arena);
         let mut program = builder.build(&body);
-        eprintln!("--- (not optimized)\n{}", program);
 
         // post process
         let optimizer = optimizer::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
 
         // Repeat (up to 5 times) the process of replacing the temporary variables
         // until there is no change in the optimized code.
-        for _ in 0..5 {
+        for i in 0..5 {
             let mut changed = false;
-            let pass = optimizer::UpdateTmpVarValue::default();
-            optimizer
-                .run_function_pass(&pass, &mut program)
-                .then(|| changed = true);
-            let pass = optimizer::ResetTmpVarUsed::default();
-            optimizer
-                .run_function_pass(&pass, &mut program)
-                .then(|| changed = true);
             let pass = optimizer::MarkTmpVarUsed::default();
+            optimizer
+                .run_function_pass(&pass, &mut program)
+                .then(|| changed = true);
+            eprintln!("--- (optimizing:{})\n{}", i, program);
+
+            let pass = optimizer::UpdateTmpVarValue::default();
             optimizer
                 .run_function_pass(&pass, &mut program)
                 .then(|| changed = true);
@@ -103,6 +100,11 @@ fn main() {
             if !changed {
                 break;
             }
+
+            let pass = optimizer::ResetTmpVarUsed::default();
+            optimizer
+                .run_function_pass(&pass, &mut program)
+                .then(|| changed = true);
         }
 
         let pass = optimizer::ConcatAdjacentPrintf::default();

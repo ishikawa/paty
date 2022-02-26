@@ -809,13 +809,14 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 // For union type values, the appropriate value is output by
                 // branching on the condition of the tag of the value.
                 let t = self.next_temp_var(self.tcx.int64());
-                let mut branches = vec![];
+                let get_union_tag = self.push_expr(Expr::union_tag(self.tcx, arg), stmts);
 
+                // generates branches
+                let mut branches = vec![];
                 for (tag, member_ty) in member_types.iter().enumerate() {
                     let mut branch_stmts = vec![];
 
                     // check union tag
-                    let get_union_tag = self.expr_arena.alloc(Expr::union_tag(self.tcx, arg));
                     let value = self.expr_arena.alloc(Expr::usize(self.tcx, tag));
                     let cond = self
                         .expr_arena
