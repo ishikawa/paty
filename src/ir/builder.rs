@@ -642,6 +642,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
         match (operand_ty, expected_ty) {
             (Type::Union(operand_member_types), Type::Union(expected_member_types)) => {
+                if operand_member_types == expected_member_types {
+                    return operand;
+                }
+
                 let ctx = self.builder_context();
                 build_union_member_value(
                     &ctx,
@@ -692,12 +696,15 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 );
             }
             // Unnamed types don't have a definition, so it must be promoted here.
-            (Type::Struct(_), Type::Struct(struct_ty)) => {
-                if struct_ty.name().is_some() {
+            (Type::Struct(operand_struct_ty), Type::Struct(expected_struct_ty)) => {
+                if expected_struct_ty.name().is_some() {
+                    return operand;
+                }
+                if operand_struct_ty == expected_struct_ty {
                     return operand;
                 }
 
-                let promoted_fields = struct_ty
+                let promoted_fields = expected_struct_ty
                     .fields()
                     .iter()
                     .map(|f| {
@@ -710,8 +717,12 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 self.push_expr_kind(ExprKind::StructValue(promoted_fields), expected_ty, stmts)
             }
-            (Type::Tuple(_), Type::Tuple(fs)) => {
-                let m = fs
+            (Type::Tuple(operand_fs), Type::Tuple(expected_fs)) => {
+                if operand_fs == expected_fs {
+                    return operand;
+                }
+
+                let m = expected_fs
                     .iter()
                     .enumerate()
                     .map(|(i, fty)| {

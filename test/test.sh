@@ -982,10 +982,10 @@ def print_2nd(t: T)
   puts(t.1.value)
 end
 print_2nd((10, V1 { value: 20 }))
-print_2nd((10, V1 { value: 30 }, 40))
-print_2nd((10, V2 { value: "40" }))
-print_2nd((10, V3 { value: "50" }, 50))
-print_2nd((10, V3 { value: true }, 50))'
+print_2nd((20, V1 { value: 30 }, 40))
+print_2nd((30, V2 { value: "40" }))
+print_2nd((40, V3 { value: "50" }, 50))
+print_2nd((50, V3 { value: true }, 50))'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
