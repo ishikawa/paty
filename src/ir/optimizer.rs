@@ -407,9 +407,9 @@ impl<'ir, 'tcx> Optimizer<'ir, 'tcx> {
                     return Some(ExprKind::UnionMemberAccess { operand, tag });
                 }
             }
-            &ExprKind::PromoteToUnion { operand, tag } => {
-                if let Some(operand) = self._run_function_pass_with_expr(pass, operand) {
-                    return Some(ExprKind::PromoteToUnion { operand, tag });
+            &ExprKind::UnionValue { value, tag } => {
+                if let Some(value) = self._run_function_pass_with_expr(pass, value) {
+                    return Some(ExprKind::UnionValue { value, tag });
                 }
             }
             ExprKind::TmpVar(_)

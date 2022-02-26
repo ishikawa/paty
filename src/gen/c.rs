@@ -607,7 +607,7 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".u._{}", tag));
             }
-            ExprKind::PromoteToUnion { operand, tag } => {
+            ExprKind::UnionValue { value, tag } => {
                 // Specify struct type explicitly.
                 code.push('(');
                 code.push_str(&c_type(expr.ty()));
@@ -618,7 +618,7 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(&format!(".tag = {}, ", tag));
                 code.push_str(".u = {");
                 code.push_str(&format!("._{} = ", tag));
-                self.emit_expr(operand, code);
+                self.emit_expr(value, code);
                 code.push('}');
                 code.push('}');
             }

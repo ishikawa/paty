@@ -244,6 +244,7 @@ impl PartialEq for Type<'_> {
             (Self::LiteralString(l0), Self::LiteralString(r0)) => l0 == r0,
             (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
             (Self::Struct(l0), Self::Struct(r0)) => l0 == r0,
+            (Self::Union(l0), Self::Union(r0)) => l0 == r0,
             (Self::Named(named_ty1), Self::Named(named_ty2)) => {
                 named_ty1.name() == named_ty2.name() || named_ty1.ty() == named_ty2.ty()
             }

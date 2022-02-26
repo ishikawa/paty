@@ -930,6 +930,19 @@ def foo(n): int64 | boolean
   n > 0
 end
 puts(foo(0), foo(1))'
+assert 'ok
+error' '
+type U = "ok" | "error"
+def foo(b: string | int64)
+  puts(b)
+end
+def bar(b: U | "failed")
+  puts(b)
+end
+a: U = "ok"
+b: U = "error"
+foo(a)
+bar(b)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

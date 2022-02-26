@@ -105,6 +105,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         self.push_expr(expr, stmts)
     }
 
+    fn usize(&self, value: usize) -> &'a Expr<'a, 'tcx> {
+        self.int64(i64::try_from(value).unwrap())
+    }
+
     fn int64(&self, value: i64) -> &'a Expr<'a, 'tcx> {
         let kind = ExprKind::Int64(value);
         let ty = self.tcx.int64();
@@ -154,7 +158,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     let pat = p.pattern();
                     let ty = pat.expect_ty();
 
-                    // To emit anonymous struct type
+                    // To emit anonymous types in type annotation.
                     program.add_decl_type(ty);
 
                     // Assign parameter names to be able to referenced later.
@@ -584,14 +588,73 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         expected_ty: &'tcx Type<'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
+        let operand_ty = operand.ty().bottom_ty();
         let expected_ty = expected_ty.bottom_ty();
 
-        match (operand.ty().bottom_ty(), expected_ty) {
-            (Type::Union(_), Type::Union(_)) => todo!("promote from union"),
+        match (operand_ty, expected_ty) {
+            (Type::Union(operand_member_types), Type::Union(expected_member_types)) => {
+                // condition and value conversion.
+                let vs: Vec<_> = operand_member_types
+                    .iter()
+                    .enumerate()
+                    .map(|(tag, member_ty)| {
+                        let union_tag = self.expr_arena.alloc(Expr::union_tag(self.tcx, operand));
+                        let cond =
+                            self.expr_arena
+                                .alloc(Expr::eq(self.tcx, union_tag, self.usize(tag)));
+
+                        // Find an expected member type which is compatible with
+                        // this member type. it must exist.
+                        let (expected_tag, expected_member_ty) = expected_member_types
+                            .iter()
+                            .enumerate()
+                            .find(|(_, ty)| member_ty.is_assignable_to(ty))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "an expected member type for {} must exist in {}",
+                                    member_ty, expected_ty
+                                );
+                            });
+                        let member_value = self
+                            .expr_arena
+                            .alloc(Expr::union_member_access(self.tcx, operand, tag, member_ty));
+                        let member_value = self.promote_to(member_value, expected_member_ty, stmts);
+
+                        let union_value = self.expr_arena.alloc(Expr::union_value(
+                            self.tcx,
+                            member_value,
+                            expected_tag,
+                            expected_ty,
+                        ));
+                        (&*cond, &*union_value)
+                    })
+                    .collect();
+
+                // Constructs (?... :...) to initialize an union value.
+                // Note, the last condition will be ignored as `else` condition because
+                // the these conditions must be exhausted.
+                assert!(!vs.is_empty());
+                let cond_value_expr = vs.iter().rev().skip(1).fold(
+                    vs.last().unwrap().1,
+                    |else_value, (cond, then_value)| {
+                        let kind = ExprKind::CondValue {
+                            cond,
+                            then_value,
+                            else_value,
+                        };
+                        self.expr_arena.alloc(Expr::new(kind, expected_ty))
+                    },
+                );
+
+                cond_value_expr
+            }
             (operand_ty, Type::Union(member_types)) => {
-                for (i, mty) in member_types.iter().enumerate() {
+                for (tag, mty) in member_types.iter().enumerate() {
                     if operand_ty.is_assignable_to(mty) {
-                        let kind = ExprKind::PromoteToUnion { operand, tag: i };
+                        let kind = ExprKind::UnionValue {
+                            value: operand,
+                            tag,
+                        };
                         return self.push_expr_kind(kind, expected_ty, stmts);
                     }
                 }
@@ -716,21 +779,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let t = self.next_temp_var(self.tcx.int64());
                 let mut branches = vec![];
 
-                for (i, member_ty) in member_types.iter().enumerate() {
-                    let tag = i64::try_from(i).unwrap();
+                for (tag, member_ty) in member_types.iter().enumerate() {
                     let mut branch_stmts = vec![];
 
                     // check union tag
-                    let get_union_tag = self.expr_arena.alloc(Expr::get_union_tag(self.tcx, arg));
+                    let get_union_tag = self.expr_arena.alloc(Expr::union_tag(self.tcx, arg));
                     let cond =
                         self.expr_arena
-                            .alloc(Expr::eq(self.tcx, get_union_tag, self.int64(tag)));
+                            .alloc(Expr::eq(self.tcx, get_union_tag, self.usize(tag)));
 
                     // print union member
-                    let kind = ExprKind::UnionMemberAccess {
-                        operand: arg,
-                        tag: i,
-                    };
+                    let kind = ExprKind::UnionMemberAccess { operand: arg, tag };
                     let member = self.expr_arena.alloc(Expr::new(kind, member_ty));
 
                     let ret =
@@ -916,7 +975,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 })
             }
             PatternKind::Var(name) => {
-                let value = self.promote_to(target_expr, dbg!(pat.expect_ty()), stmts);
+                let value = self.promote_to(target_expr, pat.expect_ty(), stmts);
                 let stmt = Stmt::VarDef(VarDef::new(name.clone(), value));
                 stmts.push(self.stmt_arena.alloc(stmt));
 

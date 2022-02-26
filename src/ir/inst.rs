@@ -463,7 +463,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         let kind = ExprKind::Printf(format_specs);
         Self::new(kind, tcx.int64())
     }
-    pub fn get_union_tag(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
+    pub fn union_tag(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
         assert!(matches!(operand.ty(), Type::Union(_)));
         let kind = ExprKind::UnionTag(operand);
         Self::new(kind, tcx.int64())
@@ -487,6 +487,24 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             name: name.to_string(),
         };
         Self::new(kind, field.ty())
+    }
+    pub fn union_member_access(
+        _tcx: TypeContext<'tcx>,
+        operand: &'a Expr<'a, 'tcx>,
+        tag: usize,
+        member_ty: &'tcx Type<'tcx>,
+    ) -> Self {
+        let kind = ExprKind::UnionMemberAccess { operand, tag };
+        Self::new(kind, member_ty)
+    }
+    pub fn union_value(
+        _tcx: TypeContext<'tcx>,
+        value: &'a Expr<'a, 'tcx>,
+        tag: usize,
+        union_ty: &'tcx Type<'tcx>,
+    ) -> Self {
+        let kind = ExprKind::UnionValue { value, tag };
+        Self::new(kind, union_ty)
     }
 
     pub fn new(kind: ExprKind<'a, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
@@ -530,7 +548,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::FieldAccess { .. }
             | ExprKind::UnionTag(_)
             | ExprKind::UnionMemberAccess { .. }
-            | ExprKind::PromoteToUnion { .. }
+            | ExprKind::UnionValue { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => true,
             ExprKind::CondAndAssign { .. } => false,
@@ -579,7 +597,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::FieldAccess { .. }
             | ExprKind::UnionTag(_)
             | ExprKind::UnionMemberAccess { .. }
-            | ExprKind::PromoteToUnion { .. }
+            | ExprKind::UnionValue { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => false,
         }
@@ -660,8 +678,10 @@ pub enum ExprKind<'a, 'tcx> {
         operand: &'a Expr<'a, 'tcx>,
         tag: usize,
     },
-    PromoteToUnion {
-        operand: &'a Expr<'a, 'tcx>,
+    /// Initialize an union value with `value` as initial value of
+    /// tagged member.
+    UnionValue {
+        value: &'a Expr<'a, 'tcx>,
         tag: usize,
     },
 }
@@ -755,7 +775,7 @@ impl fmt::Display for ExprKind<'_, '_> {
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
             ExprKind::UnionTag(expr) => write!(f, "{}.tag", expr),
             ExprKind::UnionMemberAccess { operand, tag } => write!(f, "{}.u.{}", operand, tag),
-            ExprKind::PromoteToUnion { operand, .. } => write!(f, "(union){}", operand),
+            ExprKind::UnionValue { value: operand, .. } => write!(f, "(union){}", operand),
             ExprKind::TmpVar(var) => var.fmt(f),
             ExprKind::Var(var) => var.fmt(f),
         }
