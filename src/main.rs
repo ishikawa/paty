@@ -50,7 +50,7 @@ fn main() {
         }
         Ok(body) => body,
     };
-    //println!("ast = {:?}", body);
+    //println!("Syntax tree = {:?}", body);
 
     if let Err(errors) = sem::analyze(tcx, &body) {
         assert!(!errors.is_empty());
@@ -61,7 +61,7 @@ fn main() {
 
         std::process::exit(exitcode::DATAERR);
     }
-    //eprintln!("--- AST (not optimized)\n{:?}", &body);
+    //eprintln!("--- Syntax tree (not optimized)\n{:?}", &body);
 
     {
         let ir_expr_arena = Arena::new();
@@ -71,7 +71,7 @@ fn main() {
         let mut builder =
             ir::builder::Builder::new(tcx, &ir_expr_arena, &ir_stmt_arena, &tmp_var_arena);
         let mut program = builder.build(&body);
-        //eprintln!("--- (not optimized)\n{}", program);
+        eprintln!("--- (not optimized)\n{}", program);
 
         // post process
         let optimizer = optimizer::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
@@ -107,7 +107,7 @@ fn main() {
 
         let pass = optimizer::ConcatAdjacentPrintf::default();
         optimizer.run_function_pass(&pass, &mut program);
-        //eprintln!("--- (optimized)\n{}", program);
+        eprintln!("--- (optimized)\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
         let code = emitter.emit(&program);

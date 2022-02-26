@@ -2,6 +2,8 @@ use crate::ty::{FunctionSignature, Type, TypeContext};
 use std::cell::Cell;
 use std::fmt;
 
+const DISPLAY_INDENT: &'static str = "  ";
+
 #[derive(Debug, Default)]
 pub struct Program<'a, 'tcx> {
     decl_types: Vec<&'tcx Type<'tcx>>,
@@ -108,7 +110,8 @@ impl fmt::Display for Function<'_, '_> {
             let lines = stmt.to_string();
             let lines = lines.split('\n');
             for line in lines {
-                writeln!(f, "  {}", line)?;
+                write!(f, "{}", DISPLAY_INDENT.repeat(1))?;
+                writeln!(f, "{}", line)?;
             }
         }
         Ok(())
@@ -305,7 +308,7 @@ impl fmt::Display for Phi<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "phi(t{} (used: {}) = {})",
+            "phi:t{}\t(used: {}) = {}",
             self.var.index,
             self.var.used.get(),
             self.value
@@ -368,17 +371,22 @@ impl<'a, 'tcx> Stmt<'a, 'tcx> {
     pub fn phi(var: &'a TmpVar<'a, 'tcx>, value: &'a Expr<'a, 'tcx>) -> Self {
         Self::Phi(Phi::new(var, value))
     }
+
+    fn _fmt(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
+        match self {
+            Stmt::TmpVarDef(def) => write!(f, "{}", def),
+            Stmt::VarDef(def) => write!(f, "{}", def),
+            Stmt::Ret(expr) => write!(f, "return {}", expr),
+            Stmt::Phi(phi) => write!(f, "{}", phi),
+            Stmt::Cond(cond) => cond._fmt(f, indent),
+        }
+    }
 }
 
 impl fmt::Display for Stmt<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Stmt::TmpVarDef(def) => def.fmt(f),
-            Stmt::VarDef(def) => def.fmt(f),
-            Stmt::Ret(expr) => write!(f, "return {}", expr),
-            Stmt::Phi(phi) => phi.fmt(f),
-            Stmt::Cond(cond) => cond.fmt(f),
-        }
+        self._fmt(f, 0)
     }
 }
 
@@ -389,14 +397,22 @@ pub struct Cond<'a, 'tcx> {
     pub branches: Vec<Branch<'a, 'tcx>>,
 }
 
-impl fmt::Display for Cond<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "t{} (used: {}) = ", self.var.index, self.var.used())?;
+impl<'a, 'tcx> Cond<'a, 'tcx> {
+    fn _fmt(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        write!(f, "t{}\t(used: {}) = ", self.var.index, self.var.used())?;
         writeln!(f, "cond {{")?;
         for branch in &self.branches {
-            writeln!(f, "  {}", branch)?;
+            branch._fmt(f, indent + 1)?;
+            write!(f, "\n")?;
         }
+        write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
         write!(f, "}}")
+    }
+}
+
+impl fmt::Display for Cond<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self._fmt(f, 0)
     }
 }
 
@@ -406,17 +422,26 @@ pub struct Branch<'a, 'tcx> {
     pub body: Vec<&'a Stmt<'a, 'tcx>>,
 }
 
-impl fmt::Display for Branch<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<'a, 'tcx> Branch<'a, 'tcx> {
+    fn _fmt(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         if let Some(condition) = self.condition {
+            write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
             write!(f, "({}) => ", condition)?;
         }
-
         writeln!(f, "{{")?;
+
         for stmt in &self.body {
-            writeln!(f, "    {}", stmt)?;
+            stmt._fmt(f, indent + 1)?;
+            write!(f, "\n")?;
         }
-        write!(f, "  }}")
+        write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
+        write!(f, "}}")
+    }
+}
+
+impl fmt::Display for Branch<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self._fmt(f, 0)
     }
 }
 
@@ -778,7 +803,7 @@ impl fmt::Display for ExprKind<'_, '_> {
             ExprKind::IndexAccess { operand, index } => write!(f, "{}.{}", operand, index),
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
             ExprKind::UnionTag(expr) => write!(f, "{}.tag", expr),
-            ExprKind::UnionMemberAccess { operand, tag } => write!(f, "{}.u.{}", operand, tag),
+            ExprKind::UnionMemberAccess { operand, tag } => write!(f, "{}._u.{}", operand, tag),
             ExprKind::UnionValue { value: operand, .. } => write!(f, "(union){}", operand),
             ExprKind::TmpVar(var) => var.fmt(f),
             ExprKind::Var(var) => var.fmt(f),

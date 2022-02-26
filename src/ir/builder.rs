@@ -99,9 +99,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
     fn push_expr(
         &mut self,
-        expr: &'a Expr<'a, 'tcx>,
+        expr: Expr<'a, 'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
+        let expr = self.expr_arena.alloc(expr);
         let t = self.next_temp_var(expr.ty());
         let stmt = Stmt::tmp_var_def(t, expr);
         stmts.push(self.stmt_arena.alloc(stmt));
@@ -114,8 +115,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         expr_ty: &'tcx Type<'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
-        let expr = self.expr_arena.alloc(Expr::new(kind, expr_ty));
-        self.push_expr(expr, stmts)
+        self.push_expr(Expr::new(kind, expr_ty), stmts)
     }
 
     fn native_int(&self, value: i64) -> &'a Expr<'a, 'tcx> {
@@ -453,15 +453,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 match operand.ty().bottom_ty() {
                     Type::Tuple(_) => {
-                        let expr = Expr::tuple_index_access(operand, index);
-                        self.push_expr(self.expr_arena.alloc(expr), stmts)
+                        self.push_expr(Expr::tuple_index_access(operand, index), stmts)
                     }
                     Type::Union(operand_member_types) => {
                         let ctx = self.builder_context();
+                        let union_tag = self.push_expr(Expr::union_tag(self.tcx, operand), stmts);
+
                         build_union_member_value(
                             &ctx,
                             operand,
                             operand_member_types,
+                            union_tag,
                             expected_ty,
                             |_, member_value| {
                                 // Pre: member_value is a tuple value which have the element.
@@ -484,15 +486,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 match operand.ty().bottom_ty() {
                     Type::Struct(_) => {
-                        let expr = Expr::struct_field_access(operand, name);
-                        self.push_expr(self.expr_arena.alloc(expr), stmts)
+                        self.push_expr(Expr::struct_field_access(operand, name), stmts)
                     }
                     Type::Union(operand_member_types) => {
                         let ctx = self.builder_context();
+                        let union_tag = self.push_expr(Expr::union_tag(self.tcx, operand), stmts);
+
                         build_union_member_value(
                             &ctx,
                             operand,
                             operand_member_types,
+                            union_tag,
                             expected_ty,
                             |_, member_value| {
                                 // Pre: member_value is a struct value which have the field.
@@ -633,10 +637,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 }
 
                 let ctx = self.builder_context();
+                let union_tag = self.push_expr(Expr::union_tag(self.tcx, operand), stmts);
+
                 build_union_member_value(
                     &ctx,
                     operand,
                     operand_member_types,
+                    union_tag,
                     expected_ty,
                     |tag, member_value| {
                         // Find an expected member type which is compatible with
@@ -843,8 +850,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         format_spec: FormatSpec<'a, 'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
-        let expr = Expr::printf(self.tcx, vec![format_spec]);
-        self.push_expr(self.expr_arena.alloc(expr), stmts)
+        self.push_expr(Expr::printf(self.tcx, vec![format_spec]), stmts)
     }
 
     // Returns `None` for no condition.
@@ -1191,6 +1197,7 @@ fn build_union_member_value<'a, 'tcx, F>(
     ctx: &BuilderContext<'a, 'tcx>,
     operand: &'a Expr<'a, 'tcx>,
     operand_member_types: &[&'tcx Type<'tcx>],
+    operand_union_tag: &'a Expr<'a, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
     mut member_value_mapper: F,
 ) -> &'a Expr<'a, 'tcx>
@@ -1202,9 +1209,10 @@ where
         .iter()
         .enumerate()
         .map(|(tag, member_ty)| {
-            let union_tag = ctx.expr_arena.alloc(Expr::union_tag(ctx.tcx, operand));
             let value = ctx.expr_arena.alloc(Expr::usize(ctx.tcx, tag));
-            let cond = ctx.expr_arena.alloc(Expr::eq(ctx.tcx, union_tag, value));
+            let cond = ctx
+                .expr_arena
+                .alloc(Expr::eq(ctx.tcx, operand_union_tag, value));
 
             // member access
             let member_value = ctx
