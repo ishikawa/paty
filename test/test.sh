@@ -952,6 +952,18 @@ def print_name(t: T1 | T2)
 end
 print_name(T1 { name: "hundred", value: 100 })
 print_name(T2 { name: "TRUE", value: true })'
+assert '100
+hundred
+TRUE' '
+struct T1 { name: string | int64, value: int64 }
+struct T2 { name: string, value: boolean }
+struct T3 { value: T1 | T2 }
+def print_name(t: T3)
+  puts(t.value.name)
+end
+print_name(T3 { value: T1 { name: 100, value: 200 }})
+print_name(T3 { value: T1 { name: "hundred", value: 300 }})
+print_name(T3 { value: T2 { name: "TRUE", value: true }})'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

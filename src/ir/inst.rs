@@ -711,7 +711,7 @@ impl fmt::Display for ExprKind<'_, '_> {
                 cond,
                 then_value,
                 else_value,
-            } => write!(f, "{} ? {} : {}", cond, then_value, else_value),
+            } => write!(f, "({} ? {} : {})", cond, then_value, else_value),
             ExprKind::CondAndAssign { var, cond } => {
                 if let Some(cond) = cond {
                     write!(f, "{} && {} = true", cond, var)

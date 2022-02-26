@@ -455,6 +455,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let expected_ty = expr.expect_ty().bottom_ty();
                 let operand = self.build_expr(operand, program, stmts);
 
+                // expected_ty might be an auto generated union type.
+                program.add_decl_type(expected_ty);
+
                 match operand.ty().bottom_ty() {
                     Type::Struct(_) => {
                         let expr = Expr::struct_field_access(operand, name);
@@ -469,12 +472,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             expected_ty,
                             |_, member_value| {
                                 // Pre: member_value is a struct value which have the field.
-                                let kind = ExprKind::FieldAccess {
-                                    operand: member_value,
-                                    name: name.to_string(),
-                                };
-
-                                self.expr_arena.alloc(Expr::new(kind, expected_ty))
+                                let access = self
+                                    .expr_arena
+                                    .alloc(Expr::struct_field_access(member_value, name));
+                                self.promote_to(access, expected_ty, stmts)
                             },
                         )
                     }
@@ -655,10 +656,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             (operand_ty, Type::Union(member_types)) => {
                 for (tag, mty) in member_types.iter().enumerate() {
                     if operand_ty.is_assignable_to(mty) {
-                        let kind = ExprKind::UnionValue {
-                            value: operand,
-                            tag,
-                        };
+                        let value = self.promote_to(operand, mty, stmts);
+                        let kind = ExprKind::UnionValue { value, tag };
                         return self.push_expr_kind(kind, expected_ty, stmts);
                     }
                 }
