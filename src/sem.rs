@@ -73,12 +73,12 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
 #[allow(clippy::map_entry)]
 pub fn analyze<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    body: &'nd [syntax::TopLevel<'nd, 'tcx>],
+    body: &[syntax::TopLevel<'nd, 'tcx>],
 ) -> Result<(), Vec<SemanticError<'tcx>>> {
     let mut errors = vec![];
     let mut scope = Scope::new();
     let mut named_types = HashMap::new();
-    let mut functions: Vec<&'nd syntax::Function<'nd, 'tcx>> = vec![];
+    let mut functions: Vec<&syntax::Function<'nd, 'tcx>> = vec![];
 
     // 1. Collect named types before analyze program.
     for top_level in body {
@@ -121,6 +121,7 @@ pub fn analyze<'nd, 'tcx>(
         }
     }
 
+    // 4. Analyze declarations and statements
     for top_level in body {
         match top_level {
             syntax::TopLevel::Declaration(decl) => {
@@ -142,6 +143,25 @@ pub fn analyze<'nd, 'tcx>(
                     &mut named_types,
                     &mut errors,
                 );
+            }
+        }
+    }
+
+    // 5. Every function's return type is inferred. Iterates call sites and
+    //    assign expression type if not assigned.
+    if errors.is_empty() {
+        for top_level in body {
+            match top_level {
+                syntax::TopLevel::Declaration(decl) => {
+                    if let syntax::DeclarationKind::Function(fun) = decl.kind() {
+                        for stmt in fun.body() {
+                            analyze_call_sites_stmt(tcx, stmt, &functions);
+                        }
+                    }
+                }
+                syntax::TopLevel::Stmt(stmt) => {
+                    analyze_call_sites_stmt(tcx, stmt, &functions);
+                }
             }
         }
     }
@@ -225,7 +245,7 @@ fn resolve_type<'tcx>(
 //  For all explicit type annotation/declaration(s), resolve these types.
 fn analyze_explicit_type_annotations_top_level<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    top_level: &'nd syntax::TopLevel<'nd, 'tcx>,
+    top_level: &syntax::TopLevel<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -240,7 +260,7 @@ fn analyze_explicit_type_annotations_top_level<'nd, 'tcx>(
 }
 fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    decl: &'nd syntax::Declaration<'nd, 'tcx>,
+    decl: &syntax::Declaration<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -264,7 +284,7 @@ fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
 }
 fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    stmt: &'nd syntax::Stmt<'nd, 'tcx>,
+    stmt: &syntax::Stmt<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -281,7 +301,7 @@ fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
 }
 fn analyze_explicit_type_annotations_expr<'nd, 'tcx>(
     _tcx: TypeContext<'tcx>,
-    expr: &'nd syntax::Expr<'nd, 'tcx>,
+    expr: &syntax::Expr<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -296,9 +316,9 @@ fn analyze_explicit_type_annotations_expr<'nd, 'tcx>(
 
 fn analyze_decl<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    decl: &'nd syntax::Declaration<'nd, 'tcx>,
+    decl: &syntax::Declaration<'nd, 'tcx>,
     _vars: &mut Scope<'_, 'tcx>,
-    functions: &mut Vec<&'nd syntax::Function<'nd, 'tcx>>,
+    functions: &mut Vec<&syntax::Function<'nd, 'tcx>>,
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -366,7 +386,7 @@ fn analyze_stmts<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmts: &[syntax::Stmt<'nd, 'tcx>],
     vars: &mut Scope<'_, 'tcx>,
-    functions: &[&'nd syntax::Function<'nd, 'tcx>],
+    functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) -> &'tcx Type<'tcx> {
@@ -391,7 +411,7 @@ fn analyze_stmt<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmt: &syntax::Stmt<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &[&'nd syntax::Function<'nd, 'tcx>],
+    functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -434,9 +454,9 @@ fn analyze_stmt<'nd, 'tcx>(
 }
 fn analyze_expr<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    expr: &'nd syntax::Expr<'nd, 'tcx>,
+    expr: &syntax::Expr<'nd, 'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &[&'nd syntax::Function<'nd, 'tcx>],
+    functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -852,11 +872,12 @@ fn analyze_expr<'nd, 'tcx>(
                 unify_type(retty, expr, errors);
             } else {
                 // The return type is undefined if the function is called before
-                // defined (recursive function). In that case, we skip unification here.
+                // defined (recursive function). In that case, we skip unification here and
+                // assign the return type of the function in `analyze_call_sites_expr(...)`.
             }
 
             // Save
-            call_expr.assign_function(fun);
+            call_expr.assign_function_signature(fun.signature());
         }
         syntax::ExprKind::Puts(args) => {
             for arg in args {
@@ -883,10 +904,6 @@ fn analyze_expr<'nd, 'tcx>(
                 let mut scope = Scope::from_parent(vars);
 
                 // Infer pattern's type and bindings
-
-                //if !unify_type(dbg!(head_ty), arm.pattern(), errors) {
-                //    return;
-                //}
                 analyze_pattern(
                     tcx,
                     arm.pattern(),
@@ -968,10 +985,10 @@ fn analyze_expr<'nd, 'tcx>(
 
 fn analyze_let_pattern<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    pat: &'nd syntax::Pattern<'nd, 'tcx>,
+    pat: &syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &[&'nd syntax::Function<'nd, 'tcx>],
+    functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -993,11 +1010,11 @@ fn analyze_let_pattern<'nd, 'tcx>(
 #[allow(clippy::too_many_arguments)]
 fn analyze_pattern_struct_fields<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    pattern_fields: impl IntoIterator<Item = &'nd syntax::PatternFieldOrSpread<'nd, 'tcx>>,
+    pattern_fields: &[syntax::PatternFieldOrSpread<'nd, 'tcx>],
     struct_fields: &'tcx [TypedField<'tcx>],
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &[&'nd syntax::Function<'nd, 'tcx>],
+    functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -1082,10 +1099,10 @@ fn analyze_pattern_struct_fields<'nd, 'tcx>(
 }
 fn analyze_pattern<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
-    pat: &'nd syntax::Pattern<'nd, 'tcx>,
+    pat: &syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
     vars: &mut Scope<'_, 'tcx>,
-    functions: &[&'nd syntax::Function<'nd, 'tcx>],
+    functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Vec<SemanticError<'tcx>>,
 ) {
@@ -1244,6 +1261,112 @@ fn analyze_pattern<'nd, 'tcx>(
     };
 
     unify_type(expected_ty, pat, errors);
+}
+
+fn analyze_call_sites_stmt<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    stmt: &syntax::Stmt<'nd, 'tcx>,
+    functions: &[&syntax::Function<'nd, 'tcx>],
+) {
+    match stmt.kind() {
+        &syntax::StmtKind::Let { rhs, .. } => {
+            analyze_call_sites_expr(tcx, rhs, functions);
+        }
+        syntax::StmtKind::Expr(expr) => {
+            analyze_call_sites_expr(tcx, expr, functions);
+        }
+    }
+}
+fn analyze_call_sites_expr<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    expr: &syntax::Expr<'nd, 'tcx>,
+    functions: &[&syntax::Function<'nd, 'tcx>],
+) {
+    match expr.kind() {
+        syntax::ExprKind::Call(call_expr) => {
+            if expr.ty().is_none() {
+                // The return type of callee function couldn't be inferred due to
+                // recursive call or forward declaration. At this point, `functions` must
+                // contain proper inferred function.
+                let sig = call_expr.function_signature().unwrap();
+                let fun = functions.iter().find(|f| f.signature() == sig).unwrap();
+                expr.assign_ty(fun.retty().unwrap());
+            }
+            for arg in call_expr.arguments() {
+                analyze_call_sites_expr(tcx, arg, functions);
+            }
+        }
+        syntax::ExprKind::Tuple(values) => {
+            for value in values {
+                analyze_call_sites_expr(tcx, value, functions);
+            }
+        }
+        syntax::ExprKind::Struct(struct_value) => {
+            for value_or_spread in struct_value.fields() {
+                match value_or_spread {
+                    syntax::ValueFieldOrSpread::ValueField(field) => {
+                        analyze_call_sites_expr(tcx, field.value(), functions);
+                    }
+                    syntax::ValueFieldOrSpread::Spread(spread) => {
+                        if let Some(operand) = spread.operand() {
+                            analyze_call_sites_expr(tcx, operand, functions);
+                        }
+                    }
+                }
+            }
+        }
+        &syntax::ExprKind::Minus(a) => {
+            analyze_call_sites_expr(tcx, a, functions);
+        }
+        &syntax::ExprKind::Add(a, b)
+        | &syntax::ExprKind::Sub(a, b)
+        | &syntax::ExprKind::Mul(a, b)
+        | &syntax::ExprKind::Div(a, b)
+        | &syntax::ExprKind::Lt(a, b)
+        | &syntax::ExprKind::Gt(a, b)
+        | &syntax::ExprKind::Le(a, b)
+        | &syntax::ExprKind::Ge(a, b)
+        | &syntax::ExprKind::Eq(a, b)
+        | &syntax::ExprKind::Ne(a, b)
+        | &syntax::ExprKind::And(a, b)
+        | &syntax::ExprKind::Or(a, b) => {
+            analyze_call_sites_expr(tcx, a, functions);
+            analyze_call_sites_expr(tcx, b, functions);
+        }
+        &syntax::ExprKind::IndexAccess(operand, _) => {
+            analyze_call_sites_expr(tcx, operand, functions);
+        }
+        syntax::ExprKind::FieldAccess(operand, _) => {
+            analyze_call_sites_expr(tcx, operand, functions);
+        }
+        syntax::ExprKind::Puts(args) => {
+            for arg in args {
+                analyze_call_sites_expr(tcx, arg, functions);
+            }
+        }
+        syntax::ExprKind::Case {
+            head,
+            arms,
+            else_body,
+        } => {
+            analyze_call_sites_expr(tcx, head, functions);
+            for arm in arms {
+                for stmt in arm.body() {
+                    analyze_call_sites_stmt(tcx, stmt, functions);
+                }
+            }
+
+            if let Some(else_body) = else_body {
+                for stmt in else_body {
+                    analyze_call_sites_stmt(tcx, stmt, functions);
+                }
+            }
+        }
+        syntax::ExprKind::Integer(_)
+        | syntax::ExprKind::Boolean(_)
+        | syntax::ExprKind::String(_)
+        | syntax::ExprKind::Var(_) => {}
+    }
 }
 
 /// Try to widen a given type `ty1` to `ty2`, returns the widen if it exists.

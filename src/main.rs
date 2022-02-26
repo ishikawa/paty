@@ -61,7 +61,7 @@ fn main() {
 
         std::process::exit(exitcode::DATAERR);
     }
-    //eprintln!("ast = {:?}", body);
+    //eprintln!("--- AST (not optimized)\n{:?}", &body);
 
     {
         let ir_expr_arena = Arena::new();

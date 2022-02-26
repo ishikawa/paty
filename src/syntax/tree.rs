@@ -1,6 +1,6 @@
 use crate::syntax::{RangeEnd, Token, TokenKind};
 use crate::ty::{FunctionSignature, NamedTy, StructTy, Type, TypeContext, TypedField};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::iter::Peekable;
 use std::slice;
@@ -323,8 +323,9 @@ impl fmt::Display for ExprKind<'_, '_> {
 pub struct CallExpr<'nd, 'tcx> {
     name: String,
     args: Vec<&'nd Expr<'nd, 'tcx>>,
-    /// Resolved overloaded function.
-    function: Cell<Option<&'nd Function<'nd, 'tcx>>>,
+
+    /// Resolved overloaded function signature.
+    signature: RefCell<Option<FunctionSignature<'tcx>>>,
 }
 
 impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
@@ -332,7 +333,7 @@ impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
         Self {
             name,
             args,
-            function: Cell::new(None),
+            signature: RefCell::new(None),
         }
     }
 
@@ -344,12 +345,12 @@ impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
         &self.args
     }
 
-    pub fn function(&self) -> Option<&'nd Function<'nd, 'tcx>> {
-        self.function.get()
+    pub fn function_signature(&self) -> Option<FunctionSignature<'tcx>> {
+        self.signature.borrow().clone()
     }
 
-    pub fn assign_function(&self, fun: &'nd Function<'nd, 'tcx>) {
-        self.function.set(Some(fun));
+    pub fn assign_function_signature(&self, fun: FunctionSignature<'tcx>) {
+        self.signature.borrow_mut().replace(fun);
     }
 }
 
@@ -845,8 +846,8 @@ impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
         self.name.as_deref()
     }
 
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
-        self.fields.iter()
+    pub fn fields(&self) -> &[PatternFieldOrSpread<'nd, 'tcx>] {
+        self.fields.as_slice()
     }
 
     pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
@@ -867,7 +868,7 @@ impl fmt::Display for StructPattern<'_, '_> {
             write!(f, "{} ", name)?;
         }
 
-        let mut it = self.fields().peekable();
+        let mut it = self.fields().iter().peekable();
         let empty = it.peek().is_none();
         write!(f, "{{")?;
         if !empty {
