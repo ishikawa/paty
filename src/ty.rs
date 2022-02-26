@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::hash::{Hash, Hasher};
 use std::{cell::Cell, fmt};
 use typed_arena::Arena;
@@ -46,8 +47,17 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::Tuple(value_types))
     }
 
-    pub fn union(&self, member_types: Vec<&'tcx Type<'tcx>>) -> &'tcx Type<'tcx> {
-        self.type_arena.alloc(Type::Union(member_types))
+    /// Creates an union type from types. Returns the first type if types has
+    /// only one element.
+    pub fn union(&self, member_types: impl Iterator<Item = &'tcx Type<'tcx>>) -> &'tcx Type<'tcx> {
+        let tys: Vec<_> = member_types.unique().collect();
+        assert!(!tys.is_empty());
+
+        if tys.len() == 1 {
+            tys[0]
+        } else {
+            self.type_arena.alloc(Type::Union(tys))
+        }
     }
 
     /// Returns a struct type whose name is `name` and has no value.

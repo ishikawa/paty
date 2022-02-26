@@ -964,6 +964,28 @@ end
 print_name(T3 { value: T1 { name: 100, value: 200 }})
 print_name(T3 { value: T1 { name: "hundred", value: 300 }})
 print_name(T3 { value: T2 { name: "TRUE", value: true }})'
+assert '20
+30
+40
+50
+true' '
+type S = string | boolean
+type V1 = { value: int64 }
+type V2 = { value: string }
+type V3 = { value: S }
+type T =
+  (int64, V1) |
+  (int64, V1, int64) |
+  (int64, V2) |
+  (int64, V3, int64)
+def print_2nd(t: T)
+  puts(t.1.value)
+end
+print_2nd((10, V1 { value: 20 }))
+print_2nd((10, V1 { value: 30 }, 40))
+print_2nd((10, V2 { value: "40" }))
+print_2nd((10, V3 { value: "50" }, 50))
+print_2nd((10, V3 { value: true }, 50))'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

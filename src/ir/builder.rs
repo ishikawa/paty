@@ -446,10 +446,35 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr_kind(kind, expr.expect_ty(), stmts)
             }
             &syntax::ExprKind::IndexAccess(operand, index) => {
+                let expected_ty = expr.expect_ty().bottom_ty();
                 let operand = self.build_expr(operand, program, stmts);
-                let kind = ExprKind::IndexAccess { operand, index };
 
-                self.push_expr_kind(kind, expr.expect_ty(), stmts)
+                // expected_ty might be an auto generated union type.
+                program.add_decl_type(expected_ty);
+
+                match operand.ty().bottom_ty() {
+                    Type::Tuple(_) => {
+                        let expr = Expr::tuple_index_access(operand, index);
+                        self.push_expr(self.expr_arena.alloc(expr), stmts)
+                    }
+                    Type::Union(operand_member_types) => {
+                        let ctx = self.builder_context();
+                        build_union_member_value(
+                            &ctx,
+                            operand,
+                            operand_member_types,
+                            expected_ty,
+                            |_, member_value| {
+                                // Pre: member_value is a tuple value which have the element.
+                                let access = self
+                                    .expr_arena
+                                    .alloc(Expr::tuple_index_access(member_value, index));
+                                self.promote_to(access, expected_ty, stmts)
+                            },
+                        )
+                    }
+                    ty => unreachable!("unsupported type: {}", ty),
+                }
             }
             syntax::ExprKind::FieldAccess(operand, name) => {
                 let expected_ty = expr.expect_ty().bottom_ty();

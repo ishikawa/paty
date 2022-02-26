@@ -1373,7 +1373,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         match types.len() {
             0 => Err(ParseError::NotParsed),
             1 => Ok(types[0]),
-            _ => Ok(self.tcx.union(types)),
+            _ => Ok(self.tcx.union(types.into_iter())),
         }
     }
     fn _type_annotation(

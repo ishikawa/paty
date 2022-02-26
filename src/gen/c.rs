@@ -693,6 +693,14 @@ fn escape_c_string(value: &str) -> String {
 /// Types that are represented as the same structure in the C language must
 /// return the same string.
 ///
+/// ## 64 bits Integer type
+///
+/// ```ignore
+/// +-----+
+/// | "n" |
+/// +-----+
+/// ```
+///
 /// ## Integer types
 ///
 /// ```ignore
@@ -752,7 +760,7 @@ fn escape_c_string(value: &str) -> String {
 ///
 fn encode_ty(ty: &Type, buffer: &mut String) {
     match ty {
-        Type::Int64 | Type::LiteralInt64(_) => buffer.push_str("i64"),
+        Type::Int64 | Type::LiteralInt64(_) => buffer.push('n'),
         Type::Boolean | Type::LiteralBoolean(_) => buffer.push('b'),
         Type::String | Type::LiteralString(_) => buffer.push('s'),
         Type::NativeInt => buffer.push_str("ni"),

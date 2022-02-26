@@ -6,7 +6,6 @@ use crate::{
     syntax,
     ty::{Type, TypeContext},
 };
-use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
 mod error;
@@ -664,7 +663,7 @@ fn analyze_expr<'nd, 'tcx>(
                 errors.push(SemanticError::UndefinedVariable { name: name.clone() });
             }
         }
-        syntax::ExprKind::IndexAccess(operand, index) => {
+        &syntax::ExprKind::IndexAccess(operand, index) => {
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
 
             let operand_ty = if let Some(ty) = operand.ty() {
@@ -675,9 +674,32 @@ fn analyze_expr<'nd, 'tcx>(
 
             // index boundary check
             if let Type::Tuple(fs) = operand_ty {
-                if *index < fs.len() {
+                if index < fs.len() {
                     // apply type
-                    unify_type(fs[*index], expr, errors);
+                    unify_type(fs[index], expr, errors);
+                    return;
+                }
+            }
+
+            // If we have a value that is a union type, we can access elements
+            // that are common to all types in the union. And the type of
+            // a field can be a new union type too.
+            //
+            // For example:
+            //
+            //     type U = (int64,) | (string,)
+            //     ...
+            //     u.value # int64 | string
+            if let Type::Union(member_types) = operand_ty {
+                let common_field_types: Vec<_> = member_types
+                    .iter()
+                    .filter_map(|ty| ty.tuple_ty().and_then(|tuple_ty| tuple_ty.get(index)))
+                    .copied()
+                    .collect();
+                if common_field_types.len() == member_types.len() {
+                    // common field found. constructs the type for field.
+                    let field_ty = tcx.union(common_field_types.into_iter());
+                    unify_type(field_ty, expr, errors);
                     return;
                 }
             }
@@ -725,15 +747,7 @@ fn analyze_expr<'nd, 'tcx>(
                     .collect();
                 if common_field_types.len() == member_types.len() {
                     // common field found. constructs the type for field.
-                    let tys: Vec<_> = common_field_types.into_iter().unique().collect();
-                    assert!(!tys.is_empty());
-
-                    let field_ty = if tys.len() == 1 {
-                        tys[0]
-                    } else {
-                        tcx.union(tys)
-                    };
-
+                    let field_ty = tcx.union(common_field_types.into_iter());
                     unify_type(field_ty, expr, errors);
                     return;
                 }
