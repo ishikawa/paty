@@ -49,6 +49,60 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
+    #[inline]
+    fn usize(&self, value: usize) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::usize(self.tcx, value))
+    }
+    #[inline]
+    fn eq(&self, lhs: &'a Expr<'a, 'tcx>, rhs: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::eq(self.tcx, lhs, rhs))
+    }
+    #[inline]
+    fn or(&self, lhs: &'a Expr<'a, 'tcx>, rhs: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::or(self.tcx, lhs, rhs))
+    }
+    #[inline]
+    fn union_tag(&self, operand: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::union_tag(self.tcx, operand))
+    }
+    #[inline]
+    fn tuple_index_access(&self, operand: &'a Expr<'a, 'tcx>, index: usize) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena
+            .alloc(Expr::tuple_index_access(operand, index))
+    }
+    #[inline]
+    fn native_int(&self, value: i64) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::native_int(self.tcx, value))
+    }
+    #[inline]
+    fn bool(&self, value: bool) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::bool(self.tcx, value))
+    }
+    #[inline]
+    fn const_string(&self, value: &str) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::const_string(self.tcx, value))
+    }
+    #[inline]
+    fn cond_value(
+        &self,
+        cond: &'a Expr<'a, 'tcx>,
+        then_value: &'a Expr<'a, 'tcx>,
+        else_value: &'a Expr<'a, 'tcx>,
+    ) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena
+            .alloc(Expr::cond_value(cond, then_value, else_value))
+    }
+    #[inline]
+    fn union_member_access(
+        &self,
+        operand: &'a Expr<'a, 'tcx>,
+        tag: usize,
+        member_ty: &'tcx Type<'tcx>,
+    ) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena
+            .alloc(Expr::union_member_access(operand, tag, member_ty))
+    }
+
     pub fn build(&mut self, ast: &'nd [syntax::TopLevel<'nd, 'tcx>]) -> Program<'a, 'tcx> {
         let mut program = Program::new();
         let mut stmts: Vec<&'a Stmt<'a, 'tcx>> = vec![];
@@ -124,28 +178,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
         self.push_expr_alloc(Expr::new(kind, expr_ty), stmts)
-    }
-
-    fn native_int(&self, value: i64) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Int64(value);
-        let ty = self.tcx.native_int();
-
-        self.expr_arena.alloc(Expr::new(kind, ty))
-    }
-
-    #[allow(unused)]
-    fn bool(&self, value: bool) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Bool(value);
-        let ty = self.tcx.boolean();
-
-        self.expr_arena.alloc(Expr::new(kind, ty))
-    }
-
-    fn const_string(&self, value: &str) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Str(value.to_string());
-        let ty = self.tcx.string();
-
-        self.expr_arena.alloc(Expr::new(kind, ty))
     }
 
     fn build_decl(
@@ -465,8 +497,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     }
                     Type::Union(operand_member_types) => {
                         let ctx = self.builder_context();
-                        let union_tag =
-                            self.push_expr_alloc(Expr::union_tag(self.tcx, operand), stmts);
+                        let union_tag = self.push_expr(self.union_tag(operand), stmts);
                         let union_member_value = build_union_member_value(
                             &ctx,
                             operand,
@@ -499,8 +530,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     }
                     Type::Union(operand_member_types) => {
                         let ctx = self.builder_context();
-                        let union_tag =
-                            self.push_expr_alloc(Expr::union_tag(self.tcx, operand), stmts);
+                        let union_tag = self.push_expr(self.union_tag(operand), stmts);
 
                         let union_member_value = build_union_member_value(
                             &ctx,
@@ -648,7 +678,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 }
 
                 let ctx = self.builder_context();
-                let union_tag = self.push_expr_alloc(Expr::union_tag(self.tcx, operand), stmts);
+                let union_tag = self.push_expr(self.union_tag(operand), stmts);
 
                 let union_member_value = build_union_member_value(
                     &ctx,
@@ -821,7 +851,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 // For union type values, the appropriate value is output by
                 // branching on the condition of the tag of the value.
                 let t = self.next_temp_var(self.tcx.int64());
-                let get_union_tag = self.push_expr_alloc(Expr::union_tag(self.tcx, arg), stmts);
+                let union_tag = self.push_expr(self.union_tag(arg), stmts);
 
                 // generates branches
                 let mut branches = vec![];
@@ -829,10 +859,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     let mut branch_stmts = vec![];
 
                     // check union tag
-                    let value = self.expr_arena.alloc(Expr::usize(self.tcx, tag));
-                    let cond = self
-                        .expr_arena
-                        .alloc(Expr::eq(self.tcx, get_union_tag, value));
+                    let cond = self.eq(union_tag, self.usize(tag));
 
                     // print union member
                     let kind = ExprKind::UnionMemberAccess { operand: arg, tag };
@@ -876,16 +903,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         outer_stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
+        let pat_ty = pat.expect_ty().bottom_ty();
+
         // zero-sized type is always matched with a value.
-        if pat.expect_ty().is_zero_sized() {
+        if pat_ty.is_zero_sized() {
             return None;
         }
 
         match pat.kind() {
             &PatternKind::Integer(n) => {
                 let value = self.expr_arena.alloc(Expr::int64(self.tcx, n));
-                let eq = Expr::eq(self.tcx, target_expr, value);
-                Some(self.expr_arena.alloc(eq))
+                Some(self.eq(target_expr, value))
             }
             PatternKind::Boolean(b) => {
                 let expr = if *b {
@@ -905,11 +933,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     args: vec![target_expr, value],
                 };
                 let strcmp = self.expr_arena.alloc(Expr::new(kind, self.tcx.int64()));
-
-                let zero = self.native_int(0);
-                let eq = Expr::eq(self.tcx, strcmp, zero);
-
-                Some(self.expr_arena.alloc(eq))
+                Some(self.eq(strcmp, self.native_int(0)))
             }
             &PatternKind::Range { lo, hi, end } => {
                 let lo = self.expr_arena.alloc(Expr::int64(self.tcx, lo));
@@ -938,11 +962,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 }
 
                 sub_pats.iter().enumerate().fold(None, |cond, (i, pat)| {
-                    let kind = ExprKind::IndexAccess {
-                        operand: target_expr,
-                        index: i,
-                    };
-                    let operand = self.expr_arena.alloc(Expr::new(kind, pat.expect_ty()));
+                    let operand = self.tuple_index_access(target_expr, i);
                     let sub_cond = self.build_pattern(operand, pat, program, outer_stmts, stmts);
 
                     match (cond, sub_cond) {
@@ -1021,11 +1041,80 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 })
             }
             PatternKind::Var(name) => {
-                let value = self.promote_to(target_expr, pat.expect_ty(), stmts);
+                program.add_decl_type(pat_ty);
+
+                // Variable pattern with/without type annotation.
+                // If the pattern has an explicit type annotation, it matches
+                // the member of an union type value.
+                let target_ty = target_expr.ty().bottom_ty();
+
+                // If the target type is an union type, the variable pattern
+                // type must be a conforming member, so check the tag of the value.
+                let matched_tag_and_tys: Option<Vec<(usize, &'_ Type<'_>)>> =
+                    if let Type::Union(member_ty) = target_ty {
+                        let matched_tag_and_tys: Vec<_> = member_ty
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(tag, ty)| ty.is_assignable_to(pat_ty).then(|| (tag, *ty)))
+                            .collect();
+                        assert!(
+                        !matched_tag_and_tys.is_empty(),
+                        "Since it passed semantic analysis, there must be at least one element."
+                    );
+
+                        if matched_tag_and_tys.len() == member_ty.len() {
+                            None
+                        } else {
+                            Some(matched_tag_and_tys)
+                        }
+                    } else if pat_ty == target_ty {
+                        None
+                    } else {
+                        unreachable!(
+                            "bug: pattern type = {}, target type = {}",
+                            pat_ty, target_ty
+                        );
+                    };
+
+                let (cond, value) =
+                    if let Some(matched_tag_and_tys) = &matched_tag_and_tys {
+                        // get member tag
+                        let union_tag = self.push_expr(self.union_tag(target_expr), stmts);
+
+                        // cond
+                        let (first_tag, _) = matched_tag_and_tys[0];
+                        let init = self.eq(union_tag, self.usize(first_tag));
+                        let cond = matched_tag_and_tys
+                            .iter()
+                            .skip(1)
+                            .fold(init, |expr, (tag, _)| {
+                                self.or(expr, self.eq(union_tag, self.usize(*tag)))
+                            });
+
+                        // value
+                        let (first_tag, _) = matched_tag_and_tys.last().unwrap();
+                        let init = self.union_member_access(target_expr, *first_tag, pat_ty);
+                        let value = matched_tag_and_tys.iter().rev().skip(1).fold(
+                            init,
+                            |expr, (tag, _)| {
+                                self.cond_value(
+                                    self.eq(union_tag, self.usize(*tag)),
+                                    self.union_member_access(target_expr, *tag, pat_ty),
+                                    expr,
+                                )
+                            },
+                        );
+
+                        (Some(cond), value)
+                    } else {
+                        // Other than union type.
+                        let value = self.promote_to(target_expr, pat_ty, stmts);
+                        (None, value)
+                    };
+
                 let stmt = Stmt::VarDef(VarDef::new(name.clone(), value));
                 stmts.push(self.stmt_arena.alloc(stmt));
-
-                None
+                cond
             }
             PatternKind::Or(sub_pats) => {
                 assert!(sub_pats.len() >= 2);

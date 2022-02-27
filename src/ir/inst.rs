@@ -461,6 +461,24 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
 
         Self::new(kind, ty)
     }
+    pub fn bool(tcx: TypeContext<'tcx>, value: bool) -> Self {
+        let kind = ExprKind::Bool(value);
+        let ty = tcx.boolean();
+
+        Self::new(kind, ty)
+    }
+    pub fn native_int(tcx: TypeContext<'tcx>, value: i64) -> Self {
+        let kind = ExprKind::Int64(value);
+        let ty = tcx.native_int();
+
+        Self::new(kind, ty)
+    }
+    pub fn const_string(tcx: TypeContext<'tcx>, value: &str) -> Self {
+        let kind = ExprKind::Str(value.to_string());
+        let ty = tcx.string();
+
+        Self::new(kind, ty)
+    }
     pub fn tmp_var(tmp_var: &'a TmpVar<'a, 'tcx>) -> Self {
         let kind = ExprKind::TmpVar(tmp_var);
         Self::new(kind, tmp_var.ty())
@@ -475,6 +493,10 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     }
     pub fn and(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
         let kind = ExprKind::And(a, b);
+        Self::new(kind, tcx.boolean())
+    }
+    pub fn or(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Or(a, b);
         Self::new(kind, tcx.boolean())
     }
     pub fn ge(tcx: TypeContext<'tcx>, a: &'a Expr<'a, 'tcx>, b: &'a Expr<'a, 'tcx>) -> Self {
@@ -504,6 +526,8 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     }
     pub fn tuple_index_access(operand: &'a Expr<'a, 'tcx>, index: usize) -> Self {
         let tuple_ty = operand.ty().tuple_ty().expect("operand must be a tuple");
+        assert!(index < tuple_ty.len());
+
         let kind = ExprKind::IndexAccess { operand, index };
         Self::new(kind, tuple_ty[index])
     }
@@ -534,6 +558,19 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     ) -> Self {
         let kind = ExprKind::UnionValue { value, tag };
         Self::new(kind, union_ty)
+    }
+    pub fn cond_value(
+        cond: &'a Expr<'a, 'tcx>,
+        then_value: &'a Expr<'a, 'tcx>,
+        else_value: &'a Expr<'a, 'tcx>,
+    ) -> Self {
+        assert!(then_value.ty().bottom_ty() == else_value.ty().bottom_ty());
+        let kind = ExprKind::CondValue {
+            cond,
+            then_value,
+            else_value,
+        };
+        Self::new(kind, then_value.ty().bottom_ty())
     }
 
     pub fn new(kind: ExprKind<'a, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {

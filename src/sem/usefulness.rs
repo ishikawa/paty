@@ -701,6 +701,7 @@ impl<'tcx> Constructor {
             // The missing ctors are not covered by anything in the matrix except wildcards.
             (Self::Missing { .. } | Self::Wildcard, _) => false,
             (Self::Single, Self::Single) => true,
+            (Self::Variant(self_id), Self::Variant(other_id)) => self_id == other_id,
             (Self::IntRange(self_range), Self::IntRange(other_range)) => {
                 self_range.is_covered_by(other_range)
             }
@@ -947,7 +948,37 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let ctor;
         let fields;
         match pat.kind() {
-            PatternKind::Var(_) | PatternKind::Wildcard => {
+            PatternKind::Var(_) => {
+                // Explicit type annotated
+                if let Some(pat_ty) = pat.ty() {
+                    if let Type::Union(member_types) = cx.head_ty {
+                        let fs: Vec<_> = member_types
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, ty)| ty.is_assignable_to(pat_ty))
+                            .collect();
+                        // TODO: Handle union type other than `fs.len() == 1`
+                        //dbg!(cx.head_ty);
+                        //dbg!(pat);
+                        //dbg!(&fs);
+                        if fs.len() == 1 {
+                            ctor = Constructor::Variant(VariantIdx(fs[0].0));
+                            let tys =
+                                Fields::list_variant_non_hidden_fields(cx, pat_ty, member_types)
+                                    .into_iter()
+                                    .map(|(_, ty)| ty);
+                            let wilds: Vec<_> = tys.map(DeconstructedPat::wildcard).collect();
+                            fields = Fields::from_iter(cx, wilds);
+                            return DeconstructedPat::new(ctor, fields, pat_ty);
+                        }
+                    }
+                }
+
+                // Otherwise, wildcard pattern
+                ctor = Constructor::Wildcard;
+                fields = Fields::empty();
+            }
+            PatternKind::Wildcard => {
                 ctor = Constructor::Wildcard;
                 fields = Fields::empty();
             }

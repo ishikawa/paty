@@ -986,6 +986,28 @@ print_2nd((20, V1 { value: 30 }, 40))
 print_2nd((30, V2 { value: "40" }))
 print_2nd((40, V3 { value: "50" }, 50))
 print_2nd((50, V3 { value: true }, 50))'
+assert 'abc
+12345' '
+def foo(a: string | int64)
+  case a
+  when x: int64 | string
+    puts(x)
+  end
+end
+foo("abc")
+foo(12345)'
+assert 'abc
+12345' '
+def foo(a: string | int64)
+  case a
+  when x: string
+    puts(x)
+  when x: int64
+    puts(x)
+  end
+end
+foo("abc")
+foo(12345)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
