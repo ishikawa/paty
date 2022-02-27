@@ -1,5 +1,5 @@
 //! Semantic analysis
-use self::error::{FormatSymbols, SemanticError};
+use self::error::{FormatSymbols, SemanticError, SemanticErrorKind};
 use crate::syntax::{PatternKind, StmtKind, Typable};
 use crate::ty::{StructTy, TypedField};
 use crate::{
@@ -69,13 +69,43 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
     }
 }
 
+#[derive(Debug)]
+struct Errors<'tcx> {
+    errors: Vec<SemanticError<'tcx>>,
+}
+
+impl<'tcx> Errors<'tcx> {
+    pub fn new() -> Self {
+        Self {
+            errors: Vec::with_capacity(0),
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<SemanticError<'tcx>> {
+        self.errors.clone()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    pub fn push<S: ToString>(&mut self, kind: SemanticErrorKind<'tcx>, source: S) {
+        self.errors
+            .push(SemanticError::new(kind, source.to_string()))
+    }
+
+    pub fn extend(&mut self, err: Vec<SemanticError<'tcx>>) {
+        self.errors.extend(err);
+    }
+}
+
 // Analyze an AST and returns error if any.
 #[allow(clippy::map_entry)]
 pub fn analyze<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     body: &[syntax::TopLevel<'nd, 'tcx>],
 ) -> Result<(), Vec<SemanticError<'tcx>>> {
-    let mut errors = vec![];
+    let mut errors = Errors::new();
     let mut scope = Scope::new();
     let mut named_types = HashMap::new();
     let mut functions: Vec<&syntax::Function<'nd, 'tcx>> = vec![];
@@ -94,7 +124,7 @@ pub fn analyze<'nd, 'tcx>(
             };
 
             if named_types.contains_key(&name) {
-                errors.push(SemanticError::DuplicateNamedType { name });
+                errors.push(SemanticErrorKind::DuplicateNamedType { name }, top_level);
             } else {
                 named_types.insert(name, ty);
             }
@@ -113,7 +143,7 @@ pub fn analyze<'nd, 'tcx>(
                 let sig = fun.signature();
 
                 if functions.iter().any(|f| f.signature() == sig) {
-                    errors.push(SemanticError::DuplicateFunction { signature: sig });
+                    errors.push(SemanticErrorKind::DuplicateFunction { signature: sig }, fun);
                 } else {
                     functions.push(fun);
                 }
@@ -169,18 +199,18 @@ pub fn analyze<'nd, 'tcx>(
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors)
+        Err(errors.to_vec())
     }
 }
 
 #[allow(clippy::needless_bool)]
-fn unify_type<'tcx, T: Typable<'tcx> + std::fmt::Debug>(
+fn unify_type<'tcx, T: Typable<'tcx> + std::fmt::Debug + ToString>(
     expected: &'tcx Type<'tcx>,
     node: &T,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) -> bool {
     if let Some(actual) = node.ty() {
-        if !expect_assignable_type(expected, actual, errors) {
+        if !expect_assignable_type(expected, actual, node, errors) {
             //dbg!(expected);
             //dbg!(node);
             false
@@ -196,10 +226,14 @@ fn unify_type<'tcx, T: Typable<'tcx> + std::fmt::Debug>(
 fn expect_assignable_type<'tcx>(
     expected: &'tcx Type<'tcx>,
     actual: &'tcx Type<'tcx>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    source: impl ToString,
+    errors: &mut Errors<'tcx>,
 ) -> bool {
     if !actual.is_assignable_to(expected) {
-        errors.push(SemanticError::MismatchedType { expected, actual });
+        errors.push(
+            SemanticErrorKind::MismatchedType { expected, actual },
+            source,
+        );
         false
     } else {
         true
@@ -209,7 +243,7 @@ fn expect_assignable_type<'tcx>(
 fn resolve_type<'tcx>(
     ty: &'tcx Type<'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) -> bool {
     match ty {
         Type::Tuple(fs) => fs.iter().all(|fty| resolve_type(fty, named_types, errors)),
@@ -223,9 +257,12 @@ fn resolve_type<'tcx>(
                 if let Some(ty) = named_types.get(named_ty.name()) {
                     named_ty.assign_ty(ty);
                 } else {
-                    errors.push(SemanticError::UndefinedNamedType {
-                        name: named_ty.name().to_string(),
-                    });
+                    errors.push(
+                        SemanticErrorKind::UndefinedNamedType {
+                            name: named_ty.name().to_string(),
+                        },
+                        "",
+                    );
                     return false;
                 }
             }
@@ -247,7 +284,7 @@ fn analyze_explicit_type_annotations_top_level<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     top_level: &syntax::TopLevel<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     match top_level {
         syntax::TopLevel::Declaration(decl) => {
@@ -262,7 +299,7 @@ fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     decl: &syntax::Declaration<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     match decl.kind() {
         syntax::DeclarationKind::Function(fun) => {
@@ -286,7 +323,7 @@ fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     stmt: &syntax::Stmt<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     match stmt.kind() {
         StmtKind::Let { pattern, .. } => {
@@ -303,7 +340,7 @@ fn analyze_explicit_type_annotations_expr<'nd, 'tcx>(
     _tcx: TypeContext<'tcx>,
     expr: &syntax::Expr<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     if let syntax::ExprKind::Case { arms, .. } = expr.kind() {
         for arm in arms {
@@ -320,7 +357,7 @@ fn analyze_decl<'nd, 'tcx>(
     _vars: &mut Scope<'_, 'tcx>,
     functions: &mut Vec<&syntax::Function<'nd, 'tcx>>,
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     if let syntax::DeclarationKind::Function(fun) = decl.kind() {
         // Function definition creates a new scope without a parent scope.
@@ -360,11 +397,14 @@ fn analyze_decl<'nd, 'tcx>(
         match (inferred_retty, fun.retty()) {
             (Some(inferred_retty), Some(retty)) => {
                 if !inferred_retty.is_assignable_to(retty) {
-                    errors.push(SemanticError::MismatchedReturnType {
-                        signature: fun.signature(),
-                        expected: retty,
-                        actual: inferred_retty,
-                    })
+                    errors.push(
+                        SemanticErrorKind::MismatchedReturnType {
+                            signature: fun.signature(),
+                            expected: retty,
+                            actual: inferred_retty,
+                        },
+                        fun,
+                    );
                 }
             }
             (Some(inferred_retty), None) => {
@@ -375,9 +415,12 @@ fn analyze_decl<'nd, 'tcx>(
             }
             (None, None) => {
                 // The return type of function cannot be inferred.
-                errors.push(SemanticError::UnrecognizedReturnType {
-                    signature: fun.signature(),
-                });
+                errors.push(
+                    SemanticErrorKind::UnrecognizedReturnType {
+                        signature: fun.signature(),
+                    },
+                    fun,
+                );
             }
         };
     }
@@ -388,7 +431,7 @@ fn analyze_stmts<'nd, 'tcx>(
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) -> &'tcx Type<'tcx> {
     // unit type for empty body
     let mut last_stmt_ty = if stmts.is_empty() {
@@ -413,7 +456,7 @@ fn analyze_stmt<'nd, 'tcx>(
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     match stmt.kind() {
         &syntax::StmtKind::Let { pattern, rhs } => {
@@ -458,7 +501,7 @@ fn analyze_expr<'nd, 'tcx>(
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     match expr.kind() {
         syntax::ExprKind::Integer(n) => {
@@ -485,7 +528,7 @@ fn analyze_expr<'nd, 'tcx>(
                 let (expected_ty, struct_ty) = match get_struct_ty(tcx, struct_name, named_types) {
                     Ok(struct_ty) => struct_ty,
                     Err(err) => {
-                        errors.push(err);
+                        errors.push(err, expr);
                         return;
                     }
                 };
@@ -499,10 +542,13 @@ fn analyze_expr<'nd, 'tcx>(
                     match value_or_spread {
                         syntax::ValueFieldOrSpread::ValueField(field) => {
                             if defined_fields.contains(field.name()) {
-                                errors.push(SemanticError::DuplicateStructField {
-                                    name: field.name().to_string(),
-                                    struct_ty: expected_ty,
-                                });
+                                errors.push(
+                                    SemanticErrorKind::DuplicateStructField {
+                                        name: field.name().to_string(),
+                                        struct_ty: expected_ty,
+                                    },
+                                    expr,
+                                );
                                 continue;
                             }
                             defined_fields.insert(field.name());
@@ -510,10 +556,13 @@ fn analyze_expr<'nd, 'tcx>(
                             let field_ty = if let Some(f) = struct_ty.get_field(field.name()) {
                                 f.ty()
                             } else {
-                                errors.push(SemanticError::UndefinedStructField {
-                                    name: field.name().to_string(),
-                                    struct_ty: expected_ty,
-                                });
+                                errors.push(
+                                    SemanticErrorKind::UndefinedStructField {
+                                        name: field.name().to_string(),
+                                        struct_ty: expected_ty,
+                                    },
+                                    expr,
+                                );
                                 return;
                             };
 
@@ -524,7 +573,7 @@ fn analyze_expr<'nd, 'tcx>(
                             let operand = if let Some(operand) = spread.operand() {
                                 operand
                             } else {
-                                errors.push(SemanticError::EmptySpreadExpression);
+                                errors.push(SemanticErrorKind::EmptySpreadExpression, expr);
                                 continue;
                             };
 
@@ -538,7 +587,8 @@ fn analyze_expr<'nd, 'tcx>(
                             let fields = match ty.bottom_ty() {
                                 Type::Struct(t) => t.fields(),
                                 _ => {
-                                    errors.push(SemanticError::InvalidSpreadOperand { ty });
+                                    errors
+                                        .push(SemanticErrorKind::InvalidSpreadOperand { ty }, expr);
                                     continue;
                                 }
                             };
@@ -548,14 +598,18 @@ fn analyze_expr<'nd, 'tcx>(
                                     if let Some(f) = struct_ty.get_field(tf.name()) {
                                         f.ty()
                                     } else {
-                                        errors.push(SemanticError::UndefinedStructField {
-                                            name: tf.name().to_string(),
-                                            struct_ty: expected_ty,
-                                        });
+                                        errors.push(
+                                            SemanticErrorKind::UndefinedStructField {
+                                                name: tf.name().to_string(),
+                                                struct_ty: expected_ty,
+                                            },
+                                            expr,
+                                        );
                                         return;
                                     };
 
-                                if !expect_assignable_type(expected_field_ty, tf.ty(), errors) {
+                                if !expect_assignable_type(expected_field_ty, tf.ty(), expr, errors)
+                                {
                                     continue;
                                 }
                             }
@@ -574,10 +628,13 @@ fn analyze_expr<'nd, 'tcx>(
                         syntax::ValueFieldOrSpread::ValueField(field) => {
                             // Define by field can be only once.
                             if value_fields.contains(&field.name()) {
-                                errors.push(SemanticError::DuplicateStructField {
-                                    name: field.name().to_string(),
-                                    struct_ty: tcx.empty_anon_struct_ty(),
-                                });
+                                errors.push(
+                                    SemanticErrorKind::DuplicateStructField {
+                                        name: field.name().to_string(),
+                                        struct_ty: tcx.empty_anon_struct_ty(),
+                                    },
+                                    expr,
+                                );
                                 continue;
                             }
 
@@ -590,7 +647,7 @@ fn analyze_expr<'nd, 'tcx>(
 
                             // If the value will be overridden, its type must be consistence.
                             if let Some(defined_ty) = defined_fields.get(&field.name()) {
-                                if !expect_assignable_type(defined_ty, ty, errors) {
+                                if !expect_assignable_type(defined_ty, ty, expr, errors) {
                                     continue;
                                 }
                             }
@@ -601,7 +658,7 @@ fn analyze_expr<'nd, 'tcx>(
                             let operand = if let Some(operand) = spread.operand() {
                                 operand
                             } else {
-                                errors.push(SemanticError::EmptySpreadExpression);
+                                errors.push(SemanticErrorKind::EmptySpreadExpression, expr);
                                 continue;
                             };
 
@@ -616,14 +673,19 @@ fn analyze_expr<'nd, 'tcx>(
                                 for tf in struct_ty.fields() {
                                     // If the value will be overridden, its type must be consistence.
                                     if let Some(defined_ty) = defined_fields.get(&tf.name()) {
-                                        if !expect_assignable_type(defined_ty, tf.ty(), errors) {
+                                        if !expect_assignable_type(
+                                            defined_ty,
+                                            tf.ty(),
+                                            expr,
+                                            errors,
+                                        ) {
                                             continue;
                                         }
                                     }
                                     defined_fields.insert(tf.name(), tf.ty());
                                 }
                             } else {
-                                errors.push(SemanticError::InvalidSpreadOperand { ty });
+                                errors.push(SemanticErrorKind::InvalidSpreadOperand { ty }, expr);
                             }
                         }
                     }
@@ -680,7 +742,10 @@ fn analyze_expr<'nd, 'tcx>(
             if let Some(binding) = vars.get(name) {
                 unify_type(binding.ty(), expr, errors);
             } else {
-                errors.push(SemanticError::UndefinedVariable { name: name.clone() });
+                errors.push(
+                    SemanticErrorKind::UndefinedVariable { name: name.clone() },
+                    expr,
+                );
             }
         }
         &syntax::ExprKind::IndexAccess(operand, index) => {
@@ -724,10 +789,13 @@ fn analyze_expr<'nd, 'tcx>(
                 }
             }
 
-            errors.push(SemanticError::FieldNotFound {
-                name: index.to_string(),
-                ty: operand_ty,
-            });
+            errors.push(
+                SemanticErrorKind::FieldNotFound {
+                    name: index.to_string(),
+                    ty: operand_ty,
+                },
+                expr,
+            );
         }
         syntax::ExprKind::FieldAccess(operand, name) => {
             analyze_expr(tcx, operand, vars, functions, named_types, errors);
@@ -773,10 +841,13 @@ fn analyze_expr<'nd, 'tcx>(
                 }
             }
 
-            errors.push(SemanticError::FieldNotFound {
-                name: name.to_string(),
-                ty: operand_ty,
-            });
+            errors.push(
+                SemanticErrorKind::FieldNotFound {
+                    name: name.to_string(),
+                    ty: operand_ty,
+                },
+                expr,
+            );
         }
         syntax::ExprKind::Call(call_expr) => {
             let caller_name = call_expr.name();
@@ -798,9 +869,12 @@ fn analyze_expr<'nd, 'tcx>(
                 .filter(|f| f.name() == caller_name)
                 .collect::<Vec<_>>();
             if name_matched.is_empty() {
-                errors.push(SemanticError::UndefinedFunction {
-                    name: caller_name.to_string(),
-                });
+                errors.push(
+                    SemanticErrorKind::UndefinedFunction {
+                        name: caller_name.to_string(),
+                    },
+                    expr,
+                );
                 return;
             }
 
@@ -810,11 +884,14 @@ fn analyze_expr<'nd, 'tcx>(
                 .collect::<Vec<_>>();
             if n_args_matched.is_empty() {
                 assert!(!name_matched.is_empty());
-                errors.push(SemanticError::WrongNumberOfArguments {
-                    name: caller_name.to_string(),
-                    expected: name_matched[0].params().len(),
-                    actual: caller_args.len(),
-                });
+                errors.push(
+                    SemanticErrorKind::WrongNumberOfArguments {
+                        name: caller_name.to_string(),
+                        expected: name_matched[0].params().len(),
+                        actual: caller_args.len(),
+                    },
+                    expr,
+                );
                 return;
             }
 
@@ -852,7 +929,10 @@ fn analyze_expr<'nd, 'tcx>(
                     ranked[1].1.signature()
                 );
 
-                errors.push(SemanticError::MultipleCandidateFunctions { description });
+                errors.push(
+                    SemanticErrorKind::MultipleCandidateFunctions { description },
+                    expr,
+                );
                 return;
             }
 
@@ -941,7 +1021,7 @@ fn analyze_expr<'nd, 'tcx>(
                 }
 
                 if let Some(expected_ty) = expr_ty {
-                    expect_assignable_type(expected_ty, arm_body_ty, errors);
+                    expect_assignable_type(expected_ty, arm_body_ty, expr, errors);
                 } else {
                     expr_ty = Some(arm_body_ty);
                 }
@@ -961,7 +1041,7 @@ fn analyze_expr<'nd, 'tcx>(
                 }
 
                 if let Some(expected_ty) = expr_ty {
-                    expect_assignable_type(expected_ty, else_body_ty, errors);
+                    expect_assignable_type(expected_ty, else_body_ty, expr, errors);
                 } else {
                     expr_ty = Some(else_body_ty);
                 }
@@ -990,7 +1070,7 @@ fn analyze_let_pattern<'nd, 'tcx>(
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &mut HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     match pat.kind() {
         PatternKind::Var(_)
@@ -1016,7 +1096,7 @@ fn analyze_pattern_struct_fields<'nd, 'tcx>(
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     // Fields check
     // All fields must be covered or omitted by a spread pattern.
@@ -1028,10 +1108,13 @@ fn analyze_pattern_struct_fields<'nd, 'tcx>(
             syntax::PatternFieldOrSpread::PatternField(field) => {
                 if let Some(f) = struct_fields.iter().find(|tf| tf.name() == field.name()) {
                     if consumed_field_names.contains(&field.name()) {
-                        errors.push(SemanticError::DuplicateStructField {
-                            name: field.name().to_string(),
-                            struct_ty: expected_ty,
-                        });
+                        errors.push(
+                            SemanticErrorKind::DuplicateStructField {
+                                name: field.name().to_string(),
+                                struct_ty: expected_ty,
+                            },
+                            field,
+                        );
                     } else {
                         analyze_pattern(
                             tcx,
@@ -1045,17 +1128,23 @@ fn analyze_pattern_struct_fields<'nd, 'tcx>(
                         consumed_field_names.insert(field.name());
                     }
                 } else {
-                    errors.push(SemanticError::UndefinedStructField {
-                        name: field.name().to_string(),
-                        struct_ty: expected_ty,
-                    });
+                    errors.push(
+                        SemanticErrorKind::UndefinedStructField {
+                            name: field.name().to_string(),
+                            struct_ty: expected_ty,
+                        },
+                        field,
+                    );
                 }
             }
             syntax::PatternFieldOrSpread::Spread(spread) => {
                 if already_spread {
-                    errors.push(SemanticError::DuplicateSpreadPattern {
-                        pattern: pat_field_or_spread.to_string(),
-                    });
+                    errors.push(
+                        SemanticErrorKind::DuplicateSpreadPattern {
+                            pattern: pat_field_or_spread.to_string(),
+                        },
+                        spread,
+                    );
                 }
 
                 // Assign anonymous struct type to spread pattern.
@@ -1069,9 +1158,12 @@ fn analyze_pattern_struct_fields<'nd, 'tcx>(
                 if let Some(spread_name) = spread.name() {
                     // Bind rest fields to the name.
                     if vars.get(spread_name).is_some() {
-                        errors.push(SemanticError::AlreadyBoundInPattern {
-                            name: spread_name.to_string(),
-                        });
+                        errors.push(
+                            SemanticErrorKind::AlreadyBoundInPattern {
+                                name: spread_name.to_string(),
+                            },
+                            spread,
+                        );
                         return;
                     }
 
@@ -1091,10 +1183,13 @@ fn analyze_pattern_struct_fields<'nd, 'tcx>(
             .filter(|f| !consumed_field_names.contains(f.name()))
             .map(|f| f.name().to_string())
             .collect();
-        errors.push(SemanticError::UncoveredStructFields {
-            names: FormatSymbols { names },
-            struct_ty: expected_ty,
-        });
+        errors.push(
+            SemanticErrorKind::UncoveredStructFields {
+                names: FormatSymbols { names },
+                struct_ty: expected_ty,
+            },
+            "",
+        );
     }
 }
 fn analyze_pattern<'nd, 'tcx>(
@@ -1104,7 +1199,7 @@ fn analyze_pattern<'nd, 'tcx>(
     vars: &mut Scope<'_, 'tcx>,
     functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
-    errors: &mut Vec<SemanticError<'tcx>>,
+    errors: &mut Errors<'tcx>,
 ) {
     // Infer the type of pattern from its values.
     match pat.kind() {
@@ -1124,18 +1219,24 @@ fn analyze_pattern<'nd, 'tcx>(
         PatternKind::Tuple(patterns) => {
             let sub_types = if let Type::Tuple(sub_types) = expected_ty {
                 if sub_types.len() != patterns.len() {
-                    errors.push(SemanticError::MismatchedType {
-                        expected: expected_ty,
-                        actual: pattern_to_type(tcx, pat, named_types),
-                    });
+                    errors.push(
+                        SemanticErrorKind::MismatchedType {
+                            expected: expected_ty,
+                            actual: pattern_to_type(tcx, pat, named_types),
+                        },
+                        pat,
+                    );
                     return;
                 }
                 sub_types
             } else {
-                errors.push(SemanticError::MismatchedType {
-                    expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat, named_types),
-                });
+                errors.push(
+                    SemanticErrorKind::MismatchedType {
+                        expected: expected_ty,
+                        actual: pattern_to_type(tcx, pat, named_types),
+                    },
+                    pat,
+                );
                 return;
             };
 
@@ -1150,19 +1251,25 @@ fn analyze_pattern<'nd, 'tcx>(
             let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
                 struct_ty
             } else {
-                errors.push(SemanticError::MismatchedType {
-                    expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat, named_types),
-                });
+                errors.push(
+                    SemanticErrorKind::MismatchedType {
+                        expected: expected_ty,
+                        actual: pattern_to_type(tcx, pat, named_types),
+                    },
+                    pat,
+                );
                 return;
             };
 
             // Named struct and unnamed struct
             if struct_ty.name() != struct_pat.name() {
-                errors.push(SemanticError::MismatchedType {
-                    expected: expected_ty,
-                    actual: pattern_to_type(tcx, pat, named_types),
-                });
+                errors.push(
+                    SemanticErrorKind::MismatchedType {
+                        expected: expected_ty,
+                        actual: pattern_to_type(tcx, pat, named_types),
+                    },
+                    pat,
+                );
                 return;
             }
 
@@ -1185,7 +1292,10 @@ fn analyze_pattern<'nd, 'tcx>(
         }
         PatternKind::Var(name) => {
             if vars.get(name).is_some() {
-                errors.push(SemanticError::AlreadyBoundInPattern { name: name.clone() });
+                errors.push(
+                    SemanticErrorKind::AlreadyBoundInPattern { name: name.clone() },
+                    pat,
+                );
                 return;
             }
 
@@ -1234,12 +1344,15 @@ fn analyze_pattern<'nd, 'tcx>(
                         match (bindings.get(name), new_bindings.get(name)) {
                             (None, Some(_)) | (Some(_), None) => {
                                 // bound variable not found in this sub-pattern.
-                                errors.push(SemanticError::UnboundVariableInSubPattern {
-                                    name: name.to_string(),
-                                });
+                                errors.push(
+                                    SemanticErrorKind::UnboundVariableInSubPattern {
+                                        name: name.to_string(),
+                                    },
+                                    pat,
+                                );
                             }
                             (Some(expected_ty), Some(actual_ty)) => {
-                                expect_assignable_type(expected_ty, actual_ty, errors);
+                                expect_assignable_type(expected_ty, actual_ty, pat, errors);
                             }
                             (None, None) => unreachable!(),
                         }
@@ -1524,12 +1637,12 @@ fn get_struct_ty<'tcx>(
     tcx: TypeContext<'tcx>,
     struct_name: &str,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
-) -> Result<(&'tcx Type<'tcx>, &'tcx StructTy<'tcx>), SemanticError<'tcx>> {
+) -> Result<(&'tcx Type<'tcx>, &'tcx StructTy<'tcx>), SemanticErrorKind<'tcx>> {
     // Assign named struct type to struct value
     let expected_ty = if let Some(ty) = named_types.get(struct_name) {
         ty
     } else {
-        return Err(SemanticError::UndefinedNamedType {
+        return Err(SemanticErrorKind::UndefinedNamedType {
             name: struct_name.to_string(),
         });
     };
@@ -1537,7 +1650,7 @@ fn get_struct_ty<'tcx>(
     if let Type::Struct(struct_ty) = expected_ty {
         Ok((expected_ty, struct_ty))
     } else {
-        Err(SemanticError::MismatchedType {
+        Err(SemanticErrorKind::MismatchedType {
             expected: tcx.empty_struct_ty(struct_name.to_string()),
             actual: expected_ty,
         })

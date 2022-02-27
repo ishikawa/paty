@@ -74,6 +74,15 @@ pub enum TopLevel<'nd, 'tcx> {
     Stmt(Stmt<'nd, 'tcx>),
 }
 
+impl fmt::Display for TopLevel<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TopLevel::Declaration(decl) => decl.fmt(f),
+            TopLevel::Stmt(stmt) => stmt.fmt(f),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Declaration<'nd, 'tcx> {
     kind: DeclarationKind<'nd, 'tcx>,
@@ -90,6 +99,16 @@ impl<'nd, 'tcx> Declaration<'nd, 'tcx> {
 
     pub fn kind(&self) -> &DeclarationKind<'nd, 'tcx> {
         &self.kind
+    }
+}
+
+impl fmt::Display for Declaration<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            DeclarationKind::Function(fun) => fun.fmt(f),
+            DeclarationKind::Struct(decl) => decl.fmt(f),
+            DeclarationKind::TypeAlias(decl) => decl.fmt(f),
+        }
     }
 }
 
@@ -406,6 +425,25 @@ pub struct Function<'nd, 'tcx> {
     retty: Cell<Option<&'tcx Type<'tcx>>>,
 }
 
+impl fmt::Display for Function<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "def {}", self.name)?;
+        write!(f, "(")?;
+        let mut it = self.params.iter().peekable();
+        while let Some(p) = it.next() {
+            write!(f, "{}", p)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")?;
+        if let Some(retty) = self.retty() {
+            write!(f, ": {}", retty)?;
+        }
+        Ok(())
+    }
+}
+
 impl<'nd, 'tcx> Function<'nd, 'tcx> {
     pub fn new(
         name: String,
@@ -483,6 +521,12 @@ impl<'nd, 'tcx> Node for Parameter<'nd, 'tcx> {
     }
 }
 
+impl fmt::Display for Parameter<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.pattern().fmt(f)
+    }
+}
+
 #[derive(Debug)]
 pub struct StructDeclaration<'tcx> {
     name: String,
@@ -513,6 +557,20 @@ impl<'tcx> StructDeclaration<'tcx> {
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
+    }
+}
+
+impl fmt::Display for StructDeclaration<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "struct {} {{", self.name)?;
+        let mut it = self.fields().iter().peekable();
+        while let Some(field) = it.next() {
+            write!(f, "{}", field)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, "}}")
     }
 }
 
@@ -548,6 +606,12 @@ impl<'tcx> Node for StructFieldDef<'tcx> {
 
     fn data_mut(&mut self) -> &mut NodeData {
         &mut self.data
+    }
+}
+
+impl fmt::Display for StructFieldDef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.ty)
     }
 }
 

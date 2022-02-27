@@ -3,7 +3,7 @@ use std::fmt;
 use crate::ty::{FunctionSignature, Type};
 use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FormatSymbols {
     pub names: Vec<String>,
 }
@@ -23,8 +23,44 @@ impl fmt::Display for FormatSymbols {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum SemanticError<'tcx> {
+#[derive(Debug, Clone)]
+pub struct SemanticError<'tcx> {
+    kind: SemanticErrorKind<'tcx>,
+    // TODO: Replace with location information (line and column).
+    /// the information where the error occurred.
+    location: String,
+}
+
+impl<'tcx> SemanticError<'tcx> {
+    pub fn new(kind: SemanticErrorKind<'tcx>, location: String) -> Self {
+        Self { kind, location }
+    }
+
+    pub fn from_kind(kind: SemanticErrorKind<'tcx>) -> Self {
+        Self::new(kind, "".to_string())
+    }
+
+    pub fn kind(&self) -> &SemanticErrorKind<'tcx> {
+        &self.kind
+    }
+
+    pub fn location(&self) -> &str {
+        &self.location
+    }
+}
+
+impl fmt::Display for SemanticError<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.location.is_empty() {
+            write!(f, "{}", self.kind)
+        } else {
+            write!(f, "{} at `{}`", self.kind, self.location)
+        }
+    }
+}
+
+#[derive(Error, Debug, Clone)]
+pub enum SemanticErrorKind<'tcx> {
     #[error("cannot find variable `{name}` in scope")]
     UndefinedVariable { name: String },
     #[error("cannot find function `{name}` in scope")]

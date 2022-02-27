@@ -1,7 +1,7 @@
 //! Based on usefulness algorithm in Rust:
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/usefulness.rs
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/deconstruct_pat.rs
-use super::error::SemanticError;
+use super::error::{SemanticError, SemanticErrorKind};
 use crate::syntax::token::RangeEnd;
 use crate::syntax::{
     CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
@@ -1560,21 +1560,27 @@ pub fn check_match<'tcx>(
                 unreachable_sub_patterns,
             } => {
                 for sub_pat in unreachable_sub_patterns {
-                    errors.push(SemanticError::UnreachablePattern {
-                        pattern: sub_pat.to_string(),
-                    });
+                    errors.push(SemanticError::from_kind(
+                        SemanticErrorKind::UnreachablePattern {
+                            pattern: sub_pat.to_string(),
+                        },
+                    ));
                 }
             }
             Reachability::Unreachable => {
                 if has_else && i == (report.arm_usefulness.len() - 1) {
                     // "else"
-                    errors.push(SemanticError::UnreachableElseClause);
+                    errors.push(SemanticError::from_kind(
+                        SemanticErrorKind::UnreachableElseClause,
+                    ));
                 } else {
                     let pat = arm.pat.to_pat(&cx);
 
-                    errors.push(SemanticError::UnreachablePattern {
-                        pattern: pat.kind().to_string(),
-                    });
+                    errors.push(SemanticError::from_kind(
+                        SemanticErrorKind::UnreachablePattern {
+                            pattern: pat.kind().to_string(),
+                        },
+                    ));
                 }
             }
         }
@@ -1582,13 +1588,17 @@ pub fn check_match<'tcx>(
         if matches!(reachability, Reachability::Unreachable) {
             if has_else && i == (report.arm_usefulness.len() - 1) {
                 // "else"
-                errors.push(SemanticError::UnreachableElseClause);
+                errors.push(SemanticError::from_kind(
+                    SemanticErrorKind::UnreachableElseClause,
+                ));
             } else {
                 let pat = arm.pat.to_pat(&cx);
 
-                errors.push(SemanticError::UnreachablePattern {
-                    pattern: pat.to_string(),
-                });
+                errors.push(SemanticError::from_kind(
+                    SemanticErrorKind::UnreachablePattern {
+                        pattern: pat.to_string(),
+                    },
+                ));
             }
         }
     }
@@ -1596,9 +1606,11 @@ pub fn check_match<'tcx>(
     for pat in report.non_exhaustiveness_witnesses {
         let pat = pat.to_pat(&cx);
 
-        errors.push(SemanticError::NonExhaustivePattern {
-            pattern: pat.kind().to_string(),
-        })
+        errors.push(SemanticError::from_kind(
+            SemanticErrorKind::NonExhaustivePattern {
+                pattern: pat.kind().to_string(),
+            },
+        ));
     }
 
     if errors.is_empty() {
