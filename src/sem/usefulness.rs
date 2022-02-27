@@ -19,6 +19,7 @@ use typed_arena::Arena;
 
 #[derive(Clone, Copy)]
 pub struct MatchCheckContext<'p, 'tcx> {
+    pub head_ty: &'tcx Type<'tcx>,
     pub pattern_arena: &'p Arena<DeconstructedPat<'p, 'tcx>>,
     pub tree_pattern_arena: &'p Arena<Pattern<'p, 'tcx>>,
 }
@@ -123,7 +124,7 @@ impl IntRange {
         (*self.range.start(), *self.range.end())
     }
 
-    fn is_subrange(&self, other: &Self) -> bool {
+    fn is_sub_range(&self, other: &Self) -> bool {
         other.range.start() <= self.range.start() && self.range.end() <= other.range.end()
     }
 
@@ -169,7 +170,7 @@ impl IntRange {
         if self.intersection(other).is_some() {
             // Constructor splitting should ensure that all intersections we encounter are actually
             // inclusions.
-            assert!(self.is_subrange(other));
+            assert!(self.is_sub_range(other));
             true
         } else {
             false
@@ -200,7 +201,7 @@ enum IntBorder {
     AfterMax,
 }
 
-/// A range of integers that is partitioned into disjoint subranges. This does constructor
+/// A range of integers that is partitioned into disjoint sub ranges. This does constructor
 /// splitting for integer ranges as explained at the top of the file.
 ///
 /// This is fed multiple ranges, and returns an output that covers the input, but is split so that
@@ -485,14 +486,14 @@ impl<'p, 'tcx> PatStack<'p, 'tcx> {
         self.pats.iter().copied()
     }
 
-    // Recursively expand the first pattern into its subpatterns. Only useful if the pattern is an
+    // Recursively expand the first pattern into its sub patterns. Only useful if the pattern is an
     // or-pattern. Panics if `self` is empty.
     fn expand_or_pat<'a>(&'a self) -> impl Iterator<Item = PatStack<'p, 'tcx>> + 'a {
         self.head().iter_fields().map(move |pat| {
-            let mut new_patstack = PatStack::from_pattern(pat);
+            let mut new_pat_stack = PatStack::from_pattern(pat);
 
-            new_patstack.pats.extend_from_slice(&self.pats[1..]);
-            new_patstack
+            new_pat_stack.pats.extend_from_slice(&self.pats[1..]);
+            new_pat_stack
         })
     }
 
@@ -746,7 +747,7 @@ impl<'tcx> Constructor {
 
     /// Some constructors (namely `Wildcard`, `IntRange` and `Slice`) actually stand for a set of actual
     /// constructors (like variants, integers or fixed-sized slices). When specializing for these
-    /// constructors, we want to be specialising for the actual underlying constructors.
+    /// constructors, we want to be specializing for the actual underlying constructors.
     /// Naively, we would simply return the list of constructors they correspond to. We instead are
     /// more clever: if there are constructors that we know will behave the same wrt the current
     /// matrix, we keep them grouped. For example, all slices of a sufficiently large length
@@ -787,7 +788,7 @@ impl<'tcx> Constructor {
 ///
 /// This is constructed for a constructor using [`Fields::wildcards()`]. The idea is that
 /// [`Fields::wildcards()`] constructs a list of fields where all entries are wildcards, and then
-/// given a pattern we fill some of the fields with its subpatterns.
+/// given a pattern we fill some of the fields with its sub patterns.
 /// In the following example `Fields::wildcards` returns `[_, _, _, _]`. Then in
 /// `extract_pattern_arguments` we fill some of the entries, and the result is
 /// `[Some(0), _, _, _]`.
@@ -1114,7 +1115,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     }
 
     /// We keep track for each pattern if it was ever reachable during the analysis. This is used
-    /// with `unreachable_spans` to report unreachable subpatterns arising from or patterns.
+    /// with `unreachable_spans` to report unreachable sub patterns arising from or patterns.
     pub fn set_reachable(&self) {
         self.reachable.set(true)
     }
@@ -1123,7 +1124,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         self.reachable.get()
     }
 
-    /// Report the spans of subpatterns that were not reachable, if any.
+    /// Report the spans of sub patterns that were not reachable, if any.
     pub fn unreachable_sub_pats(
         &self,
         cx: &MatchCheckContext<'p, 'tcx>,
@@ -1138,7 +1139,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         cx: &MatchCheckContext<'p, 'tcx>,
         sub_pats: &mut Vec<&'p Pattern<'p, 'tcx>>,
     ) {
-        // We don't look at subpatterns if we already reported the whole pattern as unreachable.
+        // We don't look at sub patterns if we already reported the whole pattern as unreachable.
         if !self.is_reachable() {
             sub_pats.push(self.to_pat(cx));
         } else {
@@ -1521,6 +1522,7 @@ pub fn check_match<'tcx>(
     let pattern_arena = Arena::default();
     let tree_pattern_arena = Arena::default();
     let cx = MatchCheckContext {
+        head_ty,
         pattern_arena: &pattern_arena,
         tree_pattern_arena: &tree_pattern_arena,
     };
@@ -1620,7 +1622,7 @@ pub fn check_match<'tcx>(
     }
 }
 
-/// Recursively expand this pattern into its subpatterns. Only useful for or-patterns.
+/// Recursively expand this pattern into its sub patterns. Only useful for or-patterns.
 fn expand_or_pat<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>) -> Vec<&'p Pattern<'p, 'tcx>> {
     fn expand<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>, vec: &mut Vec<&'p Pattern<'p, 'tcx>>) {
         if let PatternKind::Or(pats) = pat.kind() {
@@ -1707,9 +1709,11 @@ mod tests_deconstructed_pat {
 
     #[test]
     fn from_pat() {
+        let head_ty = Type::Int64;
         let pattern_arena = Arena::default();
         let tree_pattern_arena = Arena::default();
         let cx = MatchCheckContext {
+            head_ty: &head_ty,
             pattern_arena: &pattern_arena,
             tree_pattern_arena: &tree_pattern_arena,
         };
