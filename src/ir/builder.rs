@@ -99,14 +99,22 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
     fn push_expr(
         &mut self,
-        expr: Expr<'a, 'tcx>,
+        expr: &'a Expr<'a, 'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
-        let expr = self.expr_arena.alloc(expr);
         let t = self.next_temp_var(expr.ty());
         let stmt = Stmt::tmp_var_def(t, expr);
         stmts.push(self.stmt_arena.alloc(stmt));
         self.expr_arena.alloc(Expr::tmp_var(t))
+    }
+
+    fn push_expr_alloc(
+        &mut self,
+        expr: Expr<'a, 'tcx>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
+        let expr = self.expr_arena.alloc(expr);
+        self.push_expr(expr, stmts)
     }
 
     fn push_expr_kind(
@@ -115,7 +123,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         expr_ty: &'tcx Type<'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
-        self.push_expr(Expr::new(kind, expr_ty), stmts)
+        self.push_expr_alloc(Expr::new(kind, expr_ty), stmts)
     }
 
     fn native_int(&self, value: i64) -> &'a Expr<'a, 'tcx> {
@@ -336,7 +344,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                     name: field.name().to_string(),
                                     operand: spread_value,
                                 };
-                                let expr = self.expr_arena.alloc(Expr::new(kind, field.ty()));
+                                let expr = self.push_expr_kind(kind, field.ty(), stmts);
                                 value_fields.push((field.name().to_string(), expr));
                                 initialized_fields.insert(field.name());
                             }
@@ -453,13 +461,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 match operand.ty().bottom_ty() {
                     Type::Tuple(_) => {
-                        self.push_expr(Expr::tuple_index_access(operand, index), stmts)
+                        self.push_expr_alloc(Expr::tuple_index_access(operand, index), stmts)
                     }
                     Type::Union(operand_member_types) => {
                         let ctx = self.builder_context();
-                        let union_tag = self.push_expr(Expr::union_tag(self.tcx, operand), stmts);
-
-                        build_union_member_value(
+                        let union_tag =
+                            self.push_expr_alloc(Expr::union_tag(self.tcx, operand), stmts);
+                        let union_member_value = build_union_member_value(
                             &ctx,
                             operand,
                             operand_member_types,
@@ -472,7 +480,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                     .alloc(Expr::tuple_index_access(member_value, index));
                                 self.promote_to(access, expected_ty, stmts)
                             },
-                        )
+                        );
+                        self.push_expr(union_member_value, stmts)
                     }
                     ty => unreachable!("unsupported type: {}", ty),
                 }
@@ -486,13 +495,14 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                 match operand.ty().bottom_ty() {
                     Type::Struct(_) => {
-                        self.push_expr(Expr::struct_field_access(operand, name), stmts)
+                        self.push_expr_alloc(Expr::struct_field_access(operand, name), stmts)
                     }
                     Type::Union(operand_member_types) => {
                         let ctx = self.builder_context();
-                        let union_tag = self.push_expr(Expr::union_tag(self.tcx, operand), stmts);
+                        let union_tag =
+                            self.push_expr_alloc(Expr::union_tag(self.tcx, operand), stmts);
 
-                        build_union_member_value(
+                        let union_member_value = build_union_member_value(
                             &ctx,
                             operand,
                             operand_member_types,
@@ -505,7 +515,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                     .alloc(Expr::struct_field_access(member_value, name));
                                 self.promote_to(access, expected_ty, stmts)
                             },
-                        )
+                        );
+                        self.push_expr(union_member_value, stmts)
                     }
                     ty => unreachable!("unsupported type: {}", ty),
                 }
@@ -637,9 +648,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 }
 
                 let ctx = self.builder_context();
-                let union_tag = self.push_expr(Expr::union_tag(self.tcx, operand), stmts);
+                let union_tag = self.push_expr_alloc(Expr::union_tag(self.tcx, operand), stmts);
 
-                build_union_member_value(
+                let union_member_value = build_union_member_value(
                     &ctx,
                     operand,
                     operand_member_types,
@@ -664,16 +675,15 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             .alloc(Expr::union_member_access(operand, tag, member_ty));
                         let member_value = self.promote_to(member_value, expected_member_ty, stmts);
 
-                        let union_value = self.expr_arena.alloc(Expr::union_value(
-                            self.tcx,
-                            member_value,
-                            expected_tag,
-                            expected_ty,
-                        ));
+                        let union_value = self.push_expr_alloc(
+                            Expr::union_value(self.tcx, member_value, expected_tag, expected_ty),
+                            stmts,
+                        );
 
                         &*union_value
                     },
-                )
+                );
+                self.push_expr(union_member_value, stmts)
             }
             (operand_ty, Type::Union(member_types)) => {
                 for (tag, mty) in member_types.iter().enumerate() {
@@ -702,7 +712,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     .iter()
                     .map(|f| {
                         let expr = Expr::struct_field_access(operand, f.name());
-                        let value = self.promote_to(self.expr_arena.alloc(expr), f.ty(), stmts);
+                        let expr = self.push_expr_alloc(expr, stmts);
+                        let value = self.promote_to(expr, f.ty(), stmts);
 
                         (f.name().to_string(), value)
                     })
@@ -720,7 +731,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     .enumerate()
                     .map(|(i, fty)| {
                         let expr = Expr::tuple_index_access(operand, i);
-                        self.promote_to(self.expr_arena.alloc(expr), fty, stmts)
+                        let expr = self.push_expr_alloc(expr, stmts);
+                        self.promote_to(expr, fty, stmts)
                     })
                     .collect();
                 self.push_expr_kind(ExprKind::Tuple(m), expected_ty, stmts)
@@ -809,7 +821,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 // For union type values, the appropriate value is output by
                 // branching on the condition of the tag of the value.
                 let t = self.next_temp_var(self.tcx.int64());
-                let get_union_tag = self.push_expr(Expr::union_tag(self.tcx, arg), stmts);
+                let get_union_tag = self.push_expr_alloc(Expr::union_tag(self.tcx, arg), stmts);
 
                 // generates branches
                 let mut branches = vec![];
@@ -824,7 +836,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
                     // print union member
                     let kind = ExprKind::UnionMemberAccess { operand: arg, tag };
-                    let member = self.expr_arena.alloc(Expr::new(kind, member_ty));
+                    let member =
+                        self.push_expr_alloc(Expr::new(kind, member_ty), &mut branch_stmts);
 
                     let ret =
                         self.build_print_expr(member, quote_string, program, &mut branch_stmts);
@@ -851,7 +864,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         format_spec: FormatSpec<'a, 'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
-        self.push_expr(Expr::printf(self.tcx, vec![format_spec]), stmts)
+        self.push_expr_alloc(Expr::printf(self.tcx, vec![format_spec]), stmts)
     }
 
     // Returns `None` for no condition.
@@ -1123,8 +1136,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         operand: init,
                         index: i,
                     };
-                    let field = self.expr_arena.alloc(Expr::new(kind, sub_pat.expect_ty()));
-
+                    let field = self.push_expr_kind(kind, sub_pat.expect_ty(), stmts);
                     self._build_let_pattern(sub_pat, field, program, stmts)
                 }
             }
@@ -1136,10 +1148,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                 operand: init,
                                 name: pat_field.name().to_string(),
                             };
-                            let field = self
-                                .expr_arena
-                                .alloc(Expr::new(kind, pat_field.pattern().expect_ty()));
-
+                            let field =
+                                self.push_expr_kind(kind, pat_field.pattern().expect_ty(), stmts);
                             self._build_let_pattern(pat_field.pattern(), field, program, stmts)
                         }
                         syntax::PatternFieldOrSpread::Spread(spread_pat) => {

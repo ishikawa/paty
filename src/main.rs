@@ -10,6 +10,8 @@ use std::io;
 use std::io::Read;
 use typed_arena::Arena;
 
+const MAX_OPTIMIZATION_REPEAT: usize = 5;
+
 fn main() {
     // Read input: use STDIN if no positional argument to point to the file.
     let src = if let Some(filename) = env::args().nth(1) {
@@ -77,13 +79,13 @@ fn main() {
 
         // Repeat (up to 5 times) the process of replacing the temporary variables
         // until there is no change in the optimized code.
-        for i in 0..5 {
+        for i in 0..MAX_OPTIMIZATION_REPEAT {
             let mut changed = false;
             let pass = optimizer::MarkTmpVarUsed::default();
             optimizer
                 .run_function_pass(&pass, &mut program)
                 .then(|| changed = true);
-            eprintln!("--- (optimizing:{})\n{}", i, program);
+            //eprintln!("--- (optimizing:{})\n{}", i, program);
 
             let pass = optimizer::UpdateTmpVarValue::default();
             optimizer
@@ -101,15 +103,18 @@ fn main() {
                 break;
             }
 
-            let pass = optimizer::ResetTmpVarUsed::default();
-            optimizer
-                .run_function_pass(&pass, &mut program)
-                .then(|| changed = true);
+            // reset used count if next loop
+            if i + 1 < MAX_OPTIMIZATION_REPEAT {
+                let pass = optimizer::ResetTmpVarUsed::default();
+                optimizer
+                    .run_function_pass(&pass, &mut program)
+                    .then(|| changed = true);
+            }
         }
 
         let pass = optimizer::ConcatAdjacentPrintf::default();
         optimizer.run_function_pass(&pass, &mut program);
-        eprintln!("--- (optimized)\n{}", program);
+        //eprintln!("--- (optimized)\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
         let code = emitter.emit(&program);
