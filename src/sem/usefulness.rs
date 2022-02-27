@@ -29,10 +29,8 @@ pub struct PatContext<'a, 'p, 'tcx> {
     /// Type of the current column under investigation.
     pub ty: &'tcx Type<'tcx>,
     /// Whether the current pattern is the whole pattern as found in a match arm, or if it's a
-    /// subpattern.
+    /// sub pattern.
     pub(super) is_top_level: bool,
-    /// Wether the current pattern is from a `non_exhaustive` enum.
-    pub(super) is_non_exhaustive: bool,
 }
 
 /// An inclusive interval, used for precise integer exhaustiveness checking.
@@ -363,7 +361,11 @@ impl<'tcx> SplitWildcard {
             }
             Type::LiteralString(s) => vec![Constructor::Str(s.to_string())],
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
-            Type::Union(_) => todo!(),
+            Type::Union(member_types) => member_types
+                .iter()
+                .enumerate()
+                .map(|(i, _)| Constructor::Variant(VariantIdx(i)))
+                .collect(),
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
             Type::NativeInt => unreachable!("Native C types are not supported."),
@@ -439,17 +441,7 @@ impl<'tcx> SplitWildcard {
             // sometimes prefer reporting the list of constructors instead of just `_`.
             let report_when_all_missing = pcx.is_top_level && !IntRange::is_integral(pcx.ty);
             let ctor = if !self.matrix_ctors.is_empty() || report_when_all_missing {
-                if pcx.is_non_exhaustive {
-                    Constructor::Missing {
-                        nonexhaustive_enum_missing_real_variants: self
-                            .iter_missing(pcx)
-                            .any(|c| !(c.is_non_exhaustive() || c.is_unstable_variant(pcx))),
-                    }
-                } else {
-                    Constructor::Missing {
-                        nonexhaustive_enum_missing_real_variants: false,
-                    }
-                }
+                Constructor::Missing
             } else {
                 Constructor::Wildcard
             };
@@ -621,6 +613,9 @@ impl<'p, 'tcx> fmt::Debug for PatStack<'p, 'tcx> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+pub struct VariantIdx(pub usize);
+
 /// A value can be decomposed into a constructor applied to some fields. This struct represents
 /// the constructor. See also `Fields`.
 ///
@@ -634,6 +629,8 @@ pub enum Constructor {
     /// The constructor for patterns that have a single constructor, like tuples, struct patterns
     /// and fixed-length arrays.
     Single,
+    /// Enum variants.
+    Variant(VariantIdx),
     /// Ranges of integer literal values (`2`, `2..=5` or `2..5`).
     IntRange(IntRange),
     /// String constant
@@ -644,9 +641,7 @@ pub enum Constructor {
     /// Stands for constructors that are not seen in the matrix, as explained in the documentation
     /// for [`SplitWildcard`]. The carried `bool` is used for the `non_exhaustive_omitted_patterns`
     /// lint.
-    Missing {
-        nonexhaustive_enum_missing_real_variants: bool,
-    },
+    Missing,
     /// Wildcard pattern.
     Wildcard,
     /// Or-pattern.
@@ -672,25 +667,16 @@ impl<'tcx> Constructor {
         }
     }
 
-    pub(super) fn is_non_exhaustive(&self) -> bool {
-        matches!(self, Self::NonExhaustive)
-    }
-
-    /// Checks if the `Constructor` is a variant and `TyCtxt::eval_stability` returns
-    /// `EvalResult::Deny { .. }`.
-    ///
-    /// This means that the variant has a stdlib unstable feature marking it.
-    pub fn is_unstable_variant(&self, _pcx: PatContext<'_, '_, 'tcx>) -> bool {
-        false
-    }
-
     /// The number of fields for this constructor. This must be kept in sync with
     /// `Fields::wildcards`.
     pub fn arity(&self, pcx: PatContext<'_, '_, 'tcx>) -> usize {
         match self {
-            Self::Single => match pcx.ty {
+            Self::Single | Self::Variant(_) => match pcx.ty {
                 Type::Tuple(fs) => fs.len(),
                 Type::Struct(struct_ty) => struct_ty.fields().len(),
+                Type::Union(member_types) => {
+                    Fields::list_variant_non_hidden_fields(pcx.cx, pcx.ty, member_types).len()
+                }
                 _ => unreachable!("Unexpected type for `Single` constructor: {:?}", pcx.ty),
             },
             Self::Wildcard
@@ -739,6 +725,9 @@ impl<'tcx> Constructor {
         match self {
             // If `self` is `Single`, `used_ctors` cannot contain anything else than `Single`s.
             Self::Single => !used_ctors.is_empty(),
+            Self::Variant(vid) => used_ctors
+                .iter()
+                .any(|c| matches!(c, Self::Variant(i) if i == vid)),
             Self::IntRange(range) => used_ctors
                 .iter()
                 .filter_map(|c| c.as_int_range())
@@ -852,6 +841,21 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         Fields::from_iter(cx, tys.into_iter().map(DeconstructedPat::wildcard))
     }
 
+    // In the cases of either a `#[non_exhaustive]` field list or a non-public field, we hide
+    // uninhabited fields in order not to reveal the uninhabitedness of the whole variant.
+    // This lists the fields we keep along with their types.
+    fn list_variant_non_hidden_fields(
+        _cx: &MatchCheckContext<'p, 'tcx>,
+        _ty: &'tcx Type<'tcx>,
+        member_types: &[&'tcx Type<'tcx>],
+    ) -> Vec<(VariantIdx, &'tcx Type<'tcx>)> {
+        member_types
+            .iter()
+            .enumerate()
+            .map(move |(i, mty)| (VariantIdx(i), *mty))
+            .collect()
+    }
+
     /// Creates a new list of wildcard fields for a given constructor. The result must have a
     /// length of `constructor.arity()`.
     pub fn wildcards(
@@ -860,7 +864,7 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         constructor: &Constructor,
     ) -> Self {
         match constructor {
-            Constructor::Single => match ty.bottom_ty() {
+            Constructor::Single | Constructor::Variant(_) => match ty.bottom_ty() {
                 Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
                 Type::Struct(struct_ty) => Fields::wildcards_from_tys(
                     cx,
@@ -868,6 +872,12 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
                 ),
                 Type::String | Type::LiteralString(_) => {
                     Fields::wildcards_from_tys(cx, iter::once(ty))
+                }
+                Type::Union(member_types) => {
+                    let tys = Fields::list_variant_non_hidden_fields(cx, ty, member_types)
+                        .into_iter()
+                        .map(|(_, ty)| ty);
+                    Fields::wildcards_from_tys(cx, tys)
                 }
                 ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
@@ -1034,6 +1044,20 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     } else {
                         PatternKind::Struct(StructPattern::new(None, pat_fields))
                     }
+                }
+                _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
+            },
+            Constructor::Variant(idx) => match self.ty() {
+                Type::Union(member_types) => {
+                    let tag = idx.0;
+                    assert!(tag < member_types.len());
+
+                    let member_ty = member_types[tag];
+                    let kind = PatternKind::Var("_".to_string());
+
+                    let pat = Pattern::new(kind);
+                    pat.assign_ty(member_ty);
+                    return cx.tree_pattern_arena.alloc(pat);
                 }
                 _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
             },
@@ -1224,25 +1248,19 @@ impl<'p, 'tcx> Usefulness<'p, 'tcx> {
                 let new_witnesses = if let Constructor::Missing { .. } = ctor {
                     // We got the special `Missing` constructor, so each of the missing constructors
                     // gives a new pattern that is not caught by the match. We list those patterns.
-                    let new_patterns = if pcx.is_non_exhaustive {
-                        // Here we don't want the user to try to list all variants, we want them to add
-                        // a wildcard, so we only suggest that.
-                        vec![DeconstructedPat::wildcard(pcx.ty)]
-                    } else {
-                        let mut split_wildcard = SplitWildcard::new(pcx);
-                        split_wildcard.split(pcx, matrix.heads().map(DeconstructedPat::ctor));
+                    let mut split_wildcard = SplitWildcard::new(pcx);
+                    split_wildcard.split(pcx, matrix.heads().map(DeconstructedPat::ctor));
 
-                        // Construct for each missing constructor a "wild" version of this
-                        // constructor, that matches everything that can be built with
-                        // it. For example, if `ctor` is a `Constructor::Variant` for
-                        // `Option::Some`, we get the pattern `Some(_)`.
-                        split_wildcard
-                            .iter_missing(pcx)
-                            .map(|missing_ctor| {
-                                DeconstructedPat::wild_from_ctor(pcx, missing_ctor.clone())
-                            })
-                            .collect()
-                    };
+                    // Construct for each missing constructor a "wild" version of this
+                    // constructor, that matches everything that can be built with
+                    // it. For example, if `ctor` is a `Constructor::Variant` for
+                    // `Option::Some`, we get the pattern `Some(_)`.
+                    let new_patterns: Vec<_> = split_wildcard
+                        .iter_missing(pcx)
+                        .map(|missing_ctor| {
+                            DeconstructedPat::wild_from_ctor(pcx, missing_ctor.clone())
+                        })
+                        .collect();
 
                     witnesses
                         .into_iter()
@@ -1399,7 +1417,6 @@ fn is_useful<'p, 'tcx>(
         cx,
         ty,
         is_top_level,
-        is_non_exhaustive: false,
     };
 
     // If the first pattern is an or-pattern, expand it.
@@ -1508,10 +1525,10 @@ pub fn check_match<'tcx>(
         tree_pattern_arena: &tree_pattern_arena,
     };
 
-    let mut arms2: Vec<_> = arms
+    let mut match_arms: Vec<_> = arms
         .iter()
         .map(|arm| {
-            let pattern: &_ = cx
+            let pattern = cx
                 .pattern_arena
                 .alloc(DeconstructedPat::from_pat(&cx, arm.pattern()));
 
@@ -1523,14 +1540,15 @@ pub fn check_match<'tcx>(
         .collect();
     // else
     if has_else {
-        let pattern: &_ = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
-        arms2.push(MatchArm {
+        let pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
+
+        match_arms.push(MatchArm {
             pat: pattern,
             has_guard: false,
         })
     }
 
-    let report = compute_match_usefulness(&cx, &arms2, head_ty);
+    let report = compute_match_usefulness(&cx, &match_arms, head_ty);
 
     // Check if the match is exhaustive.
     let mut errors = vec![];
