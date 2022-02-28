@@ -731,6 +731,7 @@ pub struct Pattern<'nd, 'tcx> {
     kind: PatternKind<'nd, 'tcx>,
     // The type of expression is determined in later phase.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
+    explicit_ty: Cell<bool>,
     data: NodeData,
 }
 
@@ -739,12 +740,22 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
         Self {
             kind,
             ty: Cell::new(None),
+            explicit_ty: Cell::new(false),
             data: NodeData::new(),
         }
     }
 
     pub fn kind(&self) -> &PatternKind<'nd, 'tcx> {
         &self.kind
+    }
+
+    pub fn explicit_ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.explicit_ty.get().then(|| self.ty.get().unwrap())
+    }
+
+    pub fn assign_explicit_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.explicit_ty.set(true);
+        self.assign_ty(ty);
     }
 }
 
@@ -770,7 +781,11 @@ impl<'tcx> Typable<'tcx> for Pattern<'_, 'tcx> {
 
 impl fmt::Display for Pattern<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.kind.fmt(f)
+        self.kind.fmt(f)?;
+        if let Some(ty) = self.explicit_ty() {
+            write!(f, ": {}", ty)?;
+        }
+        Ok(())
     }
 }
 
@@ -1693,7 +1708,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         // Type annotated pattern
         if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
-            pat.assign_ty(self.type_annotation(it)?);
+            pat.assign_explicit_ty(self.type_annotation(it)?);
         }
 
         // Or-pattern?

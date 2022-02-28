@@ -1088,7 +1088,8 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     let kind = PatternKind::Var("_".to_string());
 
                     let pat = Pattern::new(kind);
-                    pat.assign_ty(member_ty);
+                    pat.assign_explicit_ty(member_ty);
+
                     return cx.tree_pattern_arena.alloc(pat);
                 }
                 _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
@@ -1611,7 +1612,7 @@ pub fn check_match<'tcx>(
 
                     errors.push(SemanticError::from_kind(
                         SemanticErrorKind::UnreachablePattern {
-                            pattern: pat.kind().to_string(),
+                            pattern: pat.to_string(),
                         },
                     ));
                 }
@@ -1641,7 +1642,7 @@ pub fn check_match<'tcx>(
 
         errors.push(SemanticError::from_kind(
             SemanticErrorKind::NonExhaustivePattern {
-                pattern: pat.kind().to_string(),
+                pattern: pat.to_string(),
             },
         ));
     }

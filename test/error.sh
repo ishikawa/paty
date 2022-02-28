@@ -177,6 +177,13 @@ assert 'non-exhaustive pattern: `_`' '
       puts(1)
     end
   end'
+assert 'non-exhaustive pattern: `_: int64`' '
+  def foo(a: string | int64)
+    case a
+    when x: string
+      puts(x)
+    end
+  end'
 # destructuring
 assert 'uncovered fields `value`' "
   struct T { value: int64 }
