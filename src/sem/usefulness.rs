@@ -672,14 +672,12 @@ impl<'tcx> Constructor {
     /// `Fields::wildcards`.
     pub fn arity(&self, pcx: PatContext<'_, '_, 'tcx>) -> usize {
         match self {
-            Self::Single | Self::Variant(_) => match pcx.ty {
+            Self::Single => match pcx.ty {
                 Type::Tuple(fs) => fs.len(),
                 Type::Struct(struct_ty) => struct_ty.fields().len(),
-                Type::Union(member_types) => {
-                    Fields::list_variant_non_hidden_fields(pcx.cx, pcx.ty, member_types).len()
-                }
                 _ => unreachable!("Unexpected type for `Single` constructor: {:?}", pcx.ty),
             },
+            Self::Variant(_) => 1,
             Self::Wildcard
             | Self::IntRange(_)
             | Self::Str(_)
@@ -843,21 +841,6 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         Fields::from_iter(cx, tys.into_iter().map(DeconstructedPat::wildcard))
     }
 
-    // In the cases of either a `#[non_exhaustive]` field list or a non-public field, we hide
-    // uninhabited fields in order not to reveal the uninhabitedness of the whole variant.
-    // This lists the fields we keep along with their types.
-    fn list_variant_non_hidden_fields(
-        _cx: &MatchCheckContext<'p, 'tcx>,
-        _ty: &'tcx Type<'tcx>,
-        member_types: &[&'tcx Type<'tcx>],
-    ) -> Vec<(VariantIdx, &'tcx Type<'tcx>)> {
-        member_types
-            .iter()
-            .enumerate()
-            .map(move |(i, mty)| (VariantIdx(i), *mty))
-            .collect()
-    }
-
     /// Creates a new list of wildcard fields for a given constructor. The result must have a
     /// length of `constructor.arity()`.
     pub fn wildcards(
@@ -866,7 +849,7 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         constructor: &Constructor,
     ) -> Self {
         match constructor {
-            Constructor::Single | Constructor::Variant(_) => match ty.bottom_ty() {
+            Constructor::Single => match ty.bottom_ty() {
                 Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
                 Type::Struct(struct_ty) => Fields::wildcards_from_tys(
                     cx,
@@ -875,11 +858,19 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
                 Type::String | Type::LiteralString(_) => {
                     Fields::wildcards_from_tys(cx, iter::once(ty))
                 }
+                ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
+            },
+            Constructor::Variant(idx) => match ty.bottom_ty() {
                 Type::Union(member_types) => {
-                    let tys = Fields::list_variant_non_hidden_fields(cx, ty, member_types)
-                        .into_iter()
-                        .map(|(_, ty)| ty);
-                    Fields::wildcards_from_tys(cx, tys)
+                    assert!(idx.0 < member_types.len());
+                    match member_types[idx.0] {
+                        Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
+                        Type::Struct(struct_ty) => Fields::wildcards_from_tys(
+                            cx,
+                            struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
+                        ),
+                        mty => Fields::wildcards_from_tys(cx, iter::once(mty)),
+                    }
                 }
                 ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
@@ -948,56 +939,53 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let ctor;
         let fields;
         match pat.kind() {
-            PatternKind::Var(_) => {
-                // Explicit type annotated
-                if let Some(pat_ty) = pat.ty() {
-                    if let Type::Union(member_types) = cx.head_ty {
-                        let fs: Vec<_> = member_types
+            PatternKind::Var(_) | PatternKind::Wildcard => {
+                match (cx.head_ty, pat.explicit_ty()) {
+                    // If the head type is a union type and the pattern is a variable pattern
+                    // that has type annotations, it matches a corresponding members in the union type.
+                    (Type::Union(member_types), Some(pat_ty)) => {
+                        let fs = member_types
                             .iter()
                             .enumerate()
-                            .filter(|(_, ty)| ty.is_assignable_to(pat_ty))
+                            .filter(|(_, ty)| ty.is_assignable_to(pat_ty));
+
+                        let mut pats: Vec<_> = fs
+                            .map(|(tag, ty)| {
+                                assert!(
+                                    !matches!(ty, Type::Union(_)),
+                                    "union type should be flatten"
+                                );
+
+                                let ctor = Constructor::Variant(VariantIdx(tag));
+                                let fields = Fields::wildcards_from_tys(cx, once(*ty));
+                                DeconstructedPat::new(ctor, fields, pat_ty)
+                            })
                             .collect();
-                        // TODO: Handle union type other than `fs.len() == 1`
-                        //dbg!(cx.head_ty);
-                        //dbg!(pat);
-                        //dbg!(&fs);
-                        if fs.len() == 1 {
-                            ctor = Constructor::Variant(VariantIdx(fs[0].0));
-                            let tys =
-                                Fields::list_variant_non_hidden_fields(cx, pat_ty, member_types)
-                                    .into_iter()
-                                    .map(|(_, ty)| ty);
-                            let wilds: Vec<_> = tys.map(DeconstructedPat::wildcard).collect();
-                            fields = Fields::from_iter(cx, wilds);
-                            return DeconstructedPat::new(ctor, fields, pat_ty);
+
+                        if pats.len() == 1 {
+                            return pats.remove(0);
+                        } else {
+                            ctor = Constructor::Or;
+                            fields = Fields::from_iter(cx, pats);
                         }
                     }
+                    _ => {
+                        // Otherwise, wildcard pattern
+                        ctor = Constructor::Wildcard;
+                        fields = Fields::empty();
+                    }
                 }
-
-                // Otherwise, wildcard pattern
-                ctor = Constructor::Wildcard;
+            }
+            &PatternKind::Integer(value) => {
+                ctor = Constructor::IntRange(IntRange::from_i64(value));
                 fields = Fields::empty();
             }
-            PatternKind::Wildcard => {
-                ctor = Constructor::Wildcard;
+            &PatternKind::Boolean(b) => {
+                ctor = Constructor::IntRange(IntRange::from_bool(b));
                 fields = Fields::empty();
             }
-            PatternKind::Integer(value) => {
-                let int_range = IntRange::from_i64(*value);
-
-                ctor = Constructor::IntRange(int_range);
-                fields = Fields::empty();
-            }
-            PatternKind::Boolean(b) => {
-                let int_range = IntRange::from_bool(*b);
-
-                ctor = Constructor::IntRange(int_range);
-                fields = Fields::empty();
-            }
-            PatternKind::Range { lo, hi, end } => {
-                let int_range = IntRange::from_range(*lo, *hi, pat_ty, *end);
-
-                ctor = Constructor::IntRange(int_range);
+            &PatternKind::Range { lo, hi, end } => {
+                ctor = Constructor::IntRange(IntRange::from_range(lo, hi, pat_ty, end));
                 fields = Fields::empty();
             }
             PatternKind::String(s) => {
