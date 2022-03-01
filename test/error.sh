@@ -184,12 +184,29 @@ assert 'non-exhaustive pattern: `_: int64`' '
       puts(x)
     end
   end'
-assert 'non-exhaustive pattern: `_: int64`' 'def foo(a: string | int64 | boolean)
-  case a
-  when x: string | boolean
-    puts(x)
-  end
-end'
+assert 'non-exhaustive pattern: `_: int64`' '
+  def foo(a: string | int64 | boolean)
+    case a
+    when x: string | boolean
+      puts(x)
+    end
+  end'
+assert 'non-exhaustive pattern: `_: int64`' '
+  type U = string | int64 | boolean
+  def foo(a: U)
+    case a
+    when x: string | boolean
+      puts(x)
+    end
+  end'
+assert 'non-exhaustive pattern: `_: int64`' '
+  type U = string | int64
+  def foo(a: U | boolean)
+    case a
+    when x: string | boolean
+      puts(x)
+    end
+  end'
 # destructuring
 assert 'uncovered fields `value`' "
   struct T { value: int64 }

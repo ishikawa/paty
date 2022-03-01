@@ -7,6 +7,7 @@ use crate::syntax::{
     CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
 };
 use crate::ty::Type;
+use itertools::Itertools;
 use std::iter;
 use std::{
     cell::Cell,
@@ -362,11 +363,14 @@ impl<'tcx> SplitWildcard {
             }
             Type::LiteralString(s) => vec![Constructor::Str(s.to_string())],
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
-            Type::Union(member_types) => member_types
-                .iter()
-                .enumerate()
-                .map(|(i, _)| Constructor::Variant(VariantIdx(i)))
-                .collect(),
+            Type::Union(member_types) => {
+                let member_types = expand_union_ty(member_types);
+                member_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| Constructor::Variant(VariantIdx(i)))
+                    .collect()
+            }
             // This type is one for which we cannot list constructors, like `str` or `f64`.
             Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
             Type::NativeInt => unreachable!("Native C types are not supported."),
@@ -862,6 +866,8 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
             },
             Constructor::Variant(idx) => match ty.bottom_ty() {
                 Type::Union(member_types) => {
+                    let member_types = expand_union_ty(member_types);
+
                     assert!(idx.0 < member_types.len());
                     match member_types[idx.0] {
                         Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
@@ -944,6 +950,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     // If the head type is a union type and the pattern is a variable pattern
                     // that has type annotations, it matches a corresponding members in the union type.
                     (Type::Union(member_types), Some(pat_ty)) => {
+                        let member_types = expand_union_ty(member_types);
                         let fs = member_types
                             .iter()
                             .enumerate()
@@ -1069,6 +1076,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             },
             Constructor::Variant(idx) => match self.ty() {
                 Type::Union(member_types) => {
+                    let member_types = expand_union_ty(member_types);
                     let tag = idx.0;
                     assert!(tag < member_types.len());
 
@@ -1657,6 +1665,29 @@ fn expand_or_pat<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>) -> Vec<&'p Pattern<'p, 't
     let mut pats = Vec::new();
     expand(pat, &mut pats);
     pats
+}
+
+// TODO: Move to ty::UnionTy
+fn expand_union_ty<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Type<'tcx>> {
+    fn expand<'tcx>(ty: &'tcx Type<'tcx>, vec: &mut Vec<&'tcx Type<'tcx>>) {
+        match ty {
+            Type::Named(named_ty) => {
+                expand(named_ty.expect_ty(), vec);
+            }
+            Type::Union(tys) => {
+                for t in tys {
+                    expand(t, vec);
+                }
+            }
+            _ => vec.push(ty),
+        }
+    }
+
+    let mut tys = Vec::new();
+    for mty in member_types {
+        expand(mty, &mut tys);
+    }
+    tys.into_iter().unique().collect()
 }
 
 #[cfg(test)]

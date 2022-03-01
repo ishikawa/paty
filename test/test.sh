@@ -1008,6 +1008,19 @@ def foo(a: string | int64)
 end
 foo("abc")
 foo(12345)'
+assert 'abc
+12345
+false' '
+type U = string | int64
+def foo(a: U | boolean)
+  case a
+  when x: string | boolean | int64
+    puts(x)
+  end
+end
+foo("abc")
+foo(12345)
+foo(false)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
