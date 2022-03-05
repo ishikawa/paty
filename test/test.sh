@@ -838,189 +838,189 @@ assert '100 300' '
   end'
 # type aliases
 assert '101' '
-type K = int64
-n: K = 101
-puts(n)'
+  type K = int64
+  n: K = 101
+  puts(n)'
 assert 'x value is 136
 y value is 353' '
-type Point = {
-  x: int64,
-  y: int64,
-}
-def printCoord(pt: Point)
-  puts("x value is", pt.x)
-  puts("y value is", pt.y)
-end
-printCoord({ x: 136, y: 353 })'
-assert '900 800' '
-type K = int64
-type T = (K, K)
-type S = { pair: T }
-def kts(s: S)
-  case s
-  when x: S
-    puts(x.pair.0, x.pair.1)
+  type Point = {
+    x: int64,
+    y: int64,
+  }
+  def printCoord(pt: Point)
+    puts("x value is", pt.x)
+    puts("y value is", pt.y)
   end
-end
-kts({ pair: (900, 800) })'
+  printCoord({ x: 136, y: 353 })'
+assert '900 800' '
+  type K = int64
+  type T = (K, K)
+  type S = { pair: T }
+  def kts(s: S)
+    case s
+    when x: S
+      puts(x.pair.0, x.pair.1)
+    end
+  end
+  kts({ pair: (900, 800) })'
 # union type
 assert '1234567
 abcdefg' '
-type ID = string | int64
-def printID(id: ID)
-  puts(id)
-end
-printID(1234567)
-printID("abcdefg")'
+  type ID = string | int64
+  def printID(id: ID)
+    puts(id)
+  end
+  printID(1234567)
+  printID("abcdefg")'
 assert '1234567
 abcdefg' '
-type ID = string | int64
-def printID(id: ID)
-  puts(id)
-end
-x = 1234567
-printID(x)
-y = "abcdefg"
-printID(y)'
+  type ID = string | int64
+  def printID(id: ID)
+    puts(id)
+  end
+  x = 1234567
+  printID(x)
+  y = "abcdefg"
+  printID(y)'
 assert 'a = 102030
 b = true' '
-type Field = (string, int64 | boolean)
-def print_field(t: Field)
-  puts(t.0, "=", t.1)
-end
-print_field(("a", 102030))
-t = ("b", true)
-print_field(t)'
+  type Field = (string, int64 | boolean)
+  def print_field(t: Field)
+    puts(t.0, "=", t.1)
+  end
+  print_field(("a", 102030))
+  t = ("b", true)
+  print_field(t)'
 assert 'a = true
 b = false
 c = on
 d = off' '
-struct Option {
-  name: string,
-  value: boolean | "on" | "off",
-}
-def show_option(opt: Option)
-  puts(opt.name, "=", opt.value)
-end
-show_option(Option { name: "a", value: true })
-show_option(Option { name: "b", value: false })
-show_option(Option { name: "c", value: "on" })
-opt = Option { name: "d", value: "off" }
-show_option(opt)'
+  struct Option {
+    name: string,
+    value: boolean | "on" | "off",
+  }
+  def show_option(opt: Option)
+    puts(opt.name, "=", opt.value)
+  end
+  show_option(Option { name: "a", value: true })
+  show_option(Option { name: "b", value: false })
+  show_option(Option { name: "c", value: "on" })
+  opt = Option { name: "d", value: "off" }
+  show_option(opt)'
 assert 'a = true
 b = false
 c = on
 d = off' '
-def show_option(opt: { name: string, value: boolean | "on" | "off" })
-  puts(opt.name, "=", opt.value)
-end
-show_option({ name: "a", value: true })
-fv = { value: false }
-show_option({ name: "b", ...fv })
-opt1 = { name: "c", value: "on" }
-show_option(opt1)
-off = { value: "off" }
-opt2 = { name: "d", ...off }
-show_option(opt2)'
+  def show_option(opt: { name: string, value: boolean | "on" | "off" })
+    puts(opt.name, "=", opt.value)
+  end
+  show_option({ name: "a", value: true })
+  fv = { value: false }
+  show_option({ name: "b", ...fv })
+  opt1 = { name: "c", value: "on" }
+  show_option(opt1)
+  off = { value: "off" }
+  opt2 = { name: "d", ...off }
+  show_option(opt2)'
 assert '105' '
-a: int64 | string = 105
-puts(a)'
+  a: int64 | string = 105
+  puts(a)'
 assert 'false true' '
-def foo(n): int64 | boolean
-  n > 0
-end
-puts(foo(0), foo(1))'
+  def foo(n): int64 | boolean
+    n > 0
+  end
+  puts(foo(0), foo(1))'
 assert 'ok
 error' '
-type U = "ok" | "error"
-def foo(b: string | int64)
-  puts(b)
-end
-def bar(b: U | "failed")
-  puts(b)
-end
-a: U = "ok"
-b: U = "error"
-foo(a)
-bar(b)'
+  type U = "ok" | "error"
+  def foo(b: string | int64)
+    puts(b)
+  end
+  def bar(b: U | "failed")
+    puts(b)
+  end
+  a: U = "ok"
+  b: U = "error"
+  foo(a)
+  bar(b)'
 assert 'hundred
 TRUE' '
-struct T1 { name: string, value: int64 }
-struct T2 { name: string, value: boolean }
-def print_name(t: T1 | T2)
-  puts(t.name)
-end
-print_name(T1 { name: "hundred", value: 100 })
-print_name(T2 { name: "TRUE", value: true })'
+  struct T1 { name: string, value: int64 }
+  struct T2 { name: string, value: boolean }
+  def print_name(t: T1 | T2)
+    puts(t.name)
+  end
+  print_name(T1 { name: "hundred", value: 100 })
+  print_name(T2 { name: "TRUE", value: true })'
 assert '100
 hundred
 TRUE' '
-struct T1 { name: string | int64, value: int64 }
-struct T2 { name: string, value: boolean }
-struct T3 { value: T1 | T2 }
-def print_name(t: T3)
-  puts(t.value.name)
-end
-print_name(T3 { value: T1 { name: 100, value: 200 }})
-print_name(T3 { value: T1 { name: "hundred", value: 300 }})
-print_name(T3 { value: T2 { name: "TRUE", value: true }})'
+  struct T1 { name: string | int64, value: int64 }
+  struct T2 { name: string, value: boolean }
+  struct T3 { value: T1 | T2 }
+  def print_name(t: T3)
+    puts(t.value.name)
+  end
+  print_name(T3 { value: T1 { name: 100, value: 200 }})
+  print_name(T3 { value: T1 { name: "hundred", value: 300 }})
+  print_name(T3 { value: T2 { name: "TRUE", value: true }})'
 assert '20
 30
 40
 50
 true' '
-type S = string | boolean
-type V1 = { value: int64 }
-type V2 = { value: string }
-type V3 = { value: S }
-type T =
-  (int64, V1) |
-  (int64, V1, int64) |
-  (int64, V2) |
-  (int64, V3, int64)
-def print_2nd(t: T)
-  puts(t.1.value)
-end
-print_2nd((10, V1 { value: 20 }))
-print_2nd((20, V1 { value: 30 }, 40))
-print_2nd((30, V2 { value: "40" }))
-print_2nd((40, V3 { value: "50" }, 50))
-print_2nd((50, V3 { value: true }, 50))'
+  type S = string | boolean
+  type V1 = { value: int64 }
+  type V2 = { value: string }
+  type V3 = { value: S }
+  type T =
+    (int64, V1) |
+    (int64, V1, int64) |
+    (int64, V2) |
+    (int64, V3, int64)
+  def print_2nd(t: T)
+    puts(t.1.value)
+  end
+  print_2nd((10, V1 { value: 20 }))
+  print_2nd((20, V1 { value: 30 }, 40))
+  print_2nd((30, V2 { value: "40" }))
+  print_2nd((40, V3 { value: "50" }, 50))
+  print_2nd((50, V3 { value: true }, 50))'
 assert 'abc
 12345' '
-def foo(a: string | int64)
-  case a
-  when x: int64 | string
-    puts(x)
+  def foo(a: string | int64)
+    case a
+    when x: int64 | string
+      puts(x)
+    end
   end
-end
-foo("abc")
-foo(12345)'
+  foo("abc")
+  foo(12345)'
 assert 'abc
 12345' '
-def foo(a: string | int64)
-  case a
-  when x: string
-    puts(x)
-  when x: int64
-    puts(x)
+  def foo(a: string | int64)
+    case a
+    when x: string
+      puts(x)
+    when x: int64
+      puts(x)
+    end
   end
-end
-foo("abc")
-foo(12345)'
+  foo("abc")
+  foo(12345)'
 assert 'abc
 12345
 false' '
-type U = string | int64
-def foo(a: U | boolean)
-  case a
-  when x: string | boolean | int64
-    puts(x)
+  type U = string | int64
+  def foo(a: U | boolean)
+    case a
+    when x: string | boolean | int64
+      puts(x)
+    end
   end
-end
-foo("abc")
-foo(12345)
-foo(false)'
+  foo("abc")
+  foo(12345)
+  foo(false)'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
