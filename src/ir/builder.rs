@@ -3,7 +3,7 @@ use super::inst::{
     Stmt, TmpVar, Var, VarDef,
 };
 use crate::syntax::{self, PatternKind, Typable};
-use crate::ty::{FunctionSignature, StructTy, Type, TypeContext};
+use crate::ty::{expand_union_ty, FunctionSignature, StructTy, Type, TypeContext};
 use std::collections::HashSet;
 use typed_arena::Arena;
 
@@ -496,12 +496,14 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         self.push_expr_alloc(Expr::tuple_index_access(operand, index), stmts)
                     }
                     Type::Union(operand_member_types) => {
+                        let operand_member_types = expand_union_ty(operand_member_types);
+
                         let ctx = self.builder_context();
                         let union_tag = self.push_expr(self.union_tag(operand), stmts);
                         let union_member_value = build_union_member_value(
                             &ctx,
                             operand,
-                            operand_member_types,
+                            &operand_member_types,
                             union_tag,
                             expected_ty,
                             |_, member_value| {
@@ -529,13 +531,15 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         self.push_expr_alloc(Expr::struct_field_access(operand, name), stmts)
                     }
                     Type::Union(operand_member_types) => {
+                        let operand_member_types = expand_union_ty(operand_member_types);
+
                         let ctx = self.builder_context();
                         let union_tag = self.push_expr(self.union_tag(operand), stmts);
 
                         let union_member_value = build_union_member_value(
                             &ctx,
                             operand,
-                            operand_member_types,
+                            &operand_member_types,
                             union_tag,
                             expected_ty,
                             |_, member_value| {
@@ -676,6 +680,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 if operand_member_types == expected_member_types {
                     return operand;
                 }
+                let operand_member_types = expand_union_ty(operand_member_types);
+                let expected_member_types = expand_union_ty(expected_member_types);
 
                 let ctx = self.builder_context();
                 let union_tag = self.push_expr(self.union_tag(operand), stmts);
@@ -683,7 +689,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let union_member_value = build_union_member_value(
                     &ctx,
                     operand,
-                    operand_member_types,
+                    &operand_member_types,
                     union_tag,
                     expected_ty,
                     |tag, member_value| {
@@ -716,6 +722,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr(union_member_value, stmts)
             }
             (operand_ty, Type::Union(member_types)) => {
+                let member_types = expand_union_ty(member_types);
+
                 for (tag, mty) in member_types.iter().enumerate() {
                     if operand_ty.is_assignable_to(mty) {
                         let value = self.promote_to(operand, mty, stmts);
@@ -848,6 +856,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self._build_printf(FormatSpec::Str("}"), stmts)
             }
             Type::Union(member_types) => {
+                let member_types = expand_union_ty(member_types);
+
                 // For union type values, the appropriate value is output by
                 // branching on the condition of the tag of the value.
                 let t = self.next_temp_var(self.tcx.int64());
@@ -1052,15 +1062,16 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 // type must be a conforming member, so check the tag of the value.
                 let matched_tag_and_tys: Option<Vec<(usize, &'_ Type<'_>)>> =
                     if let Type::Union(member_ty) = target_ty {
+                        let member_ty = expand_union_ty(member_ty);
                         let matched_tag_and_tys: Vec<_> = member_ty
                             .iter()
+                            .map(|ty| ty.bottom_ty())
                             .enumerate()
-                            .filter_map(|(tag, ty)| ty.is_assignable_to(pat_ty).then(|| (tag, *ty)))
+                            .filter_map(|(tag, ty)| ty.is_assignable_to(pat_ty).then(|| (tag, ty)))
                             .collect();
                         assert!(
                         !matched_tag_and_tys.is_empty(),
-                        "Since it passed semantic analysis, there must be at least one element."
-                    );
+                        "Since it passed semantic analysis, there must be at least one element.");
 
                         if matched_tag_and_tys.len() == member_ty.len() {
                             None
@@ -1076,41 +1087,45 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         );
                     };
 
-                let (cond, value) =
-                    if let Some(matched_tag_and_tys) = &matched_tag_and_tys {
-                        // get member tag
-                        let union_tag = self.push_expr(self.union_tag(target_expr), stmts);
+                let (cond, value) = if let Some(matched_tag_and_tys) = &matched_tag_and_tys {
+                    // get member tag
+                    let union_tag = self.push_expr(self.union_tag(target_expr), outer_stmts);
 
-                        // cond
-                        let (first_tag, _) = matched_tag_and_tys[0];
-                        let init = self.eq(union_tag, self.usize(first_tag));
-                        let cond = matched_tag_and_tys
-                            .iter()
-                            .skip(1)
-                            .fold(init, |expr, (tag, _)| {
-                                self.or(expr, self.eq(union_tag, self.usize(*tag)))
-                            });
+                    // cond
+                    let (first_tag, _) = matched_tag_and_tys[0];
+                    let init = self.eq(union_tag, self.usize(first_tag));
+                    let cond = matched_tag_and_tys
+                        .iter()
+                        .skip(1)
+                        .fold(init, |expr, (tag, _)| {
+                            self.or(expr, self.eq(union_tag, self.usize(*tag)))
+                        });
 
-                        // value
-                        let (first_tag, _) = matched_tag_and_tys.last().unwrap();
-                        let init = self.union_member_access(target_expr, *first_tag, pat_ty);
-                        let value = matched_tag_and_tys.iter().rev().skip(1).fold(
-                            init,
-                            |expr, (tag, _)| {
-                                self.cond_value(
-                                    self.eq(union_tag, self.usize(*tag)),
-                                    self.union_member_access(target_expr, *tag, pat_ty),
-                                    expr,
-                                )
-                            },
-                        );
+                    // value
+                    let (first_tag, member_ty) = matched_tag_and_tys.last().unwrap();
+                    let init = self.promote_to(
+                        self.union_member_access(target_expr, *first_tag, member_ty),
+                        pat_ty,
+                        stmts,
+                    );
+                    let value = matched_tag_and_tys.iter().rev().skip(1).fold(
+                        init,
+                        |expr, (tag, member_ty)| {
+                            let then_expr = self.promote_to(
+                                self.union_member_access(target_expr, *tag, member_ty),
+                                pat_ty,
+                                stmts,
+                            );
+                            self.cond_value(self.eq(union_tag, self.usize(*tag)), then_expr, expr)
+                        },
+                    );
 
-                        (Some(cond), value)
-                    } else {
-                        // Other than union type.
-                        let value = self.promote_to(target_expr, pat_ty, stmts);
-                        (None, value)
-                    };
+                    (Some(cond), value)
+                } else {
+                    // Other than union type.
+                    let value = self.promote_to(target_expr, pat_ty, stmts);
+                    (None, value)
+                };
 
                 let stmt = Stmt::VarDef(VarDef::new(name.clone(), value));
                 stmts.push(self.stmt_arena.alloc(stmt));

@@ -339,6 +339,29 @@ impl fmt::Display for Type<'_> {
     }
 }
 
+// TODO: Move to ty::UnionTy
+pub fn expand_union_ty<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Type<'tcx>> {
+    fn expand<'tcx>(ty: &'tcx Type<'tcx>, vec: &mut Vec<&'tcx Type<'tcx>>) {
+        match ty {
+            Type::Named(named_ty) => {
+                expand(named_ty.expect_ty(), vec);
+            }
+            Type::Union(tys) => {
+                for t in tys {
+                    expand(t, vec);
+                }
+            }
+            _ => vec.push(ty),
+        }
+    }
+
+    let mut tys = Vec::new();
+    for mty in member_types {
+        expand(mty, &mut tys);
+    }
+    tys.into_iter().unique().collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypedField<'tcx> {
     name: String,

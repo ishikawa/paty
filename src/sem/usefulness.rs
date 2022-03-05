@@ -6,8 +6,7 @@ use crate::syntax::token::RangeEnd;
 use crate::syntax::{
     CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
 };
-use crate::ty::Type;
-use itertools::Itertools;
+use crate::ty::{expand_union_ty, Type};
 use std::iter;
 use std::{
     cell::Cell,
@@ -1665,29 +1664,6 @@ fn expand_or_pat<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>) -> Vec<&'p Pattern<'p, 't
     let mut pats = Vec::new();
     expand(pat, &mut pats);
     pats
-}
-
-// TODO: Move to ty::UnionTy
-fn expand_union_ty<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Type<'tcx>> {
-    fn expand<'tcx>(ty: &'tcx Type<'tcx>, vec: &mut Vec<&'tcx Type<'tcx>>) {
-        match ty {
-            Type::Named(named_ty) => {
-                expand(named_ty.expect_ty(), vec);
-            }
-            Type::Union(tys) => {
-                for t in tys {
-                    expand(t, vec);
-                }
-            }
-            _ => vec.push(ty),
-        }
-    }
-
-    let mut tys = Vec::new();
-    for mty in member_types {
-        expand(mty, &mut tys);
-    }
-    tys.into_iter().unique().collect()
 }
 
 #[cfg(test)]
