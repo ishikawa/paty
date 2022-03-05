@@ -938,6 +938,37 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         DeconstructedPat::new(self.ctor.clone(), self.fields, self.ty)
     }
 
+    fn to_union_variants(
+        cx: &MatchCheckContext<'p, 'tcx>,
+        member_types: &[&'tcx Type<'tcx>],
+        pat_ty: &'tcx Type<'tcx>,
+    ) -> Self {
+        let member_types = expand_union_ty(member_types);
+        let fs = member_types
+            .iter()
+            .enumerate()
+            .filter(|(_, ty)| ty.is_assignable_to(pat_ty));
+
+        let mut pats: Vec<_> = fs
+            .map(|(tag, ty)| {
+                assert!(
+                    !matches!(ty, Type::Union(_)),
+                    "union type should be flatten"
+                );
+
+                let ctor = Constructor::Variant(VariantIdx(tag));
+                let fields = Fields::wildcards_from_tys(cx, once(*ty));
+                DeconstructedPat::new(ctor, fields, pat_ty)
+            })
+            .collect();
+
+        if pats.len() == 1 {
+            pats.remove(0)
+        } else {
+            DeconstructedPat::new(Constructor::Or, Fields::from_iter(cx, pats), pat_ty)
+        }
+    }
+
     pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
         let pat_ty = pat.expect_ty().bottom_ty();
 
@@ -949,31 +980,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     // If the head type is a union type and the pattern is a variable pattern
                     // that has type annotations, it matches a corresponding members in the union type.
                     (Type::Union(member_types), Some(pat_ty)) => {
-                        let member_types = expand_union_ty(member_types);
-                        let fs = member_types
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, ty)| ty.is_assignable_to(pat_ty));
-
-                        let mut pats: Vec<_> = fs
-                            .map(|(tag, ty)| {
-                                assert!(
-                                    !matches!(ty, Type::Union(_)),
-                                    "union type should be flatten"
-                                );
-
-                                let ctor = Constructor::Variant(VariantIdx(tag));
-                                let fields = Fields::wildcards_from_tys(cx, once(*ty));
-                                DeconstructedPat::new(ctor, fields, pat_ty)
-                            })
-                            .collect();
-
-                        if pats.len() == 1 {
-                            return pats.remove(0);
-                        } else {
-                            ctor = Constructor::Or;
-                            fields = Fields::from_iter(cx, pats);
-                        }
+                        return Self::to_union_variants(cx, member_types, pat_ty);
                     }
                     _ => {
                         // Otherwise, wildcard pattern
@@ -995,6 +1002,10 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 fields = Fields::empty();
             }
             PatternKind::String(s) => {
+                if let Type::Union(member_types) = cx.head_ty {
+                    return Self::to_union_variants(cx, member_types, pat_ty);
+                }
+
                 ctor = Constructor::Str(s.clone());
                 fields = Fields::empty();
             }

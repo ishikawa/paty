@@ -1021,6 +1021,23 @@ false' '
   foo("abc")
   foo(12345)
   foo(false)'
+assert '1
+2
+3' '
+  def foo(a: "ok" | "failed" | "unknown")
+    case a
+    when "ok"
+      puts(1)
+    when "failed"
+      puts(2)
+    when "unknown"
+      puts(2)
+    end
+  end
+  foo("ok")
+  foo("failed")
+  foo("unknown")'
+
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

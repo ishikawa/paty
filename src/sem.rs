@@ -1210,7 +1210,6 @@ fn analyze_pattern<'nd, 'tcx>(
             unify_type(tcx.literal_boolean(*b), pat, errors);
         }
         PatternKind::String(s) => {
-            //unify_type(tcx.string(), pat, errors);
             unify_type(tcx.literal_string(s.clone()), pat, errors);
         }
         PatternKind::Range { .. } => {

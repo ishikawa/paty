@@ -597,7 +597,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 arms,
                 else_body,
             } => {
-                let t = self.next_temp_var(expr.ty().unwrap());
+                let t = self.next_temp_var(expr_ty);
                 let t_head = self.build_expr(head, program, stmts);
 
                 // Construct "if-else" statement from each branches.
@@ -677,11 +677,12 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
         match (operand_ty, expected_ty) {
             (Type::Union(operand_member_types), Type::Union(expected_member_types)) => {
+                let operand_member_types = expand_union_ty(operand_member_types);
+                let expected_member_types = expand_union_ty(expected_member_types);
+
                 if operand_member_types == expected_member_types {
                     return operand;
                 }
-                let operand_member_types = expand_union_ty(operand_member_types);
-                let expected_member_types = expand_union_ty(expected_member_types);
 
                 let ctx = self.builder_context();
                 let union_tag = self.push_expr(self.union_tag(operand), stmts);
@@ -920,6 +921,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             return None;
         }
 
+        // Patterns may introduce new types.
+        program.add_decl_type(pat_ty);
+
         match pat.kind() {
             &PatternKind::Integer(n) => {
                 let value = self.expr_arena.alloc(Expr::int64(self.tcx, n));
@@ -1051,8 +1055,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 })
             }
             PatternKind::Var(name) => {
-                program.add_decl_type(pat_ty);
-
                 // Variable pattern with/without type annotation.
                 // If the pattern has an explicit type annotation, it matches
                 // the member of an union type value.

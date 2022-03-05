@@ -207,6 +207,15 @@ assert 'non-exhaustive pattern: `_: int64`' '
       puts(x)
     end
   end'
+assert 'non-exhaustive pattern: `_: "unknown"`' '
+  def foo(a: "ok" | "failed" | "unknown")
+    case a
+    when "ok"
+      puts(1)
+    when "failed"
+      puts(2)
+    end
+  end'
 # destructuring
 assert 'uncovered fields `value`' "
   struct T { value: int64 }
