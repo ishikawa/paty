@@ -929,8 +929,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let value = self.expr_arena.alloc(Expr::int64(self.tcx, n));
                 Some(self.eq(target_expr, value))
             }
-            PatternKind::Boolean(b) => {
-                let expr = if *b {
+            &PatternKind::Boolean(b) => {
+                let expr = if b {
                     target_expr
                 } else {
                     self.expr_arena.alloc(Expr::not(self.tcx, target_expr))
