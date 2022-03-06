@@ -1031,7 +1031,7 @@ assert '1
     when "failed"
       puts(2)
     when "unknown"
-      puts(2)
+      puts(3)
     end
   end
   foo("ok")

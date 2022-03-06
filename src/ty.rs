@@ -216,18 +216,16 @@ impl<'tcx> Type<'tcx> {
             (x, Self::Union(ms)) => ms.iter().any(|m| x.is_assignable_to(m)),
             // named type
             (Self::Named(named_ty1), ty2) => {
-                if let Some(ty1) = named_ty1.ty() {
-                    ty1.is_assignable_to(ty2)
-                } else {
-                    false
-                }
+                let ty1 = named_ty1.ty().unwrap_or_else(|| {
+                    panic!("Named type `{:?}` was not resolved yet.", named_ty1)
+                });
+                ty1.is_assignable_to(ty2)
             }
             (ty1, Self::Named(named_ty2)) => {
-                if let Some(ty2) = named_ty2.ty() {
-                    ty1.is_assignable_to(ty2)
-                } else {
-                    false
-                }
+                let ty2 = named_ty2.ty().unwrap_or_else(|| {
+                    panic!("Named type `{:?}` was not resolved yet.", named_ty2)
+                });
+                ty1.is_assignable_to(ty2)
             }
             // Others
             _ => self == other,
