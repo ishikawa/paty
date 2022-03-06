@@ -518,15 +518,32 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push(')');
             }
-            ExprKind::Int64(n) => {
-                match expr.ty() {
-                    Type::Int64 | Type::LiteralInt64(_) => {
-                        // Use standard macros for integer constant expression to expand
-                        // a value to the type int_least_N.
-                        code.push_str(&format!("INT64_C({})", *n))
+            &ExprKind::Int64(n) => {
+                // We have to use INT_MIN macro to represent the minimum value of
+                // 64 bit integers.
+                //
+                // There is no such thing as negative literal in C/C++: just the unary
+                // negative operator with a positive integer which produces a compile time
+                // evaluated constant.
+                //
+                // `9223372036854775808` is too big to fit into a 64 bit signed integral type,
+                // so the behavior of negating this and assigning to a signed 64 bit integral
+                // type is implementation defined.
+                match n {
+                    // prints INT_XXX macro directory
+                    i64::MIN => code.push_str("INT64_MIN"),
+                    i64::MAX => code.push_str("INT64_MAX"),
+                    _ => {
+                        match expr.ty() {
+                            Type::Int64 | Type::LiteralInt64(_) => {
+                                // Use standard macros for integer constant expression to expand
+                                // a value to the type int_least_N.
+                                code.push_str(&format!("INT64_C({})", n))
+                            }
+                            Type::NativeInt => code.push_str(&n.to_string()),
+                            _ => unreachable!("Unexpected integral type: {}", expr.ty()),
+                        }
                     }
-                    Type::NativeInt => code.push_str(&format!("{}", *n)),
-                    _ => unreachable!("Unexpected integral type: {}", expr.ty()),
                 }
             }
             ExprKind::Bool(b) => {

@@ -825,6 +825,10 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
     }
     */
 
+    pub fn from_one(cx: &MatchCheckContext<'p, 'tcx>, field: DeconstructedPat<'p, 'tcx>) -> Self {
+        Self::from_iter(cx, once(field))
+    }
+
     pub fn from_iter(
         cx: &MatchCheckContext<'p, 'tcx>,
         fields: impl IntoIterator<Item = DeconstructedPat<'p, 'tcx>>,
@@ -911,17 +915,29 @@ pub struct DeconstructedPat<'p, 'tcx> {
 }
 
 impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
-    pub(super) fn wildcard(ty: &'tcx Type<'tcx>) -> Self {
+    pub fn wildcard(ty: &'tcx Type<'tcx>) -> Self {
         Self::new(Constructor::Wildcard, Fields::empty(), ty)
     }
 
-    pub(super) fn new(ctor: Constructor, fields: Fields<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
+    pub fn new(ctor: Constructor, fields: Fields<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         DeconstructedPat {
             ctor,
             fields,
             ty: ty.bottom_ty(),
             reachable: Cell::new(false),
         }
+    }
+
+    pub fn from_i64(value: i64, ty: &'tcx Type<'tcx>) -> Self {
+        let ctor = Constructor::IntRange(IntRange::from_i64(value));
+        let fields = Fields::empty();
+        Self::new(ctor, fields, ty)
+    }
+
+    pub fn from_bool(b: bool, ty: &'tcx Type<'tcx>) -> Self {
+        let ctor = Constructor::IntRange(IntRange::from_bool(b));
+        let fields = Fields::empty();
+        Self::new(ctor, fields, ty)
     }
 
     /// Construct a pattern that matches everything that starts with this constructor.
@@ -947,17 +963,39 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let fs = member_types
             .iter()
             .enumerate()
-            .filter(|(_, ty)| ty.is_assignable_to(pat_ty));
+            .filter_map(|(tag, member_ty)| {
+                // If the pattern type contains all members of the union type,
+                // create the field as a wildcard
+                if member_ty.is_assignable_to(pat_ty) {
+                    Some((
+                        tag,
+                        member_ty,
+                        Fields::wildcards_from_tys(cx, once(*member_ty)),
+                    ))
+                }
+                // Create a constant field if the pattern type contains some of
+                // the members of the union type
+                else if pat_ty.is_assignable_to(member_ty) {
+                    let field = match *pat_ty {
+                        Type::LiteralBoolean(b) => DeconstructedPat::from_bool(b, pat_ty),
+                        Type::LiteralInt64(value) => DeconstructedPat::from_i64(value, pat_ty),
+                        _ => todo!("pat_ty = {:?}, member_ty = {:?}", pat_ty, member_ty),
+                    };
+
+                    Some((tag, member_ty, Fields::from_one(cx, field)))
+                } else {
+                    None
+                }
+            });
 
         let mut pats: Vec<_> = fs
-            .map(|(tag, ty)| {
+            .map(|(tag, member_ty, fields)| {
                 assert!(
-                    !matches!(ty, Type::Union(_)),
+                    !matches!(member_ty, Type::Union(_)),
                     "union type should be flatten"
                 );
 
                 let ctor = Constructor::Variant(VariantIdx(tag));
-                let fields = Fields::wildcards_from_tys(cx, once(*ty));
                 DeconstructedPat::new(ctor, fields, pat_ty)
             })
             .collect();
@@ -990,16 +1028,18 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 }
             }
             &PatternKind::Integer(value) => {
-                ctor = Constructor::IntRange(IntRange::from_i64(value));
-                fields = Fields::empty();
+                if let Type::Union(member_types) = cx.head_ty {
+                    return Self::to_union_variants(cx, member_types, pat_ty);
+                } else {
+                    return Self::from_i64(value, pat_ty);
+                }
             }
             &PatternKind::Boolean(b) => {
                 if let Type::Union(member_types) = cx.head_ty {
                     return Self::to_union_variants(cx, member_types, pat_ty);
+                } else {
+                    return Self::from_bool(b, pat_ty);
                 }
-
-                ctor = Constructor::IntRange(IntRange::from_bool(b));
-                fields = Fields::empty();
             }
             &PatternKind::Range { lo, hi, end } => {
                 ctor = Constructor::IntRange(IntRange::from_range(lo, hi, pat_ty, end));

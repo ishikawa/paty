@@ -971,8 +971,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 .iter()
                 .enumerate()
                 .filter_map(|(tag, member_ty)| {
-                    member_ty
-                        .is_assignable_to(pat_ty)
+                    (member_ty.is_assignable_to(pat_ty) || pat_ty.is_assignable_to(member_ty))
                         .then(|| (tag, *member_ty))
                 })
                 .collect();

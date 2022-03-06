@@ -290,6 +290,14 @@ assert "(100, \"foo\")
   end
   puts(foo(true))
   puts(foo(false))'
+assert '1000' '
+  def foo(n)
+    case n
+    when -9223372036854775808..=9223372036854775807
+      puts(n)
+    end
+  end
+  foo(1000)'
 # or-pattern
 assert '0..=2
 0..=2
@@ -1073,6 +1081,46 @@ false' '
   end
   foo(true)
   foo(false)'
+assert '1
+2
+3
+4
+5' '
+  def foo(a: boolean | "ok" | "failed" | "unknown")
+    case a
+    when "ok"
+      puts(1)
+    when "failed"
+      puts(2)
+    when "unknown"
+      puts(3)
+    when true
+      puts(4)
+    when false
+      puts(5)
+    end
+  end
+  foo("ok")
+  foo("failed")
+  foo("unknown")
+  foo(true)
+  foo(false)'
+# assert 'true
+# -9223372036854775808
+# 1000' '
+#   def foo(n: int64 | boolean)
+#     case n
+#     when x: boolean
+#       puts(x)
+#     when -9223372036854775808
+#       puts("INT_MIN")
+#     when -9223372036854775807..=9223372036854775807
+#       puts(n)
+#     end
+#   end
+#   foo(true)
+#   foo(-9223372036854775808)
+#   foo(1000)'
 
 # examples
 assert 13 "$(cat examples/foo.paty)"
