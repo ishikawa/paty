@@ -994,6 +994,10 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 fields = Fields::empty();
             }
             &PatternKind::Boolean(b) => {
+                if let Type::Union(member_types) = cx.head_ty {
+                    return Self::to_union_variants(cx, member_types, pat_ty);
+                }
+
                 ctor = Constructor::IntRange(IntRange::from_bool(b));
                 fields = Fields::empty();
             }

@@ -1051,6 +1051,28 @@ assert '1
   foo("ok")
   foo("failed")
   foo("unknown")'
+assert '1
+2' '
+  def foo(a: true | false)
+    case a
+    when true
+      puts(1)
+    when false
+      puts(2)
+    end
+  end
+  foo(true)
+  foo(false)'
+assert 'true
+false' '
+  def foo(a: true | false)
+    case a
+    when false | true
+      puts(a)
+    end
+  end
+  foo(true)
+  foo(false)'
 
 # examples
 assert 13 "$(cat examples/foo.paty)"
