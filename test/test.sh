@@ -1037,6 +1037,20 @@ assert '1
   foo("ok")
   foo("failed")
   foo("unknown")'
+assert '1
+2
+2' '
+  def foo(a: "ok" | "failed" | "unknown")
+    case a
+    when "ok"
+      puts(1)
+    when "failed" | "unknown"
+      puts(2)
+    end
+  end
+  foo("ok")
+  foo("failed")
+  foo("unknown")'
 
 # examples
 assert 13 "$(cat examples/foo.paty)"
