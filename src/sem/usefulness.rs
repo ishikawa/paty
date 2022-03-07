@@ -915,10 +915,6 @@ pub struct DeconstructedPat<'p, 'tcx> {
 }
 
 impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
-    pub fn wildcard(ty: &'tcx Type<'tcx>) -> Self {
-        Self::new(Constructor::Wildcard, Fields::empty(), ty)
-    }
-
     pub fn new(ctor: Constructor, fields: Fields<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         DeconstructedPat {
             ctor,
@@ -940,6 +936,22 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         Self::new(ctor, fields, ty)
     }
 
+    pub fn from_range(lo: i64, hi: i64, ty: &'tcx Type<'tcx>, end: RangeEnd) -> Self {
+        let ctor = Constructor::IntRange(IntRange::from_range(lo, hi, ty, end));
+        let fields = Fields::empty();
+        Self::new(ctor, fields, ty)
+    }
+
+    pub fn from_string(value: String, ty: &'tcx Type<'tcx>) -> Self {
+        let ctor = Constructor::Str(value);
+        let fields = Fields::empty();
+        Self::new(ctor, fields, ty)
+    }
+
+    pub fn wildcard(ty: &'tcx Type<'tcx>) -> Self {
+        Self::new(Constructor::Wildcard, Fields::empty(), ty)
+    }
+
     /// Construct a pattern that matches everything that starts with this constructor.
     /// For example, if `ctor` is a `Constructor::Variant` for `Option::Some`, we get the pattern
     /// `Some(_)`.
@@ -957,32 +969,29 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     fn to_union_variants(
         cx: &MatchCheckContext<'p, 'tcx>,
         member_types: &[&'tcx Type<'tcx>],
-        pat_ty: &'tcx Type<'tcx>,
+        pat: &Pattern<'_, 'tcx>,
     ) -> Self {
+        let pat_ty = pat.expect_ty().bottom_ty();
         let member_types = expand_union_ty(member_types);
         let fs = member_types
             .iter()
             .enumerate()
             .filter_map(|(tag, member_ty)| {
+                // Create a constant field if the pattern type contains some of
+                // the members of the union type. Handle this first to check
+                // usefulness of range pattern properly.
+                if pat_ty.is_assignable_to(member_ty) {
+                    let de_pat = Self::_from_pat(cx, pat);
+                    Some((tag, member_ty, Fields::from_one(cx, de_pat)))
+                }
                 // If the pattern type contains all members of the union type,
                 // create the field as a wildcard
-                if member_ty.is_assignable_to(pat_ty) {
+                else if member_ty.is_assignable_to(pat_ty) {
                     Some((
                         tag,
                         member_ty,
                         Fields::wildcards_from_tys(cx, once(*member_ty)),
                     ))
-                }
-                // Create a constant field if the pattern type contains some of
-                // the members of the union type
-                else if pat_ty.is_assignable_to(member_ty) {
-                    let field = match *pat_ty {
-                        Type::LiteralBoolean(b) => DeconstructedPat::from_bool(b, pat_ty),
-                        Type::LiteralInt64(value) => DeconstructedPat::from_i64(value, pat_ty),
-                        _ => todo!("pat_ty = {:?}, member_ty = {:?}", pat_ty, member_ty),
-                    };
-
-                    Some((tag, member_ty, Fields::from_one(cx, field)))
                 } else {
                     None
                 }
@@ -1000,6 +1009,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             })
             .collect();
 
+        assert!(!pats.is_empty());
         if pats.len() == 1 {
             pats.remove(0)
         } else {
@@ -1007,63 +1017,27 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         }
     }
 
-    pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
+    fn _from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
         let pat_ty = pat.expect_ty().bottom_ty();
 
-        let ctor;
-        let fields;
         match pat.kind() {
-            PatternKind::Var(_) | PatternKind::Wildcard => {
-                match (cx.head_ty, pat.explicit_ty()) {
-                    // If the head type is a union type and the pattern is a variable pattern
-                    // that has type annotations, it matches a corresponding members in the union type.
-                    (Type::Union(member_types), Some(pat_ty)) => {
-                        return Self::to_union_variants(cx, member_types, pat_ty);
-                    }
-                    _ => {
-                        // Otherwise, wildcard pattern
-                        ctor = Constructor::Wildcard;
-                        fields = Fields::empty();
-                    }
-                }
-            }
-            &PatternKind::Integer(value) => {
-                if let Type::Union(member_types) = cx.head_ty {
-                    return Self::to_union_variants(cx, member_types, pat_ty);
-                } else {
-                    return Self::from_i64(value, pat_ty);
-                }
-            }
-            &PatternKind::Boolean(b) => {
-                if let Type::Union(member_types) = cx.head_ty {
-                    return Self::to_union_variants(cx, member_types, pat_ty);
-                } else {
-                    return Self::from_bool(b, pat_ty);
-                }
-            }
-            &PatternKind::Range { lo, hi, end } => {
-                ctor = Constructor::IntRange(IntRange::from_range(lo, hi, pat_ty, end));
-                fields = Fields::empty();
-            }
-            PatternKind::String(s) => {
-                if let Type::Union(member_types) = cx.head_ty {
-                    return Self::to_union_variants(cx, member_types, pat_ty);
-                }
-
-                ctor = Constructor::Str(s.clone());
-                fields = Fields::empty();
-            }
+            PatternKind::Var(_) | PatternKind::Wildcard => Self::wildcard(pat_ty),
+            &PatternKind::Integer(value) => Self::from_i64(value, pat_ty),
+            &PatternKind::Boolean(b) => Self::from_bool(b, pat_ty),
+            &PatternKind::Range { lo, hi, end } => Self::from_range(lo, hi, pat_ty, end),
+            PatternKind::String(s) => Self::from_string(s.clone(), pat_ty),
             PatternKind::Tuple(sub_pats) => {
-                ctor = Constructor::Single;
+                let ctor = Constructor::Single;
                 let pats: Vec<_> = sub_pats
                     .iter()
                     .map(|pat| DeconstructedPat::from_pat(cx, pat))
                     .collect();
 
-                fields = Fields::from_iter(cx, pats);
+                let fields = Fields::from_iter(cx, pats);
+                DeconstructedPat::new(ctor, fields, pat_ty)
             }
             PatternKind::Struct(struct_pat) => {
-                ctor = Constructor::Single;
+                let ctor = Constructor::Single;
 
                 // Convert struct fields to deconstruct patterns.
                 // We must follow the order of fields in the type.
@@ -1086,18 +1060,28 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     sub_pats.push(sub_pat);
                 }
 
-                fields = Fields::from_iter(cx, sub_pats);
+                let fields = Fields::from_iter(cx, sub_pats);
+                DeconstructedPat::new(ctor, fields, pat_ty)
             }
             PatternKind::Or(..) => {
-                ctor = Constructor::Or;
+                let ctor = Constructor::Or;
                 let pats = expand_or_pat(pat)
                     .into_iter()
                     .map(|pat| DeconstructedPat::from_pat(cx, pat));
-                fields = Fields::from_iter(cx, pats);
+                let fields = Fields::from_iter(cx, pats);
+                DeconstructedPat::new(ctor, fields, pat_ty)
+            }
+        }
+    }
+
+    pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
+        if let Type::Union(member_types) = cx.head_ty {
+            if !matches!(pat.kind(), PatternKind::Or(_)) {
+                return Self::to_union_variants(cx, member_types, pat);
             }
         }
 
-        DeconstructedPat::new(ctor, fields, pat_ty)
+        Self::_from_pat(cx, pat)
     }
 
     // Only used for error description
@@ -1128,22 +1112,13 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 }
                 _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
             },
-            Constructor::Variant(idx) => match self.ty() {
-                Type::Union(member_types) => {
-                    let member_types = expand_union_ty(member_types);
-                    let tag = idx.0;
-                    assert!(tag < member_types.len());
-
-                    let member_ty = member_types[tag];
-                    let kind = PatternKind::Var("_".to_string());
-
-                    let pat = Pattern::new(kind);
-                    pat.assign_explicit_ty(member_ty);
-
-                    return cx.tree_pattern_arena.alloc(pat);
-                }
-                _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
-            },
+            Constructor::Variant(_) => {
+                return self
+                    .iter_fields()
+                    .map(|de_pat| de_pat.to_pat(cx))
+                    .next()
+                    .unwrap();
+            }
             Constructor::IntRange(range) => {
                 let pat = range.to_pat(self.ty());
                 return cx.tree_pattern_arena.alloc(pat);
@@ -1158,7 +1133,15 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         };
 
         let pat = Pattern::new(kind);
-        pat.assign_ty(self.ty());
+
+        // We'd like to print diagnostics with the explicit type
+        // for union head value.
+        if matches!(cx.head_ty, Type::Union(_)) {
+            pat.assign_explicit_ty(self.ty());
+        } else {
+            pat.assign_ty(self.ty());
+        }
+
         cx.tree_pattern_arena.alloc(pat)
     }
 
@@ -1565,6 +1548,7 @@ fn compute_match_usefulness<'p, 'tcx>(
         .iter()
         .copied()
         .map(|arm| {
+            //dbg!(&arm.pat);
             let v = PatStack::from_pattern(arm.pat);
             is_useful(cx, &matrix, &v, ArmType::RealArm, arm.has_guard, true);
             if !arm.has_guard {
@@ -1687,8 +1671,8 @@ pub fn check_match<'tcx>(
         }
     }
     // non exhaustiveness
-    for pat in report.non_exhaustiveness_witnesses {
-        let pat = pat.to_pat(&cx);
+    for de_pat in report.non_exhaustiveness_witnesses {
+        let pat = de_pat.to_pat(&cx);
 
         errors.push(SemanticError::from_kind(
             SemanticErrorKind::NonExhaustivePattern {

@@ -1105,22 +1105,22 @@ assert '1
   foo("unknown")
   foo(true)
   foo(false)'
-# assert 'true
-# -9223372036854775808
-# 1000' '
-#   def foo(n: int64 | boolean)
-#     case n
-#     when x: boolean
-#       puts(x)
-#     when -9223372036854775808
-#       puts("INT_MIN")
-#     when -9223372036854775807..=9223372036854775807
-#       puts(n)
-#     end
-#   end
-#   foo(true)
-#   foo(-9223372036854775808)
-#   foo(1000)'
+assert 'true
+INT_MIN
+1000' '
+  def foo(n: int64 | boolean)
+    case n
+    when x: boolean
+      puts(x)
+    when -9223372036854775807..=9223372036854775807
+      puts(n)
+    when -9223372036854775808
+      puts("INT_MIN")
+    end
+  end
+  foo(true)
+  foo(-9223372036854775808)
+  foo(1000)'
 
 # examples
 assert 13 "$(cat examples/foo.paty)"
