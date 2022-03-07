@@ -132,6 +132,17 @@ assert 'unreachable pattern: `0`' '
       puts(0)
     end
   end'
+assert 'unreachable pattern: `0`' '
+  def foo(n: int64 | string)
+    case n
+    when x: int64
+      puts(x)
+    when x: string
+      puts(x)
+    when 0
+      puts(0)
+    end
+  end'
 # non-exhaustive pattern
 assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
   def foo(n: int64)
@@ -242,6 +253,15 @@ assert 'non-exhaustive pattern: `_: false`' '
 assert 'non-exhaustive pattern: `9223372036854775807`' '
   def foo(n)
     case n
+    when -9223372036854775808..=9223372036854775806
+      puts(n)
+    end
+  end'
+assert 'non-exhaustive pattern: `9223372036854775807`' '
+  def foo(n: int64 | boolean)
+    case n
+    when true | false
+      puts(n)
     when -9223372036854775808..=9223372036854775806
       puts(n)
     end
