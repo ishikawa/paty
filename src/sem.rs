@@ -91,7 +91,7 @@ impl<'tcx> Errors<'tcx> {
 
     pub fn push<S: ToString>(&mut self, kind: SemanticErrorKind<'tcx>, source: S) {
         self.errors
-            .push(SemanticError::new(kind, source.to_string()))
+            .push(SemanticError::new(kind, source.to_string()));
     }
 
     pub fn extend(&mut self, err: Vec<SemanticError<'tcx>>) {
@@ -1701,7 +1701,15 @@ fn pattern_to_type<'nd, 'tcx>(
                 tcx.anon_struct_ty(typed_fields)
             }
         }
-        // TODO: Union type for Or-pattern
-        PatternKind::Or(_) | PatternKind::Var(_) | PatternKind::Wildcard => tcx.undetermined(),
+        PatternKind::Var(_) | PatternKind::Wildcard => {
+            pat.ty().unwrap_or_else(|| tcx.undetermined())
+        }
+        PatternKind::Or(patterns) => {
+            let sub_types = patterns
+                .iter()
+                .map(|pat| pattern_to_type(tcx, pat, named_types));
+
+            tcx.union(sub_types)
+        }
     }
 }

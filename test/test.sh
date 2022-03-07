@@ -1121,7 +1121,26 @@ INT_MIN
   foo(true)
   foo(-9223372036854775808)
   foo(1000)'
-
+# assert '???' '
+#   type S = string | boolean
+#   type V1 = { value: int64 }
+#   type V2 = { value: string }
+#   type V3 = { value: S }
+#   type T =
+#     (int64, V1) |
+#     (int64, V1, int64) |
+#     (int64, V2) |
+#     (int64, V3, int64)
+#   def foo(t: T)
+#     case t
+#     when (x: int64, V1 { value })
+#       puts(x, value)
+#     else
+#       puts(0)
+#     end
+#   end
+#   foo((100, V1 { value: 200 }))
+#   foo((100, V1 { value: 200 }, 300))'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
