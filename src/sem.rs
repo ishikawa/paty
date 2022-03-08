@@ -32,9 +32,12 @@ impl<'tcx> Errors<'tcx> {
     }
 
     pub fn push<S: ToString>(&mut self, kind: SemanticErrorKind<'tcx>, source: S) {
+        // panic!(
+        //     "semantic error: {}",
+        //     SemanticError::new(kind.clone(), source.to_string())
+        // );
         self.errors
             .push(SemanticError::new(kind, source.to_string()));
-        //panic!("semantic error: {}", source.to_string());
     }
 
     pub fn extend(&mut self, err: Vec<SemanticError<'tcx>>) {
@@ -1248,7 +1251,7 @@ fn analyze_pattern<'nd, 'tcx>(
             unify_type(tcx.int64(), pat, errors);
         }
         PatternKind::Tuple(patterns) => {
-            let sub_types = if let Type::Tuple(sub_types) = expected_ty {
+            let sub_types = if let Type::Tuple(sub_types) = expected_ty.bottom_ty() {
                 if sub_types.len() != patterns.len() {
                     errors.push(
                         SemanticErrorKind::MismatchedType {
@@ -1279,7 +1282,7 @@ fn analyze_pattern<'nd, 'tcx>(
         }
         PatternKind::Struct(struct_pat) => {
             // Struct type check
-            let struct_ty = if let Type::Struct(struct_ty) = expected_ty {
+            let struct_ty = if let Type::Struct(struct_ty) = expected_ty.bottom_ty() {
                 struct_ty
             } else {
                 errors.push(

@@ -847,22 +847,10 @@ assert '100 300' '
   when { a, ...x }
     puts(a, x.c)
   end'
-# We can initialze a regular struct from type alias.
-assert 'T { value: 100 }' '
-  struct T { value: int64 }
-  type V1 = T
-  puts(V1 { value: 100 })'
-# The anonymous struct pattern must match a type alias.
-# assert '100 200' '
-#   type T = { value: string }
-#   def foo(n: (int64, T))
-#     case n
-#     when (x: int64, { value })   
-#       puts(x, value)
-#     end
-#   end
-#   foo((100, { value: 200 }))'
-# type aliases
+
+# ---------------------------------
+# Type aliases
+# ---------------------------------
 assert '101' '
   type K = int64
   n: K = 101
@@ -889,6 +877,21 @@ assert '900 800' '
     end
   end
   kts({ pair: (900, 800) })'
+# We can initialze a regular struct from type alias.
+assert 'T { value: 100 }' '
+  struct T { value: int64 }
+  type V1 = T
+  puts(V1 { value: 100 })'
+# The anonymous struct pattern must match a type alias.
+assert '100 200' '
+  type T = { value: string }
+  def foo(n: (int64, T))
+    case n
+    when (x: int64, { value })
+      puts(x, value)
+    end
+  end
+  foo((100, { value: "200" }))'
 
 # ---------------------------------
 # Union type
