@@ -12,6 +12,37 @@ mod error;
 mod usefulness;
 
 #[derive(Debug)]
+struct Errors<'tcx> {
+    errors: Vec<SemanticError<'tcx>>,
+}
+
+impl<'tcx> Errors<'tcx> {
+    pub fn new() -> Self {
+        Self {
+            errors: Vec::with_capacity(0),
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<SemanticError<'tcx>> {
+        self.errors.clone()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    pub fn push<S: ToString>(&mut self, kind: SemanticErrorKind<'tcx>, source: S) {
+        self.errors
+            .push(SemanticError::new(kind, source.to_string()));
+        //panic!("semantic error: {}", source.to_string());
+    }
+
+    pub fn extend(&mut self, err: Vec<SemanticError<'tcx>>) {
+        self.errors.extend(err);
+    }
+}
+
+#[derive(Debug)]
 struct Binding<'tcx> {
     name: String,
     ty: &'tcx Type<'tcx>,
@@ -66,36 +97,6 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
     /// Returns an iterator which iterates bindings in this scope.
     pub fn bindings_iter(&self) -> impl Iterator<Item = (&str, &Binding<'tcx>)> {
         self.bindings.iter().map(|(k, v)| (k.as_str(), v))
-    }
-}
-
-#[derive(Debug)]
-struct Errors<'tcx> {
-    errors: Vec<SemanticError<'tcx>>,
-}
-
-impl<'tcx> Errors<'tcx> {
-    pub fn new() -> Self {
-        Self {
-            errors: Vec::with_capacity(0),
-        }
-    }
-
-    pub fn to_vec(&self) -> Vec<SemanticError<'tcx>> {
-        self.errors.clone()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    pub fn push<S: ToString>(&mut self, kind: SemanticErrorKind<'tcx>, source: S) {
-        self.errors
-            .push(SemanticError::new(kind, source.to_string()));
-    }
-
-    pub fn extend(&mut self, err: Vec<SemanticError<'tcx>>) {
-        self.errors.extend(err);
     }
 }
 
@@ -518,7 +519,9 @@ fn analyze_expr<'nd, 'tcx>(
 
             for value in values {
                 analyze_expr(tcx, value, vars, functions, named_types, errors);
-                value_types.push(value.ty().unwrap());
+
+                let value_ty = value.ty().unwrap_or_else(|| tcx.undetermined());
+                value_types.push(value_ty);
             }
 
             unify_type(tcx.tuple(value_types), expr, errors);
@@ -532,6 +535,35 @@ fn analyze_expr<'nd, 'tcx>(
                         return;
                     }
                 };
+
+                // We don't permit initialize an anonymous struct with type alias
+                // because it makes difficult to understand code. Only regular
+                // struct can be initialized with named initializer.
+                //
+                // The following code is illegal:
+                //
+                //    type T = { value: int64 }
+                //    t = T { value: 1000 }
+                //
+                // It should be written as:
+                //
+                //    type T = { value: int64 }
+                //    t = { value: 1000 }
+                //
+                // or:
+                //
+                //    struct T { value: int64 }
+                //    type S = T
+                //    t = S { value: 1000 }
+                if struct_ty.name().is_none() {
+                    errors.push(
+                        SemanticErrorKind::InitializeAnonymousStructWithTypeAlias {
+                            alias: struct_name.to_string(),
+                        },
+                        expr,
+                    );
+                    return;
+                }
 
                 unify_type(expected_ty, expr, errors);
 
@@ -1646,7 +1678,7 @@ fn get_struct_ty<'tcx>(
         });
     };
 
-    if let Type::Struct(struct_ty) = expected_ty {
+    if let Type::Struct(struct_ty) = expected_ty.bottom_ty() {
         Ok((expected_ty, struct_ty))
     } else {
         Err(SemanticErrorKind::MismatchedType {

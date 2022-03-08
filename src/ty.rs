@@ -180,7 +180,7 @@ impl<'tcx> Type<'tcx> {
                     true
                 }
             }
-            Type::Undetermined => true,
+            Type::Undetermined => false,
         }
     }
 
@@ -227,6 +227,7 @@ impl<'tcx> Type<'tcx> {
                 });
                 ty1.is_assignable_to(ty2)
             }
+            (Self::Undetermined, _) | (_, Self::Undetermined) => false,
             // Others
             _ => self == other,
         }
@@ -270,6 +271,7 @@ impl PartialEq for Type<'_> {
                     false
                 }
             }
+            (Self::Undetermined, _) | (_, Self::Undetermined) => false,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }

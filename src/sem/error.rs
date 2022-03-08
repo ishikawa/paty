@@ -72,6 +72,8 @@ pub enum SemanticErrorKind<'tcx> {
         name: String,
         struct_ty: &'tcx Type<'tcx>,
     },
+    #[error("anonymous struct cannot be initialized with type alias `{alias}`")]
+    InitializeAnonymousStructWithTypeAlias { alias: String },
     #[error("no field `{name}` on type `{ty}`")]
     FieldNotFound { name: String, ty: &'tcx Type<'tcx> },
     #[error("named field `{name}` is defined more than once in `{struct_ty}`")]

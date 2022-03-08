@@ -795,7 +795,10 @@ assert 'T { a: 50, b: 10, c: 40 }' '
   t2 = T { ...t1, a: 3, b: 10 } # { a: 3, b: 10, c: 3 }
   t3 = T { ...t1, ...t2, ...{ a: 50, c: 40 } }
   puts(t3)'
-# anonymous struct
+
+# ---------------------------------
+# Anonymous struct
+# ---------------------------------
 assert '{ a: 1 }' 'puts({a: 1})'
 assert '{ b: true, m: "hello" }' 'puts({m: "hello", b: true})'
 assert '{ t: { a: 123 }, z: 33 }' '
@@ -844,6 +847,21 @@ assert '100 300' '
   when { a, ...x }
     puts(a, x.c)
   end'
+# We can initialze a regular struct from type alias.
+assert 'T { value: 100 }' '
+  struct T { value: int64 }
+  type V1 = T
+  puts(V1 { value: 100 })'
+# The anonymous struct pattern must match a type alias.
+# assert '100 200' '
+#   type T = { value: string }
+#   def foo(n: (int64, T))
+#     case n
+#     when (x: int64, { value })   
+#       puts(x, value)
+#     end
+#   end
+#   foo((100, { value: 200 }))'
 # type aliases
 assert '101' '
   type K = int64
@@ -871,7 +889,10 @@ assert '900 800' '
     end
   end
   kts({ pair: (900, 800) })'
-# union type
+
+# ---------------------------------
+# Union type
+# ---------------------------------
 assert '1234567
 abcdefg' '
   type ID = string | int64
@@ -989,11 +1010,11 @@ true' '
   def print_2nd(t: T)
     puts(t.1.value)
   end
-  print_2nd((10, V1 { value: 20 }))
-  print_2nd((20, V1 { value: 30 }, 40))
-  print_2nd((30, V2 { value: "40" }))
-  print_2nd((40, V3 { value: "50" }, 50))
-  print_2nd((50, V3 { value: true }, 50))'
+  print_2nd((10, { value: 20 }))
+  print_2nd((20, { value: 30 }, 40))
+  print_2nd((30, { value: "40" }))
+  print_2nd((40, { value: "50" }, 50))
+  print_2nd((50, { value: true }, 50))'
 assert 'abc
 12345' '
   def foo(a: string | int64)
@@ -1121,6 +1142,7 @@ INT_MIN
   foo(true)
   foo(-9223372036854775808)
   foo(1000)'
+# Pattern matching for complex union types
 # assert '???' '
 #   type S = string | boolean
 #   type V1 = { value: int64 }
@@ -1139,8 +1161,8 @@ INT_MIN
 #       puts(0)
 #     end
 #   end
-#   foo((100, V1 { value: 200 }))
-#   foo((100, V1 { value: 200 }, 300))'
+#   foo((100, { value: 200 }))
+#   foo((100, { value: 200 }, 300))'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

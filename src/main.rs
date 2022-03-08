@@ -10,7 +10,7 @@ use std::io;
 use std::io::Read;
 use typed_arena::Arena;
 
-const MAX_OPTIMIZATION_REPEAT: usize = 5;
+const MAX_OPTIMIZATION_REPEAT: usize = 8;
 
 fn main() {
     // Read input: use STDIN if no positional argument to point to the file.

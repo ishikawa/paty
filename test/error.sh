@@ -471,7 +471,10 @@ assert 'Semantic error: no field `b` on type `struct A { a: int64 }`' "
   struct A { a: int64 }
   a = A { a: 100 }
   a.b"
-# anonymous struct
+
+# ---------------------------------
+# Anonymous struct
+# ---------------------------------
 assert 'expected type `{ a: int64, b: int64 }`, found `100`' '
   def foo(opts: { a: int64, b: int64 })
     opts.a + opts.b
@@ -482,7 +485,13 @@ assert 'identifier `a` is bound more than once in the same pattern' '
   when { a, ...a }
     puts(a)
   end'
-# or-pattern
+# An alias of an anonymous structure cannot be initialized as a regular structure.
+assert 'anonymous struct cannot be initialized with type alias `V1`' '
+  type V1 = { value: int64 }
+  puts(V1 { value: 100 })'
+# ---------------------------------
+# Or-pattern
+# ---------------------------------
 assert 'expected type `struct T { a: int64 }`, found `{ a: 2 }`' '
   struct T { a: int64 }
   t = T { a: 0 }
