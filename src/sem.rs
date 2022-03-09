@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 mod error;
 mod usefulness;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Errors<'tcx> {
     errors: Vec<SemanticError<'tcx>>,
 }
@@ -21,10 +21,6 @@ impl<'tcx> Errors<'tcx> {
         Self {
             errors: Vec::with_capacity(0),
         }
-    }
-
-    pub fn to_vec(&self) -> Vec<SemanticError<'tcx>> {
-        self.errors.clone()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -39,9 +35,28 @@ impl<'tcx> Errors<'tcx> {
         self.errors
             .push(SemanticError::new(kind, source.to_string()));
     }
+}
 
-    pub fn extend(&mut self, err: Vec<SemanticError<'tcx>>) {
-        self.errors.extend(err);
+impl<'tcx> FromIterator<SemanticError<'tcx>> for Errors<'tcx> {
+    fn from_iter<I: IntoIterator<Item = SemanticError<'tcx>>>(iter: I) -> Self {
+        Self {
+            errors: Vec::from_iter(iter),
+        }
+    }
+}
+
+impl<'tcx> IntoIterator for Errors<'tcx> {
+    type Item = SemanticError<'tcx>;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.errors.into_iter()
+    }
+}
+
+impl<'tcx> Extend<SemanticError<'tcx>> for Errors<'tcx> {
+    fn extend<T: IntoIterator<Item = SemanticError<'tcx>>>(&mut self, iter: T) {
+        self.errors.extend(iter);
     }
 }
 
@@ -203,7 +218,7 @@ pub fn analyze<'nd, 'tcx>(
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.to_vec())
+        Err(errors.into_iter().collect())
     }
 }
 
