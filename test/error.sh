@@ -143,6 +143,17 @@ assert 'unreachable pattern: `0`' '
       puts(0)
     end
   end'
+assert 'unreachable pattern: `{ a: _, b: _ }`' '
+  case { a: 100, b: false }
+  when { a: x, b: false } | { a: _, b: x }
+    puts(x)
+  end'
+assert 'unreachable pattern: `{ a: _, b: _ }`' '
+  struct T { value: int64 }
+  case { a: T { value: 100 }, b: false }
+  when { a: T { value: x }, b: false } | { a: _, b: x }
+    puts(x)
+  end'
 # non-exhaustive pattern
 assert 'non-exhaustive pattern: `int64::MIN..=0`' "
   def foo(n: int64)
@@ -398,17 +409,6 @@ Semantic error: non-exhaustive pattern: `(2..=int64::MAX)`' "
       puts(1)
     end
   end"
-assert 'expected type `100`, found `false`' '
-  case { a: 100, b: false }
-  when { a: x, b: false } | { a: _, b: x }
-    puts(x)
-  end'
-assert 'expected type `int64`, found `false`' '
-  struct T { value: int64 }
-  case { a: T { value: 100 }, b: false }
-  when { a: T { value: x }, b: false } | { a: _, b: x }
-    puts(x)
-  end'
 assert 'expected type `1`, found `struct T { a: int64, b: boolean }`' '
   struct T { a: int64, b: boolean }
   case 1

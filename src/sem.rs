@@ -260,7 +260,7 @@ fn expect_assignable_type<'tcx>(
     }
 }
 
-fn resolve_named_type<'tcx>(
+fn resolve_declared_type<'tcx>(
     ty: &'tcx Type<'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
@@ -268,14 +268,14 @@ fn resolve_named_type<'tcx>(
     match ty {
         Type::Tuple(fs) => fs
             .iter()
-            .all(|fty| resolve_named_type(fty, named_types, errors)),
+            .all(|fty| resolve_declared_type(fty, named_types, errors)),
         Type::Union(ms) => ms
             .iter()
-            .all(|mty| resolve_named_type(mty, named_types, errors)),
+            .all(|mty| resolve_declared_type(mty, named_types, errors)),
         Type::Struct(struct_ty) => struct_ty
             .fields()
             .iter()
-            .all(|f| resolve_named_type(f.ty(), named_types, errors)),
+            .all(|f| resolve_declared_type(f.ty(), named_types, errors)),
         Type::Named(named_ty) => {
             if named_ty.ty().is_none() {
                 if let Some(ty) = named_types.get(named_ty.name()) {
@@ -330,17 +330,17 @@ fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
             // Resolved parameter types before using it as key.
             for p in fun.params() {
                 analyze_explicit_type_annotations_pattern(tcx, p.pattern(), named_types, errors);
-                resolve_named_type(p.ty(), named_types, errors);
+                resolve_declared_type(p.ty(), named_types, errors);
             }
             for stmt in fun.body() {
                 analyze_explicit_type_annotations_stmt(tcx, stmt, named_types, errors);
             }
         }
         syntax::DeclarationKind::Struct(struct_decl) => {
-            resolve_named_type(struct_decl.ty(), named_types, errors);
+            resolve_declared_type(struct_decl.ty(), named_types, errors);
         }
         syntax::DeclarationKind::TypeAlias(alias) => {
-            resolve_named_type(alias.ty(), named_types, errors);
+            resolve_declared_type(alias.ty(), named_types, errors);
         }
     }
 }
@@ -353,7 +353,7 @@ fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
     match stmt.kind() {
         StmtKind::Let { pattern, .. } => {
             if let Some(ty) = pattern.ty() {
-                resolve_named_type(ty, named_types, errors);
+                resolve_declared_type(ty, named_types, errors);
             }
         }
         StmtKind::Expr(expr) => {
@@ -384,7 +384,7 @@ fn analyze_explicit_type_annotations_pattern<'nd, 'tcx>(
             analyze_explicit_type_annotations_pattern(tcx, sub_pat, named_types, errors);
         }
     } else if let Some(ty) = pattern.ty() {
-        resolve_named_type(ty, named_types, errors);
+        resolve_declared_type(ty, named_types, errors);
     }
 }
 
@@ -451,7 +451,8 @@ fn analyze_decl<'nd, 'tcx>(
                 // The return type is already defined.
             }
             (None, None) => {
-                // The return type of function cannot be inferred.
+                // The return type of function cannot be inferred. This error may be
+                // caused by other type errors.
                 errors.push(
                     SemanticErrorKind::UnrecognizedReturnType {
                         signature: fun.signature(),
@@ -841,7 +842,7 @@ fn analyze_expr<'nd, 'tcx>(
                     .collect();
                 if common_field_types.len() == member_types.len() {
                     // common field found. constructs the type for field.
-                    let field_ty = tcx.union(common_field_types.into_iter());
+                    let field_ty = tcx.union(&common_field_types);
                     unify_type(field_ty, expr, errors);
                     return;
                 }
@@ -893,7 +894,7 @@ fn analyze_expr<'nd, 'tcx>(
                     .collect();
                 if common_field_types.len() == member_types.len() {
                     // common field found. constructs the type for field.
-                    let field_ty = tcx.union(common_field_types.into_iter());
+                    let field_ty = tcx.union(&common_field_types);
                     unify_type(field_ty, expr, errors);
                     return;
                 }
@@ -1122,7 +1123,7 @@ fn analyze_expr<'nd, 'tcx>(
 }
 
 // In analyzing patterns, multiple combinations of different patterns and types
-// may be analyzed and the one that does not cause errors may be chosen.
+// may be analyzed and the one that does not cause errors will be chosen.
 // This is the case when the pattern is an Or-pattern or the type is a union type.
 // The analysis is divided into two parts:
 //
@@ -1184,14 +1185,21 @@ fn analyze_pattern<'nd, 'tcx>(
             sub_pat.assign_context_ty(expected_ty);
 
             // check new variables.
-            let new_bindings: HashMap<_, _> = sub_vars
+            let mut new_bindings: HashMap<_, _> = sub_vars
                 .bindings_iter()
                 .map(|(name, b)| (name.to_string(), b.ty()))
                 .collect();
 
             if let Some(bindings) = bindings {
-                for name in bindings.keys().chain(new_bindings.keys()).unique() {
-                    match (bindings.get(name), new_bindings.get(name)) {
+                let unique_names: Vec<_> = bindings
+                    .keys()
+                    .chain(new_bindings.keys())
+                    .unique()
+                    .cloned()
+                    .collect();
+
+                for name in unique_names {
+                    match (bindings.get(&name), new_bindings.get_mut(&name)) {
                         (None, Some(_)) | (Some(_), None) => {
                             // bound variable not found in this sub-pattern.
                             errors.push(
@@ -1202,7 +1210,9 @@ fn analyze_pattern<'nd, 'tcx>(
                             );
                         }
                         (Some(expected_ty), Some(actual_ty)) => {
-                            expect_assignable_type(expected_ty, actual_ty, sub_pat, errors);
+                            // Variables with the same name in multiple patterns are introduced in
+                            // different types. In this case, they are discriminated as union types.
+                            *actual_ty = tcx.union(&[expected_ty, actual_ty]);
                         }
                         (None, None) => unreachable!(),
                     }
@@ -1814,11 +1824,12 @@ fn pattern_to_type<'nd, 'tcx>(
             pat.ty().unwrap_or_else(|| tcx.undetermined())
         }
         PatternKind::Or(patterns) => {
-            let sub_types = patterns
+            let sub_types: Vec<_> = patterns
                 .iter()
-                .map(|pat| pattern_to_type(tcx, pat, named_types));
+                .map(|pat| pattern_to_type(tcx, pat, named_types))
+                .collect();
 
-            tcx.union(sub_types)
+            tcx.union(&sub_types)
         }
     }
 }

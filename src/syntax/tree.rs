@@ -1,5 +1,6 @@
 use crate::syntax::{RangeEnd, Token, TokenKind};
 use crate::ty::{FunctionSignature, NamedTy, StructTy, Type, TypeContext, TypedField};
+use itertools::Itertools;
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::iter::Peekable;
@@ -1459,7 +1460,12 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         match types.len() {
             0 => Err(ParseError::NotParsed),
             1 => Ok(types[0]),
-            _ => Ok(self.tcx.union(types.into_iter())),
+            _ => {
+                // To use tcx.union(...), requires all named type must be resolved.
+                // So we use Type::Union constructor directly here.
+                let union_ty = Type::Union(types.into_iter().unique().collect());
+                Ok(self.tcx.type_arena.alloc(union_ty))
+            }
         }
     }
     fn _type_annotation(

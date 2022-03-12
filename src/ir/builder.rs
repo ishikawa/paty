@@ -4,7 +4,7 @@ use super::inst::{
 };
 use crate::syntax::{self, PatternKind, Typable};
 use crate::ty::{expand_union_ty, FunctionSignature, StructTy, Type, TypeContext};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use typed_arena::Arena;
 
 struct BuilderContext<'a, 'tcx> {
@@ -49,6 +49,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
+    #[inline]
+    fn tmp_var(&self, tmp_var: &'a TmpVar<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::tmp_var(tmp_var))
+    }
     #[inline]
     fn usize(&self, value: usize) -> &'a Expr<'a, 'tcx> {
         self.expr_arena.alloc(Expr::usize(self.tcx, value))
@@ -122,6 +126,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             .alloc(Expr::cond_value(cond, then_value, else_value))
     }
     #[inline]
+    fn cond_and_assign(
+        &self,
+        cond: Option<&'a Expr<'a, 'tcx>>,
+        var: &'a TmpVar<'a, 'tcx>,
+    ) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::new(
+            ExprKind::CondAndAssign { cond, var },
+            self.tcx.boolean(),
+        ))
+    }
+    #[inline]
     fn union_member_access(
         &self,
         operand: &'a Expr<'a, 'tcx>,
@@ -130,6 +145,21 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) -> &'a Expr<'a, 'tcx> {
         self.expr_arena
             .alloc(Expr::union_member_access(operand, tag, member_ty))
+    }
+
+    #[inline]
+    fn var_def_stmt(&self, name: String, init: &'a Expr<'a, 'tcx>) -> &'a Stmt<'a, 'tcx> {
+        let new_var_def = Stmt::VarDef(VarDef::new(name, init));
+        self.stmt_arena.alloc(new_var_def)
+    }
+    #[inline]
+    fn tmp_var_def_stmt(
+        &self,
+        tmp_var: &'a TmpVar<'a, 'tcx>,
+        init: &'a Expr<'a, 'tcx>,
+    ) -> &'a Stmt<'a, 'tcx> {
+        let stmt = Stmt::tmp_var_def(tmp_var, init);
+        self.stmt_arena.alloc(stmt)
     }
 
     pub fn build(&mut self, ast: &'nd [syntax::TopLevel<'nd, 'tcx>]) -> Program<'a, 'tcx> {
@@ -1139,14 +1169,16 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             }
             PatternKind::Or(sub_pats) => {
                 assert!(sub_pats.len() >= 2);
-                let bool_ty = self.tcx.boolean();
 
-                sub_pats.iter().fold(None, |cond, sub_pat| {
+                let mut vars: HashMap<&str, Vec<(&Expr<'_, '_>, &VarDef<'_, '_>)>> = HashMap::new();
+                let cond = sub_pats.iter().fold(None, |cond, sub_pat| {
                     // control flow variable
                     let cfv = self.next_control_flow_var();
-                    let stmt = Stmt::tmp_var_def(cfv, self.bool(false));
-                    outer_stmts.push(self.stmt_arena.alloc(stmt));
+                    let cfv_expr = self.tmp_var(cfv);
 
+                    outer_stmts.push(self.tmp_var_def_stmt(cfv, self.bool(false)));
+
+                    // build a sub pattern
                     let mut inner_stmts = vec![];
                     let sub_cond = self.build_pattern(
                         value_expr,
@@ -1156,23 +1188,50 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         &mut inner_stmts,
                     );
 
-                    self.merge_var_decl_stmts(cfv, stmts, &inner_stmts);
+                    // collects var definitions for this sub pattern for
+                    // merging definitions across multiple sub patterns.
+                    for stmt in inner_stmts {
+                        if let Stmt::VarDef(def) = stmt {
+                            if let Some(defs) = vars.get_mut(def.name()) {
+                                defs.push((cfv_expr, def));
+                            } else {
+                                vars.insert(def.name(), vec![(cfv_expr, def)]);
+                            }
+                        } else {
+                            unreachable!("stmt in branch must be var def, but was: {:?}", stmt);
+                        }
+                    }
 
-                    let cond_and_assign = self.expr_arena.alloc(Expr::new(
-                        ExprKind::CondAndAssign {
-                            cond: sub_cond,
-                            var: cfv,
-                        },
-                        bool_ty,
-                    ));
+                    let cond_and_assign = self.cond_and_assign(sub_cond, cfv);
 
                     if let Some(cond) = cond {
-                        let kind = ExprKind::Or(cond, cond_and_assign);
-                        Some(self.expr_arena.alloc(Expr::new(kind, bool_ty)))
+                        Some(self.or(cond, cond_and_assign))
                     } else {
                         Some(cond_and_assign)
                     }
-                })
+                });
+
+                // merge var definitions across multiple sub-patterns.
+                for (name, defs) in vars {
+                    assert!(!defs.is_empty());
+
+                    // build a new type for the definition.
+                    let def_ty = self.tcx.union(
+                        defs.iter()
+                            .map(|(_, d)| d.init().ty())
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    );
+
+                    let init = self.promote_to(defs[0].1.init(), def_ty, stmts);
+                    let init = defs.iter().fold(init, |else_value, (cfv_expr, var_def)| {
+                        let then_value = self.promote_to(var_def.init(), def_ty, stmts);
+                        self.cond_value(cfv_expr, then_value, else_value)
+                    });
+                    stmts.push(self.var_def_stmt(name.to_string(), init));
+                }
+
+                cond
             }
             PatternKind::Wildcard => None,
         };
@@ -1183,50 +1242,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 .or(Some(pat_cond))
         } else {
             value_cond
-        }
-    }
-
-    fn merge_var_decl_stmts(
-        &self,
-        cfv: &'a TmpVar<'a, 'tcx>,
-        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
-        inner_stmts: &[&'a Stmt<'a, 'tcx>],
-    ) {
-        for stmt in inner_stmts {
-            if let Stmt::VarDef(def) = stmt {
-                let v = stmts.iter().enumerate().find_map(|(i, x)| {
-                    if let Stmt::VarDef(x_def) = x {
-                        if x_def.name() == def.name() {
-                            return Some((i, x_def.init()));
-                        }
-                    }
-                    None
-                });
-
-                if let Some((i, else_value)) = v {
-                    let cfv_expr = Expr::tmp_var(cfv);
-                    let init = Expr::new(
-                        ExprKind::CondValue {
-                            cond: self.expr_arena.alloc(cfv_expr),
-                            then_value: def.init(),
-                            else_value,
-                        },
-                        def.init().ty(),
-                    );
-                    let new_var_def = Stmt::VarDef(VarDef::new(
-                        def.name().to_string(),
-                        self.expr_arena.alloc(init),
-                    ));
-
-                    stmts.push(self.stmt_arena.alloc(new_var_def));
-                    stmts.swap_remove(i);
-                } else {
-                    let var_def = Stmt::VarDef(VarDef::new(def.name().to_string(), def.init()));
-                    stmts.push(self.stmt_arena.alloc(var_def));
-                }
-            } else {
-                unreachable!("stmt must be var def: {}", stmt);
-            }
         }
     }
 

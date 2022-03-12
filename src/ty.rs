@@ -49,8 +49,21 @@ impl<'tcx> TypeContext<'tcx> {
 
     /// Creates an union type from types. Returns the first type if types has
     /// only one element.
-    pub fn union(&self, member_types: impl Iterator<Item = &'tcx Type<'tcx>>) -> &'tcx Type<'tcx> {
-        let tys: Vec<_> = member_types.unique().collect();
+    /// panic if member_types is empty.
+    pub fn union(&self, member_types: &[&'tcx Type<'tcx>]) -> &'tcx Type<'tcx> {
+        // Finally, the array should contain the fewest number of types. Iterates given types and
+        // adds a subsequent type if there is no type wider than that type.
+        let member_types = flatten_union_ty(member_types);
+        let mut tys = vec![];
+
+        'outer: for (i, t1) in member_types.iter().enumerate() {
+            for t2 in member_types.iter().skip(i + 1) {
+                if t1.is_assignable_to(t2) {
+                    continue 'outer;
+                }
+            }
+            tys.push(*t1);
+        }
         assert!(!tys.is_empty());
 
         if tys.len() == 1 {
@@ -340,15 +353,24 @@ impl fmt::Display for Type<'_> {
 }
 
 // TODO: Move to ty::UnionTy
+pub fn flatten_union_ty<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Type<'tcx>> {
+    _expand_union_ty(member_types, false)
+}
 pub fn expand_union_ty<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Type<'tcx>> {
-    fn expand<'tcx>(ty: &'tcx Type<'tcx>, vec: &mut Vec<&'tcx Type<'tcx>>) {
+    _expand_union_ty(member_types, true)
+}
+fn _expand_union_ty<'tcx>(
+    member_types: &[&'tcx Type<'tcx>],
+    expand_named_ty: bool,
+) -> Vec<&'tcx Type<'tcx>> {
+    fn expand<'tcx>(ty: &'tcx Type<'tcx>, vec: &mut Vec<&'tcx Type<'tcx>>, expand_named_ty: bool) {
         match ty {
-            Type::Named(named_ty) => {
-                expand(named_ty.expect_ty(), vec);
+            Type::Named(named_ty) if expand_named_ty => {
+                expand(named_ty.expect_ty(), vec, expand_named_ty);
             }
             Type::Union(tys) => {
                 for t in tys {
-                    expand(t, vec);
+                    expand(t, vec, expand_named_ty);
                 }
             }
             _ => vec.push(ty),
@@ -357,7 +379,7 @@ pub fn expand_union_ty<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Typ
 
     let mut tys = Vec::new();
     for mty in member_types {
-        expand(mty, &mut tys);
+        expand(mty, &mut tys, expand_named_ty);
     }
     tys.into_iter().unique().collect()
 }
