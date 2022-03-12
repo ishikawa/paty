@@ -19,7 +19,6 @@ use typed_arena::Arena;
 
 #[derive(Clone, Copy)]
 pub struct MatchCheckContext<'p, 'tcx> {
-    pub head_ty: &'tcx Type<'tcx>,
     pub pattern_arena: &'p Arena<DeconstructedPat<'p, 'tcx>>,
     pub tree_pattern_arena: &'p Arena<Pattern<'p, 'tcx>>,
 }
@@ -996,7 +995,6 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     None
                 }
             });
-
         let mut pats: Vec<_> = fs
             .map(|(tag, member_ty, fields)| {
                 assert!(
@@ -1075,7 +1073,8 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     }
 
     pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
-        if let Type::Union(member_types) = cx.head_ty {
+        // TODO: remove head_ty
+        if let Type::Union(member_types) = pat.context_ty().unwrap() {
             if !matches!(pat.kind(), PatternKind::Or(_)) {
                 return Self::to_union_variants(cx, member_types, pat);
             }
@@ -1133,15 +1132,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         };
 
         let pat = Pattern::new(kind);
-
-        // We'd like to print diagnostics with the explicit type
-        // for union head value.
-        if matches!(cx.head_ty, Type::Union(_)) {
-            pat.assign_explicit_ty(self.ty());
-        } else {
-            pat.assign_ty(self.ty());
-        }
-
+        pat.assign_ty(self.ty());
         cx.tree_pattern_arena.alloc(pat)
     }
 
@@ -1588,7 +1579,6 @@ pub fn check_match<'tcx>(
     let pattern_arena = Arena::default();
     let tree_pattern_arena = Arena::default();
     let cx = MatchCheckContext {
-        head_ty,
         pattern_arena: &pattern_arena,
         tree_pattern_arena: &tree_pattern_arena,
     };
@@ -1775,11 +1765,9 @@ mod tests_deconstructed_pat {
 
     #[test]
     fn from_pat() {
-        let head_ty = Type::Int64;
         let pattern_arena = Arena::default();
         let tree_pattern_arena = Arena::default();
         let cx = MatchCheckContext {
-            head_ty: &head_ty,
             pattern_arena: &pattern_arena,
             tree_pattern_arena: &tree_pattern_arena,
         };
@@ -1790,6 +1778,7 @@ mod tests_deconstructed_pat {
         };
         let pat = Pattern::new(kind);
         pat.assign_ty(&Type::Int64);
+        pat.assign_context_ty(&Type::Int64);
         let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
 
         assert_eq!(dc_pat.ty(), &Type::Int64);

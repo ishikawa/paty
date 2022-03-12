@@ -729,9 +729,10 @@ impl<'nd, 'tcx> Node for CaseArm<'nd, 'tcx> {
 #[derive(Debug)]
 pub struct Pattern<'nd, 'tcx> {
     kind: PatternKind<'nd, 'tcx>,
-    // The type of expression is determined in later phase.
+    // A pattern holds both the type of the pattern expression itself and
+    // the type of the target when the pattern is tested.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
-    explicit_ty: Cell<bool>,
+    context_ty: Cell<Option<&'tcx Type<'tcx>>>,
     data: NodeData,
 }
 
@@ -740,7 +741,7 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
         Self {
             kind,
             ty: Cell::new(None),
-            explicit_ty: Cell::new(false),
+            context_ty: Cell::new(None),
             data: NodeData::new(),
         }
     }
@@ -749,13 +750,12 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
         &self.kind
     }
 
-    pub fn explicit_ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.explicit_ty.get().then(|| self.ty.get().unwrap())
+    pub fn context_ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.context_ty.get()
     }
 
-    pub fn assign_explicit_ty(&self, ty: &'tcx Type<'tcx>) {
-        self.explicit_ty.set(true);
-        self.assign_ty(ty);
+    pub fn assign_context_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.context_ty.set(Some(ty));
     }
 }
 
@@ -781,10 +781,16 @@ impl<'tcx> Typable<'tcx> for Pattern<'_, 'tcx> {
 
 impl fmt::Display for Pattern<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.kind.fmt(f)?;
-        if let Some(ty) = self.explicit_ty() {
-            write!(f, ": {}", ty)?;
+        self.kind().fmt(f)?;
+
+        // We'd like to print diagnostics with the explicit type
+        // for var/wildcard patterns.
+        if matches!(self.kind(), PatternKind::Wildcard | PatternKind::Var(_)) {
+            if let Some(ty) = self.ty() {
+                write!(f, ": {}", ty)?;
+            }
         }
+
         Ok(())
     }
 }
@@ -1582,6 +1588,33 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
+        let pat = self._pattern(it)?;
+
+        // Or-pattern?
+        let mut sub_pats = vec![pat];
+
+        while let Some(t) = it.peek() {
+            if let TokenKind::Operator('|') = t.kind() {
+                it.next();
+                sub_pats.push(self._pattern(it)?);
+            } else {
+                break;
+            }
+        }
+
+        if sub_pats.len() > 1 {
+            let kind = PatternKind::Or(sub_pats);
+            let or_pat = self.pat_arena.alloc(Pattern::new(kind));
+
+            Ok(or_pat)
+        } else {
+            Ok(pat)
+        }
+    }
+    fn _pattern(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
         if it.peek().is_none() {
             return Err(ParseError::NotParsed);
         }
@@ -1708,29 +1741,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         // Type annotated pattern
         if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
-            pat.assign_explicit_ty(self.type_annotation(it)?);
+            pat.assign_ty(self.type_annotation(it)?);
         }
 
-        // Or-pattern?
-        let mut sub_pats = vec![pat];
-
-        while let Some(t) = it.peek() {
-            if let TokenKind::Operator('|') = t.kind() {
-                it.next();
-                sub_pats.push(self.pattern(it)?);
-            } else {
-                break;
-            }
-        }
-
-        if sub_pats.len() > 1 {
-            let kind = PatternKind::Or(sub_pats);
-            let or_pat = self.pat_arena.alloc(Pattern::new(kind));
-
-            Ok(or_pat)
-        } else {
-            Ok(pat)
-        }
+        Ok(pat)
     }
 
     fn expr_to_pattern(

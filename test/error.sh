@@ -38,7 +38,7 @@ assert 'cannot find variable `x` in scope' "a = x"
 # undefined function
 assert 'cannot find function `foo` in scope' "foo()"
 # unreachable pattern
-assert 'Semantic error: unreachable pattern: `1`' "
+assert 'unreachable pattern: `1`' "
   def foo(n: int64)
     case n
     when 1
@@ -49,7 +49,7 @@ assert 'Semantic error: unreachable pattern: `1`' "
       puts(n)
     end
   end"
-assert 'Semantic error: unreachable pattern: `false`' "
+assert 'unreachable pattern: `false`' "
   case 5 > 3
   when true
     puts(true)
@@ -58,7 +58,7 @@ assert 'Semantic error: unreachable pattern: `false`' "
   when false
     puts(0)
   end"
-assert 'Semantic error: unreachable pattern: `"A"`' "
+assert 'unreachable pattern: `"A"`' "
   case \"A\"
   when \"A\"
     puts(1)
@@ -67,7 +67,7 @@ assert 'Semantic error: unreachable pattern: `"A"`' "
   else
     puts(3)
   end"
-assert 'Semantic error: unreachable `else` clause' "
+assert 'unreachable `else` clause' "
   case 5 > 3
   when true
     puts(true)
@@ -76,7 +76,7 @@ assert 'Semantic error: unreachable `else` clause' "
   else
     puts(0)
   end"
-assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
+assert 'unreachable pattern: `T { value: 0 }`' "
   struct T { value: int64 }
   t = T { value: 123 }
   case t
@@ -85,7 +85,7 @@ assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
   when T { value: 0 }
     puts(t)
   end"
-assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
+assert 'unreachable pattern: `T { value: 0 }`' "
   struct T { value: int64 }
   t = T { value: 123 }
   case t
@@ -94,7 +94,7 @@ assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
   when T { value: 0 }
     puts(t)
   end"
-assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
+assert 'unreachable pattern: `T { value: 0 }`' "
   struct T { value: int64 }
   t = T { value: 123 }
   case t
@@ -103,7 +103,7 @@ assert 'Semantic error: unreachable pattern: `T { value: 0 }`' "
   when T { value: 0 }
     puts(t)
   end"
-assert 'Semantic error: unreachable pattern: `T { a: _, b: _ }`' "
+assert 'unreachable pattern: `T { a: _, b: _ }`' "
   struct T { a: boolean, b: boolean }
   case T { a: true, b: false }
   when T { a: true, b: true }
@@ -144,7 +144,7 @@ assert 'unreachable pattern: `0`' '
     end
   end'
 # non-exhaustive pattern
-assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
+assert 'non-exhaustive pattern: `int64::MIN..=0`' "
   def foo(n: int64)
     case n
     when 1
@@ -153,17 +153,17 @@ assert 'Semantic error: non-exhaustive pattern: `int64::MIN..=0`' "
       puts(2)
     end
   end"
-assert 'Semantic error: non-exhaustive pattern: `true`' "
+assert 'non-exhaustive pattern: `true`' "
   case 5 > 3
   when false
     puts(false)
   end"
-assert 'Semantic error: non-exhaustive pattern: `false`' "
+assert 'non-exhaustive pattern: `false`' "
   case 5 > 3
   when true
     puts(true)
   end"
-assert 'Semantic error: non-exhaustive pattern: `_`' '
+assert 'non-exhaustive pattern: `_: string`' '
   def foo(s: string)
     case s
     when "A"
@@ -172,7 +172,7 @@ assert 'Semantic error: non-exhaustive pattern: `_`' '
       puts(2)
     end
   end'
-assert 'Semantic error: non-exhaustive pattern: `T { a: false, b: false }`' "
+assert 'non-exhaustive pattern: `T { a: false, b: false }`' "
   struct T { a: boolean, b: boolean }
   case T { a: true, b: false }
   when T { a: true, b: true }
@@ -182,7 +182,7 @@ assert 'Semantic error: non-exhaustive pattern: `T { a: false, b: false }`' "
   when T { a: false, b: true }
     puts(3)
   end"
-assert 'non-exhaustive pattern: `_`' '
+assert 'non-exhaustive pattern: `_: string`' '
   def foo(): string
     "A"
   end
@@ -190,7 +190,7 @@ assert 'non-exhaustive pattern: `_`' '
   when "A"
     puts(1)
   end'
-assert 'non-exhaustive pattern: `_`' '
+assert 'non-exhaustive pattern: `_: string`' '
   def foo(value: string)
     case value
     when "A"
@@ -360,12 +360,12 @@ assert 'return type of function `bar(int64)` is specified with `boolean`, found 
     x + 1
   end'
 # type check
-assert 'Semantic error: expected type `int64`, found `true`' "
+assert 'expected type `int64`, found `true`' "
   def foo(n: int64)
     n
   end
   foo(true)"
-assert 'Semantic error: expected type `(int64)`, found `int64`' "
+assert 'expected type `(int64)`, found `int64`' "
   def baz(t: (int64,))
     t
   end
@@ -373,14 +373,14 @@ assert 'Semantic error: expected type `(int64)`, found `int64`' "
     baz(n)
   end
   foo(100)"
-assert 'Semantic error: expected type `A`, found `struct B { a: int64 }`' "
+assert 'expected type `A`, found `struct B { a: int64 }`' "
   struct A { a: int64 }
   struct B { a: int64 }
   def foo(t: A)
     t
   end
   foo(B { a: 100 })"
-assert 'Semantic error: expected type `(int64, int64)`, found `(1, 2, 3)`' "
+assert 'expected type `(int64, int64)`, found `(1, 2, 3)`' "
   def foo(t: (int64, int64))
     case t
     when (1, 2, 3)
@@ -462,12 +462,12 @@ assert 'expected type `1`, found `2`' "
     puts(2)
   end"
 # tuple
-assert 'Semantic error: no field `3` on type `(1, 2, 3)`' "(1, 2, 3).3"
-assert 'Semantic error: no field `3` on type `(1, 2, 3)`' "
+assert 'no field `3` on type `(1, 2, 3)`' "(1, 2, 3).3"
+assert 'no field `3` on type `(1, 2, 3)`' "
   x = (1, 2, 3)
   x.3"
 # struct
-assert 'Semantic error: no field `b` on type `struct A { a: int64 }`' "
+assert 'no field `b` on type `struct A { a: int64 }`' "
   struct A { a: int64 }
   a = A { a: 100 }
   a.b"

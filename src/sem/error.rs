@@ -1,6 +1,5 @@
+use crate::ty::{FunctionSignature, StructTy, Type};
 use std::fmt;
-
-use crate::ty::{FunctionSignature, Type};
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -70,7 +69,7 @@ pub enum SemanticErrorKind<'tcx> {
     #[error("cannot find named field `{name}` in `{struct_ty}`")]
     UndefinedStructField {
         name: String,
-        struct_ty: &'tcx Type<'tcx>,
+        struct_ty: &'tcx StructTy<'tcx>,
     },
     #[error("anonymous struct cannot be initialized with type alias `{alias}`")]
     InitializeAnonymousStructWithTypeAlias { alias: String },
