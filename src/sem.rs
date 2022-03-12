@@ -329,6 +329,7 @@ fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
         syntax::DeclarationKind::Function(fun) => {
             // Resolved parameter types before using it as key.
             for p in fun.params() {
+                analyze_explicit_type_annotations_pattern(tcx, p.pattern(), named_types, errors);
                 resolve_named_type(p.ty(), named_types, errors);
             }
             for stmt in fun.body() {
@@ -361,17 +362,29 @@ fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
     }
 }
 fn analyze_explicit_type_annotations_expr<'nd, 'tcx>(
-    _tcx: TypeContext<'tcx>,
+    tcx: TypeContext<'tcx>,
     expr: &syntax::Expr<'nd, 'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) {
     if let syntax::ExprKind::Case { arms, .. } = expr.kind() {
         for arm in arms {
-            if let Some(ty) = arm.pattern().ty() {
-                resolve_named_type(ty, named_types, errors);
-            }
+            analyze_explicit_type_annotations_pattern(tcx, arm.pattern(), named_types, errors);
         }
+    }
+}
+fn analyze_explicit_type_annotations_pattern<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pattern: &syntax::Pattern<'nd, 'tcx>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Errors<'tcx>,
+) {
+    if let PatternKind::Or(sub_patterns) = pattern.kind() {
+        for sub_pat in sub_patterns {
+            analyze_explicit_type_annotations_pattern(tcx, sub_pat, named_types, errors);
+        }
+    } else if let Some(ty) = pattern.ty() {
+        resolve_named_type(ty, named_types, errors);
     }
 }
 

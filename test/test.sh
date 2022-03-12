@@ -1180,6 +1180,45 @@ assert '100 200
   end
   foo((100, { value: 200 }))
   foo((100, { value: 200 }, 300))'
+assert '102030
+chocolate' '
+  type A = int64
+  type B = string
+  def foo(n: A | B)
+    case n
+    when a: A
+      puts(a)
+    when b: B
+      puts(b)
+    end
+  end
+  foo(102030)
+  foo("chocolate")'
+assert '203040
+cookie' '
+  type A = int64
+  type B = string
+  def foo(n: A | B)
+    case n
+    when x: A | B
+      puts(x)
+    end
+  end
+  foo(203040)
+  foo("cookie")'
+# You can annotate patterns in an or-pattern with parentheses.
+assert '304050
+candy' '
+  type A = int64
+  type B = string
+  def foo(n: A | B)
+    case n
+    when (x: A) | (x: B)
+      puts(x)
+    end
+  end
+  foo(304050)
+  foo("candy")'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
