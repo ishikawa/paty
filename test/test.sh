@@ -1219,6 +1219,19 @@ candy' '
   end
   foo(304050)
   foo("candy")'
+# or-pattern contains more than one struct type.
+assert '405060
+ice cream' '
+  struct T1 { value: int64 }
+  struct T2 { value: string }
+  def foo(t: T1 | T2)
+    case t
+    when T1 { value } | T2 { value }
+      puts(value)
+    end
+  end
+  foo(T1 { value: 405060 })
+  foo(T2 { value: "ice cream" })'
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

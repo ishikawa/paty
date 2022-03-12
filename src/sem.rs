@@ -1157,18 +1157,14 @@ fn analyze_pattern<'nd, 'tcx>(
         vec![pat]
     };
 
-    // Iterate until we find a type that does not generate an error for the pattern.
-    'type_candidates: for expected_ty_candidate in expected_ty_candidates.iter() {
-        bindings = None;
-        sub_errors = Errors::new();
+    // In subsequent patterns, all new variable must be bound in all sub-patterns.
+    for sub_pat in sub_pats.iter() {
+        let mut sub_vars = Scope::from_parent(vars);
 
-        // In subsequent patterns, all new variable must be bound in all sub-patterns.
-        for sub_pat in sub_pats.iter() {
-            let mut sub_vars = Scope::from_parent(vars);
+        // Iterate until we find a type that does not generate an error for the pattern.
+        for expected_ty_candidate in expected_ty_candidates.iter() {
+            sub_errors = Errors::new();
 
-            // dbg!(sub_pat);
-            // dbg!(expected_ty);
-            // dbg!(expected_ty_candidate);
             if !_analyze_pattern(
                 tcx,
                 sub_pat,
@@ -1179,8 +1175,9 @@ fn analyze_pattern<'nd, 'tcx>(
                 &mut sub_errors,
             ) {
                 // If a type error occurs, move on to the next candidate.
-                continue 'type_candidates;
+                continue;
             }
+
             // Save context type
             sub_pat.assign_context_ty(expected_ty);
 
@@ -1220,10 +1217,8 @@ fn analyze_pattern<'nd, 'tcx>(
             }
 
             bindings = Some(new_bindings);
+            break;
         }
-
-        // If no type error occurs, this type candidate is picked.
-        break;
     }
 
     // Propagates errors
