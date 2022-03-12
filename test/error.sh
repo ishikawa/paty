@@ -489,6 +489,20 @@ assert 'identifier `a` is bound more than once in the same pattern' '
 assert 'anonymous struct cannot be initialized with type alias `V1`' '
   type V1 = { value: int64 }
   puts(V1 { value: 100 })'
+assert 'cannot find named field `a` in `{ value: int64 }`' '
+  def foo(t: { value: int64 })
+    case t
+    when { value, a }
+      puts(value)
+    end
+  end'
+assert 'expected type `{ value: int64 }`, found `{ value: string }`' '
+  def foo(t: { value: int64 })
+    case t
+    when { value } : { value: string }
+      puts(value)
+    end
+  end'
 # ---------------------------------
 # Or-pattern
 # ---------------------------------

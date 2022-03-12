@@ -260,18 +260,22 @@ fn expect_assignable_type<'tcx>(
     }
 }
 
-fn resolve_type<'tcx>(
+fn resolve_named_type<'tcx>(
     ty: &'tcx Type<'tcx>,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) -> bool {
     match ty {
-        Type::Tuple(fs) => fs.iter().all(|fty| resolve_type(fty, named_types, errors)),
-        Type::Union(ms) => ms.iter().all(|mty| resolve_type(mty, named_types, errors)),
+        Type::Tuple(fs) => fs
+            .iter()
+            .all(|fty| resolve_named_type(fty, named_types, errors)),
+        Type::Union(ms) => ms
+            .iter()
+            .all(|mty| resolve_named_type(mty, named_types, errors)),
         Type::Struct(struct_ty) => struct_ty
             .fields()
             .iter()
-            .all(|f| resolve_type(f.ty(), named_types, errors)),
+            .all(|f| resolve_named_type(f.ty(), named_types, errors)),
         Type::Named(named_ty) => {
             if named_ty.ty().is_none() {
                 if let Some(ty) = named_types.get(named_ty.name()) {
@@ -325,17 +329,17 @@ fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
         syntax::DeclarationKind::Function(fun) => {
             // Resolved parameter types before using it as key.
             for p in fun.params() {
-                resolve_type(p.ty(), named_types, errors);
+                resolve_named_type(p.ty(), named_types, errors);
             }
             for stmt in fun.body() {
                 analyze_explicit_type_annotations_stmt(tcx, stmt, named_types, errors);
             }
         }
         syntax::DeclarationKind::Struct(struct_decl) => {
-            resolve_type(struct_decl.ty(), named_types, errors);
+            resolve_named_type(struct_decl.ty(), named_types, errors);
         }
         syntax::DeclarationKind::TypeAlias(alias) => {
-            resolve_type(alias.ty(), named_types, errors);
+            resolve_named_type(alias.ty(), named_types, errors);
         }
     }
 }
@@ -348,7 +352,7 @@ fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
     match stmt.kind() {
         StmtKind::Let { pattern, .. } => {
             if let Some(ty) = pattern.ty() {
-                resolve_type(ty, named_types, errors);
+                resolve_named_type(ty, named_types, errors);
             }
         }
         StmtKind::Expr(expr) => {
@@ -365,7 +369,7 @@ fn analyze_explicit_type_annotations_expr<'nd, 'tcx>(
     if let syntax::ExprKind::Case { arms, .. } = expr.kind() {
         for arm in arms {
             if let Some(ty) = arm.pattern().ty() {
-                resolve_type(ty, named_types, errors);
+                resolve_named_type(ty, named_types, errors);
             }
         }
     }
@@ -1104,20 +1108,6 @@ fn analyze_expr<'nd, 'tcx>(
     }
 }
 
-fn get_struct_field<'tcx>(
-    struct_ty: &'tcx StructTy<'tcx>,
-    name: &str,
-) -> Result<&'tcx TypedField<'tcx>, SemanticErrorKind<'tcx>> {
-    if let Some(f) = struct_ty.get_field(name) {
-        Ok(f)
-    } else {
-        Err(SemanticErrorKind::UndefinedStructField {
-            name: name.to_string(),
-            struct_ty,
-        })
-    }
-}
-
 // In analyzing patterns, multiple combinations of different patterns and types
 // may be analyzed and the one that does not cause errors may be chosen.
 // This is the case when the pattern is an Or-pattern or the type is a union type.
@@ -1298,8 +1288,19 @@ fn _analyze_pattern<'nd, 'tcx>(
                 return false;
             };
 
-            // Named struct and unnamed struct
-            if struct_ty.name() != struct_pat.name() {
+            // If the struct pattern has a name, the type it refers must be
+            // same as the expected struct type.
+            if let Some(struct_name) = struct_pat.name() {
+                match get_struct_ty(tcx, struct_name, named_types) {
+                    Ok((ty, _)) => {
+                        unify_type(ty, pat, errors);
+                    }
+                    Err(err) => {
+                        errors.push(err, pat);
+                        return false;
+                    }
+                };
+            } else if struct_ty.name().is_some() {
                 errors.push(
                     SemanticErrorKind::MismatchedType {
                         expected: expected_ty,
@@ -1733,6 +1734,20 @@ fn get_struct_ty<'tcx>(
         Err(SemanticErrorKind::MismatchedType {
             expected: tcx.empty_struct_ty(struct_name.to_string()),
             actual: expected_ty,
+        })
+    }
+}
+
+fn get_struct_field<'tcx>(
+    struct_ty: &'tcx StructTy<'tcx>,
+    name: &str,
+) -> Result<&'tcx TypedField<'tcx>, SemanticErrorKind<'tcx>> {
+    if let Some(f) = struct_ty.get_field(name) {
+        Ok(f)
+    } else {
+        Err(SemanticErrorKind::UndefinedStructField {
+            name: name.to_string(),
+            struct_ty,
         })
     }
 }
