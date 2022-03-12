@@ -1146,19 +1146,6 @@ INT_MIN
   foo(-9223372036854775808)
   foo(1000)'
 # Pattern matching for union type which has a tuple/struct
-assert '' '
-  struct S { value: string | boolean }
-  type T = S | (int64, string)
-  def foo(t: T)
-    case t
-    when S { value: x }
-      puts(x)
-    when (a, b)
-      puts(a, b)
-    else
-      puts(0)
-    end
-  end'
 assert '100 200
 0' '
   type S = string | boolean

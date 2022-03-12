@@ -319,8 +319,12 @@ pub(super) struct SplitWildcard {
 }
 
 impl<'tcx> SplitWildcard {
-    pub(super) fn new(pcx: PatContext) -> Self {
-        let all_ctors = match pcx.ty {
+    pub fn new(pcx: PatContext) -> Self {
+        Self::from_ty(pcx.ty)
+    }
+
+    fn from_ty(ty: &Type<'tcx>) -> Self {
+        let all_ctors = match ty {
             Type::Int64 => {
                 let ctor = Constructor::IntRange(IntRange::from_range(
                     i64::MIN,
@@ -369,9 +373,12 @@ impl<'tcx> SplitWildcard {
                     .map(|(i, _)| Constructor::Variant(VariantIdx(i)))
                     .collect()
             }
+            Type::Named(named_ty) => {
+                return Self::from_ty(named_ty.expect_ty());
+            }
             // This type is one for which we cannot list constructors, like `str` or `f64`.
-            Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
-            Type::NativeInt => unreachable!("Native C types are not supported."),
+            Type::String => vec![Constructor::NonExhaustive],
+            Type::NativeInt | Type::Undetermined => unreachable!("type {} is not supported.", ty),
         };
 
         SplitWildcard {
@@ -679,7 +686,8 @@ impl<'tcx> Constructor {
                 Type::Struct(struct_ty) => struct_ty.fields().len(),
                 _ => unreachable!("Unexpected type for `Single` constructor: {:?}", pcx.ty),
             },
-            Self::Variant(_) => 1,
+            // Union member always has an inner field.
+            Self::Variant(VariantIdx(_)) => 1,
             Self::Wildcard
             | Self::IntRange(_)
             | Self::Str(_)
@@ -699,7 +707,7 @@ impl<'tcx> Constructor {
             // Wildcards cover anything
             (_, Self::Wildcard) => true,
             // The missing ctors are not covered by anything in the matrix except wildcards.
-            (Self::Missing { .. } | Self::Wildcard, _) => false,
+            (Self::Missing | Self::Wildcard, _) => false,
             (Self::Single, Self::Single) => true,
             (Self::Variant(self_id), Self::Variant(other_id)) => self_id == other_id,
             (Self::IntRange(self_range), Self::IntRange(other_range)) => {
@@ -759,7 +767,7 @@ impl<'tcx> Constructor {
     /// This function may discard some irrelevant constructors if this preserves behavior and
     /// diagnostics. Eg. for the `_` case, we ignore the constructors already present in the
     /// matrix, unless all of them are.
-    pub(super) fn split<'a>(
+    pub fn split<'a>(
         &self,
         pcx: PatContext<'_, '_, 'tcx>,
         ctors: impl Iterator<Item = &'a Constructor> + Clone,
@@ -972,6 +980,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     ) -> Self {
         let pat_ty = pat.expect_ty().bottom_ty();
         let member_types = expand_union_ty(member_types);
+
         let fs = member_types
             .iter()
             .enumerate()
@@ -981,7 +990,14 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 // usefulness of range pattern properly.
                 if pat_ty.is_assignable_to(member_ty) {
                     let de_pat = Self::_from_pat(cx, pat);
-                    Some((tag, member_ty, Fields::from_one(cx, de_pat)))
+
+                    if matches!(de_pat.ctor(), Constructor::Single) {
+                        // Don't wrap with Constructor::Single when the type is union.
+                        // It will be inconsistent with Self::specialize()
+                        Some((tag, member_ty, de_pat.fields))
+                    } else {
+                        Some((tag, member_ty, Fields::from_one(cx, de_pat)))
+                    }
                 }
                 // If the pattern type contains all members of the union type,
                 // create the field as a wildcard
@@ -1071,9 +1087,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             }
         }
     }
-
     pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
-        // TODO: remove head_ty
         if let Type::Union(member_types) = pat.context_ty().unwrap() {
             if !matches!(pat.kind(), PatternKind::Or(_)) {
                 return Self::to_union_variants(cx, member_types, pat);
@@ -1503,15 +1517,19 @@ fn is_useful<'p, 'tcx>(
         for ctor in split_ctors {
             // We cache the result of `Fields::wildcards` because it is used a lot.
             let spec_matrix = start_matrix.specialize_constructor(pcx, &ctor);
-            let v = v.pop_head_constructor(cx, &ctor);
+            let vv = v.pop_head_constructor(cx, &ctor);
             let usefulness = is_useful(
                 cx,
                 &spec_matrix,
-                &v,
+                &vv,
                 witness_preference,
                 is_under_guard,
                 false,
             );
+            // eprintln!(
+            //     ">>> ctor = {:?}\n... v = {:?}\n... vv = {:?}\n... spec_matrix = {:?}\n... usefulness = {:?}",
+            //     &ctor, &v, &vv, &spec_matrix, &usefulness
+            // );
             let usefulness = usefulness.apply_constructor(pcx, start_matrix, &ctor);
             ret.extend(usefulness);
         }
@@ -1539,7 +1557,6 @@ fn compute_match_usefulness<'p, 'tcx>(
         .iter()
         .copied()
         .map(|arm| {
-            //dbg!(&arm.pat);
             let v = PatStack::from_pattern(arm.pat);
             is_useful(cx, &matrix, &v, ArmType::RealArm, arm.has_guard, true);
             if !arm.has_guard {

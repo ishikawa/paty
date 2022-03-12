@@ -76,6 +76,19 @@ assert 'unreachable `else` clause' "
   else
     puts(0)
   end"
+assert 'unreachable `else` clause' '
+  struct S { value: string | boolean }
+  type T = S | (int64, string)
+  def foo(t: T)
+    case t
+    when S { value: x }
+      puts(x)
+    when (a, b)
+      puts(a, b)
+    else
+      puts(0)
+    end
+  end'
 assert 'unreachable pattern: `T { value: 0 }`' "
   struct T { value: int64 }
   t = T { value: 123 }
