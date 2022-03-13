@@ -1159,10 +1159,9 @@ fn analyze_pattern<'nd, 'tcx>(
 
     // In subsequent patterns, all new variable must be bound in all sub-patterns.
     for sub_pat in sub_pats.iter() {
-        let mut sub_vars = Scope::from_parent(vars);
-
         // Iterate until we find a type that does not generate an error for the pattern.
         for expected_ty_candidate in expected_ty_candidates.iter() {
+            let mut sub_vars = Scope::from_parent(vars);
             sub_errors = Errors::new();
 
             if !_analyze_pattern(
@@ -1197,6 +1196,11 @@ fn analyze_pattern<'nd, 'tcx>(
                     .cloned()
                     .collect();
 
+                // dbg!(&sub_pat);
+                // dbg!(&expected_ty_candidate);
+                // dbg!(&unique_names);
+                // dbg!(&bindings);
+                // dbg!(&new_bindings);
                 for name in unique_names {
                     match (bindings.get(&name), new_bindings.get_mut(&name)) {
                         (None, Some(_)) | (Some(_), None) => {
@@ -1261,6 +1265,13 @@ fn _analyze_pattern<'nd, 'tcx>(
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) -> bool {
+    // Pattern has explicit type
+    if let Some(explicit_ty) = pat.ty() {
+        if !expect_assignable_type(expected_ty, explicit_ty, pat, errors) {
+            return false;
+        }
+    }
+
     // Infer the type of pattern from its values.
     match pat.kind() {
         PatternKind::Integer(n) => {
@@ -1414,7 +1425,7 @@ fn _analyze_pattern<'nd, 'tcx>(
                             // Bind rest fields to the name.
                             if vars.get(spread_name).is_some() {
                                 errors.push(
-                                    SemanticErrorKind::AlreadyBoundInPattern {
+                                    SemanticErrorKind::DuplicateBoundingPattern {
                                         name: spread_name.to_string(),
                                     },
                                     spread,
@@ -1453,7 +1464,7 @@ fn _analyze_pattern<'nd, 'tcx>(
 
             if vars.get(name).is_some() {
                 errors.push(
-                    SemanticErrorKind::AlreadyBoundInPattern { name: name.clone() },
+                    SemanticErrorKind::DuplicateBoundingPattern { name: name.clone() },
                     pat,
                 );
             } else {

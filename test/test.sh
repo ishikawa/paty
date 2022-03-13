@@ -1245,6 +1245,18 @@ assert '1 two
   end
   foo((1, "two"))
   foo((3, "four"))'
+assert '1 two
+3 four' '
+  type T1 = (int64, string)
+  type T2 = (string, int64)
+  def foo(t: T1 | T2)
+    case t
+    when ((x, y): T1) | ((x, y): T2)
+      puts(x, y)
+    end
+  end
+  foo((1, "two"))
+  foo((3, "four"))'
 # or-pattern contains more than one tuple type.
 # union type introduce a new union type
 # assert '1 two
