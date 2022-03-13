@@ -268,7 +268,11 @@ impl PartialEq for Type<'_> {
             (Self::Struct(l0), Self::Struct(r0)) => l0 == r0,
             (Self::Union(l0), Self::Union(r0)) => l0 == r0,
             (Self::Named(named_ty1), Self::Named(named_ty2)) => {
-                named_ty1.name() == named_ty2.name() || named_ty1.ty() == named_ty2.ty()
+                named_ty1.name() == named_ty2.name()
+                    || named_ty1
+                        .ty()
+                        .and_then(|ty1| named_ty2.ty().filter(|ty2| *ty2 == ty1))
+                        .is_some()
             }
             (Self::Named(named_ty1), ty2) => {
                 if let Some(ty1) = named_ty1.ty() {
@@ -556,5 +560,40 @@ impl fmt::Display for FunctionSignature<'_> {
             }
         }
         write!(f, ")")
+    }
+}
+
+#[cfg(test)]
+mod tests_types {
+    use super::*;
+
+    #[test]
+    fn named_type_eq() {
+        // not resolved
+        {
+            let named_ty1 = Type::Named(NamedTy::new("T1"));
+            let named_ty2 = Type::Named(NamedTy::new("T2"));
+
+            assert!(named_ty1 == named_ty1);
+            assert!(named_ty2 == named_ty2);
+            assert!(named_ty1 != named_ty2);
+            assert!(named_ty2 != named_ty1);
+        }
+
+        // resolved
+        {
+            let named_ty1 = NamedTy::new("T1");
+            named_ty1.assign_ty(&Type::Int64);
+            let named_ty2 = NamedTy::new("T2");
+            named_ty2.assign_ty(&Type::Int64);
+
+            let ty1 = Type::Named(named_ty1);
+            let ty2 = Type::Named(named_ty2);
+
+            assert!(ty1 == ty1);
+            assert!(ty2 == ty2);
+            assert!(ty1 == ty2);
+            assert!(ty2 == ty1);
+        }
     }
 }
