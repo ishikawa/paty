@@ -1245,6 +1245,20 @@ three 4' '
   end
   foo((1, "two"))
   foo(("three", 4))'
+assert 'T1 1 two
+T2 three 4' '
+  type T1 = (int64, string)
+  type T2 = (string, int64)
+  def foo(t: T1 | T2)
+    case t
+    when (x: int64, y: string)
+      puts("T1", x, y)
+    when (x: string, y: int64)
+      puts("T2", x, y)
+    end
+  end
+  foo((1, "two"))
+  foo(("three", 4))'
 assert '1 two
 three 4' '
   type T1 = (int64, string)
