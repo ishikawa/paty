@@ -1219,6 +1219,55 @@ ice cream' '
   end
   foo(T1 { value: 405060 })
   foo(T2 { value: "ice cream" })'
+assert '1 two
+3 four' '
+  type T1 = (int64, string)
+  type T2 = (string, int64)
+  def foo(t: T1 | T2)
+    case t
+    when (x: int64, y: string)
+      puts(x, y)
+    when (x: string, y: int64)
+      puts(x, y)
+    end
+  end
+  foo((1, "two"))
+  foo((3, "four"))'
+# or-pattern contains more than one tuple type.
+# union type introduce a new union type
+# assert '1 two
+# three 4' '
+#   def foo(n: (int64, string) | (string, int64))
+#     case n
+#     when (x, y)
+#       # x: int64 | string
+#       # y: string | int64
+#       puts(x, y)
+#     end
+#   end
+#   foo((1, "two"))
+#   foo(("three", 4))'
+# or-pattern contains slightly different patterns
+# assert '1 2
+# three 4
+# 5 six
+# seven eight' '
+#   struct T1 { value: int64 }
+#   struct T2 { value: string }
+#   type T3 = (T1 | T2, int64)
+#   type T4 = (T1 | T2, string)
+#   def foo(t: T3 | T4)
+#     case t
+#     when (T1 { value } | T2 { value }, x)
+#       puts(value, x)
+#     end
+#   end
+#   foo((T1 { value: 1 }, 2))             # T3
+#   foo((T2 { value: "three" }, 4))       # T3
+#   foo((T1 { value: 5 }, "six"))         # T4
+#   foo((T2 { value: "seven" }, "eight")) # T4
+# '
+
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"

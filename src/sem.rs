@@ -1137,7 +1137,7 @@ fn analyze_pattern<'nd, 'tcx>(
     functions: &[&syntax::Function<'nd, 'tcx>],
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
-) {
+) -> bool {
     let mut bindings: Option<HashMap<String, &Type>> = None;
     let mut sub_errors = Errors::new();
 
@@ -1179,7 +1179,9 @@ fn analyze_pattern<'nd, 'tcx>(
             }
 
             // Save context type
+            assert!(sub_pat.context_ty().is_none());
             sub_pat.assign_context_ty(expected_ty);
+            //eprintln!("--- unified with {}", expected_ty_candidate);
 
             // check new variables.
             let mut new_bindings: HashMap<_, _> = sub_vars
@@ -1217,12 +1219,22 @@ fn analyze_pattern<'nd, 'tcx>(
             }
 
             bindings = Some(new_bindings);
+
+            // this sub-pattern is passed type check
             break;
         }
     }
 
     // Propagates errors
     errors.extend(sub_errors);
+
+    // Every sub-pattern should be type checked.
+    if sub_pats
+        .iter()
+        .any(|sub_pat| sub_pat.context_ty().is_none())
+    {
+        return false;
+    }
 
     // Add bindings introduced in sub-patterns.
     if let Some(bindings) = bindings {
@@ -1234,7 +1246,9 @@ fn analyze_pattern<'nd, 'tcx>(
     // Assign type for or-pattern
     if matches!(pat.kind(), PatternKind::Or(_)) {
         pat.assign_context_ty(expected_ty);
-        unify_type(expected_ty, pat, errors);
+        unify_type(expected_ty, pat, errors)
+    } else {
+        true
     }
 }
 // Returns true if no type error occurred.
@@ -1285,8 +1299,14 @@ fn _analyze_pattern<'nd, 'tcx>(
                 return false;
             };
 
-            for (sub_pat, sub_ty) in patterns.iter().zip(sub_types.iter()) {
-                analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, named_types, errors);
+            if !patterns
+                .iter()
+                .zip(sub_types.iter())
+                .all(|(sub_pat, sub_ty)| {
+                    analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, named_types, errors)
+                })
+            {
+                return false;
             }
 
             unify_type(tcx.tuple(sub_types.clone()), pat, errors);
