@@ -1222,6 +1222,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             .collect::<Vec<_>>()
                             .as_slice(),
                     );
+                    program.add_decl_type(def_ty);
 
                     let init = self.promote_to(defs[0].1.init(), def_ty, stmts);
                     let init = defs.iter().fold(init, |else_value, (cfv_expr, var_def)| {
