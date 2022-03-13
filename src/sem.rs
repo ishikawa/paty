@@ -1149,6 +1149,10 @@ fn analyze_pattern<'nd, 'tcx>(
     } else {
         vec![expected_ty]
     };
+    // eprintln!(
+    //     ">>> analyze_pattern:\n... pat = {}\n... expected_ty = {}",
+    //     pat, expected_ty
+    // );
 
     // Expand Or-pattern
     let sub_pats = if let PatternKind::Or(sub_pats) = pat.kind() {
@@ -1164,6 +1168,10 @@ fn analyze_pattern<'nd, 'tcx>(
             let mut sub_vars = Scope::from_parent(vars);
             sub_errors = Errors::new();
 
+            // eprintln!(
+            //     "... >>> _analyze_pattern:\n... ... sub_pat = {}\n... ... expected_ty_candidate = {:#?}",
+            //     sub_pat, expected_ty_candidate,
+            // );
             if !_analyze_pattern(
                 tcx,
                 sub_pat,
@@ -1180,13 +1188,13 @@ fn analyze_pattern<'nd, 'tcx>(
             // Save context type
             assert!(sub_pat.context_ty().is_none());
             sub_pat.assign_context_ty(expected_ty);
-            //eprintln!("--- unified with {}", expected_ty_candidate);
 
             // check new variables.
             let mut new_bindings: HashMap<_, _> = sub_vars
                 .bindings_iter()
                 .map(|(name, b)| (name.to_string(), b.ty()))
                 .collect();
+            // eprintln!("... ... unified: bindings = {:#?}", new_bindings);
 
             if let Some(bindings) = bindings {
                 let unique_names: Vec<_> = bindings

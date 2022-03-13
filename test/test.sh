@@ -1285,6 +1285,18 @@ T2 three 4' '
   end
   foo((1, "two"))
   foo(("three", 4))'
+# assert '1 2
+# three 4' '
+#   type T1 = (int64, int64)
+#   type T2 = (string, int64)
+#   def foo(t: T1 | T2)  
+#     case t
+#     when (x: int64 | string, y: int64)
+#       puts(x, y)
+#     end        
+#   end          
+#   foo((1, 2))
+#   foo(("three", 4))'
 # union type introduce a new union type
 # assert '1 two
 # three 4' '
