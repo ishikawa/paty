@@ -1206,7 +1206,7 @@ candy' '
   end
   foo(304050)
   foo("candy")'
-# or-pattern contains more than one struct type.
+# or-pattern contains more than one complex type.
 assert '405060
 ice cream' '
   struct T1 { value: int64 }
@@ -1228,6 +1228,18 @@ assert '1 two
     when (x: int64, y: string)
       puts(x, y)
     when (x: string, y: int64)
+      puts(x, y)
+    end
+  end
+  foo((1, "two"))
+  foo((3, "four"))'
+assert '1 two
+3 four' '
+  type T1 = (int64, string)
+  type T2 = (string, int64)
+  def foo(t: T1 | T2)
+    case t
+    when (x: int64, y: string) | (x: string, y: int64)
       puts(x, y)
     end
   end
