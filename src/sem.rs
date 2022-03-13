@@ -1274,7 +1274,7 @@ fn _analyze_pattern<'nd, 'tcx>(
     errors: &mut Errors<'tcx>,
 ) -> bool {
     // Pattern has explicit type
-    if let Some(explicit_ty) = pat.ty() {
+    if let Some(explicit_ty) = pat.explicit_ty() {
         if !expect_assignable_type(expected_ty, explicit_ty, pat, errors) {
             return false;
         }

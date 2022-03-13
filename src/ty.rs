@@ -13,8 +13,6 @@ impl<'tcx> TypeContext<'tcx> {
         Self { type_arena }
     }
 
-    // TODO: cache types
-
     pub fn int64(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Int64)
     }
@@ -207,8 +205,8 @@ impl<'tcx> Type<'tcx> {
             | (Self::LiteralBoolean(_), Self::Boolean)
             | (Self::LiteralString(_), Self::String) => true,
             // Compound types
-            (Self::Tuple(l0), Self::Tuple(r0)) => {
-                l0.len() == r0.len() && l0.iter().zip(r0).all(|(a, b)| a.is_assignable_to(b))
+            (Self::Tuple(t1), Self::Tuple(t2)) => {
+                t1.len() == t2.len() && t1.iter().zip(t2).all(|(a, b)| a.is_assignable_to(b))
             }
             (Self::Struct(l0), Self::Struct(r0)) => {
                 // Different named structs are incompatible.
@@ -567,33 +565,69 @@ impl fmt::Display for FunctionSignature<'_> {
 mod tests_types {
     use super::*;
 
+    /// Unresolved type aliases are equated by name only.
     #[test]
-    fn named_type_eq() {
-        // not resolved
-        {
-            let named_ty1 = Type::Named(NamedTy::new("T1"));
-            let named_ty2 = Type::Named(NamedTy::new("T2"));
+    fn unresolved_named_type_eq() {
+        let named_ty1 = Type::Named(NamedTy::new("T1"));
+        let named_ty2 = Type::Named(NamedTy::new("T2"));
 
-            assert!(named_ty1 == named_ty1);
-            assert!(named_ty2 == named_ty2);
-            assert!(named_ty1 != named_ty2);
-            assert!(named_ty2 != named_ty1);
-        }
+        assert!(named_ty1 == named_ty1);
+        assert!(named_ty2 == named_ty2);
+        assert!(named_ty1 != named_ty2);
+        assert!(named_ty2 != named_ty1);
+    }
 
-        // resolved
-        {
-            let named_ty1 = NamedTy::new("T1");
-            named_ty1.assign_ty(&Type::Int64);
-            let named_ty2 = NamedTy::new("T2");
-            named_ty2.assign_ty(&Type::Int64);
+    /// Resolved type aliases are equated by name and actual type.
+    #[test]
+    fn resolved_named_type_eq() {
+        let named_ty1 = NamedTy::new("T1");
+        named_ty1.assign_ty(&Type::Int64);
+        let named_ty2 = NamedTy::new("T2");
+        named_ty2.assign_ty(&Type::Int64);
 
-            let ty1 = Type::Named(named_ty1);
-            let ty2 = Type::Named(named_ty2);
+        let ty1 = Type::Named(named_ty1);
+        let ty2 = Type::Named(named_ty2);
 
-            assert!(ty1 == ty1);
-            assert!(ty2 == ty2);
-            assert!(ty1 == ty2);
-            assert!(ty2 == ty1);
-        }
+        assert!(ty1 == ty1);
+        assert!(ty2 == ty2);
+        assert!(ty1 == ty2);
+        assert!(ty2 == ty1);
+    }
+
+    /// ```ignore
+    /// type A = 1 | 2 | 3;
+    /// type B = 1 | 2;
+    /// a = b // ok
+    /// ```
+    #[test]
+    fn union_type_assignable_partially_matched_literal_types() {
+        let one = Type::LiteralInt64(1);
+        let two = Type::LiteralInt64(2);
+        let three = Type::LiteralInt64(3);
+
+        let a = Type::Union(vec![&one, &two, &three]);
+        let b = Type::Union(vec![&one, &two]);
+
+        assert!(b.is_assignable_to(&a));
+        assert!(!a.is_assignable_to(&b));
+    }
+
+    /// ```ignore
+    /// type T = [int64, int64] | [string, int64];
+    /// type U = [int64 | string, int64];
+    /// u = t // ok
+    /// t = u // not ok
+    /// ```
+    #[test]
+    fn union_type_assignable_tuple() {
+        let t0 = Type::Tuple(vec![&Type::Int64, &Type::Int64]);
+        let t1 = Type::Tuple(vec![&Type::String, &Type::Int64]);
+        let u0 = Type::Union(vec![&Type::Int64, &Type::String]);
+
+        let t = Type::Union(vec![&t0, &t1]);
+        let u = Type::Tuple(vec![&u0, &Type::Int64]);
+
+        assert!(t.is_assignable_to(&u));
+        assert!(!u.is_assignable_to(&t));
     }
 }

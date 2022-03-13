@@ -733,6 +733,7 @@ pub struct Pattern<'nd, 'tcx> {
     // A pattern holds both the type of the pattern expression itself and
     // the type of the target when the pattern is tested.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
+    explicit_ty: Cell<bool>,
     context_ty: Cell<Option<&'tcx Type<'tcx>>>,
     data: NodeData,
 }
@@ -742,6 +743,7 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
         Self {
             kind,
             ty: Cell::new(None),
+            explicit_ty: Cell::new(false),
             context_ty: Cell::new(None),
             data: NodeData::new(),
         }
@@ -754,9 +756,25 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
     pub fn context_ty(&self) -> Option<&'tcx Type<'tcx>> {
         self.context_ty.get()
     }
-
     pub fn assign_context_ty(&self, ty: &'tcx Type<'tcx>) {
         self.context_ty.set(Some(ty));
+    }
+
+    /// Users can annotate the type of a pattern explicitly like below:
+    ///
+    /// ```ignore
+    /// x: int64
+    /// (x: int64) | (x: string)
+    /// ```
+    /// So some patterns have its type before type inference. You can
+    /// check whether a pattern has been annotated explicitly or not by
+    /// `Pattern.explicit_ty()` method.
+    pub fn explicit_ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.explicit_ty.get().then(|| self.ty()).flatten()
+    }
+    pub fn assign_explicit_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.assign_ty(ty);
+        self.explicit_ty.set(true);
     }
 }
 
@@ -1747,7 +1765,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         // Type annotated pattern
         if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
-            pat.assign_ty(self.type_annotation(it)?);
+            pat.assign_explicit_ty(self.type_annotation(it)?);
         }
 
         Ok(pat)
