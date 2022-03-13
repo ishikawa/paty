@@ -1220,7 +1220,7 @@ ice cream' '
   foo(T1 { value: 405060 })
   foo(T2 { value: "ice cream" })'
 assert '1 two
-3 four' '
+three 4' '
   type T1 = (int64, string)
   type T2 = (string, int64)
   def foo(t: T1 | T2)
@@ -1232,9 +1232,9 @@ assert '1 two
     end
   end
   foo((1, "two"))
-  foo((3, "four"))'
+  foo(("three", 4))'
 assert '1 two
-3 four' '
+three 4' '
   type T1 = (int64, string)
   type T2 = (string, int64)
   def foo(t: T1 | T2)
@@ -1244,9 +1244,9 @@ assert '1 two
     end
   end
   foo((1, "two"))
-  foo((3, "four"))'
+  foo(("three", 4))'
 assert '1 two
-3 four' '
+three 4' '
   type T1 = (int64, string)
   type T2 = (string, int64)
   def foo(t: T1 | T2)
@@ -1256,8 +1256,21 @@ assert '1 two
     end
   end
   foo((1, "two"))
-  foo((3, "four"))'
-# or-pattern contains more than one tuple type.
+  foo(("three", 4))'
+assert 'T1 1 two
+T2 three 4' '
+  type T1 = (int64, string)
+  type T2 = (string, int64)
+  def foo(t: T1 | T2)
+    case t
+    when ((x, y): T1)
+      puts("T1", x, y)
+    when ((x, y): T2)
+      puts("T2", x, y)
+    end
+  end
+  foo((1, "two"))
+  foo(("three", 4))'
 # union type introduce a new union type
 # assert '1 two
 # three 4' '
