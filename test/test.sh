@@ -1285,14 +1285,84 @@ T2 three 4' '
   end
   foo((1, "two"))
   foo(("three", 4))'
+assert '(1, 2)
+("one", 2)
+(1, 2)
+("one", 2)' '
+  type T = (int64, int64) | (string, int64)
+  type U = (int64 | string, int64)
+
+  t1: T = (1, 2)
+  t2: T = ("one", 2)
+  u1: U = t1
+  u2: U = t2
+  puts(t1)
+  puts(t2)
+  puts(u1)
+  puts(u2)'
+# Union type pattern match
+assert '1
+2' '
+def foo(n: 1 | 2)
+  case n
+  when 1
+    puts(1)
+  when 2
+    puts(2)
+  end
+end
+foo(1)
+foo(2)'
+assert '1
+2' '
+def foo(n: 1 | 2)
+  case n
+  when x: 1
+    puts(x)
+  when x: 2
+    puts(x)
+  end
+end
+foo(1)
+foo(2)'
+assert '1
+2' '
+def foo(n: 1 | 2)
+  case n
+  when x
+    puts(x)
+  end
+end
+foo(1)
+foo(2)'
+# assert '1
+# 2' '
+# def foo(n: 1 | 2)
+#   case n
+#   when x: int64
+#     puts(x)
+#   end
+# end
+# foo(1)
+# foo(2)'
+assert '1
+2' '
+def foo(n: 1 | 2)
+  case n
+  when x: 1 | 2
+    puts(x)
+  end
+end
+foo(1)
+foo(2)'
 # assert '1 2
 # three 4' '
-#   type T1 = (int64, int64)
-#   type T2 = (string, int64)
-#   def foo(t: T1 | T2)  
+#   type T = (int64, int64) | (string, int64)
+#   type U = (int64 | string, int64)
+#   def foo(t: U)
 #     case t
-#     when (x: int64 | string, y: int64)
-#       puts(x, y)
+#     when x: T
+#       puts(x.0, x.1)
 #     end        
 #   end          
 #   foo((1, 2))

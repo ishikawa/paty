@@ -1205,7 +1205,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 it.next();
 
                 if let Some(ty) = ty {
-                    pattern.assign_ty(ty);
+                    pattern.assign_explicit_ty(ty);
                 }
 
                 let rhs = self.expr(it)?;

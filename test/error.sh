@@ -430,17 +430,28 @@ assert 'expected type `1`, found `struct T { a: int64, b: boolean }`' '
   else
     puts(2)
   end'
-# explict type annotated pattern
-assert 'expected type `1`, found `2`' 'case 1
-when x : 2
-  puts(x)
-end'
+
+# ---------------------------------
+# Explict type annotation
+# ---------------------------------
+# incompatible type between head value and pattern.
+assert 'expected type `1`, found `2`' '
+  case 1
+  when x : 2
+    puts(x)
+  end'
+# incompatible type between a literanl value and variable.
+assert 'expected type `int64`, found `"string"`' '
+  x: int64 = "string"'
+assert 'expected type `2`, found `1`' '
+  x: 2 = 1'
+# widening type of a literal value.
 assert 'non-exhaustive pattern' '
-n: int64 = 1
-case n
-when 1
-  puts(n)
-end'
+  n: int64 = 1
+  case n
+  when 1
+    puts(n)
+  end'
 # literal types
 assert 'expected type `"A"`, found `"B"`' '
   case "A"
@@ -528,3 +539,14 @@ assert 'expected type `struct T { a: int64 }`, found `{ a: 2 }`' '
   else
     puts(1)
   end'
+# ---------------------------------
+# Union type
+# ---------------------------------
+assert 'expected type `T`, found `U`' '
+  type T = (int64, int64) | (string, int64)
+  type U = (int64 | string, int64)
+
+  t1: T = (1, 2)
+  t2: T = ("one", 2)
+  u1: U = t1
+  t3: T = u1'

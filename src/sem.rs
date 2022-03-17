@@ -103,11 +103,20 @@ impl<'a, 'tcx> Scope<'a, 'tcx> {
         self.bindings.insert(binding.name().to_string(), binding);
     }
 
+    /// Returns a reference to the binding corresponding to the name in this scope.
     pub fn get(&self, name: &str) -> Option<&Binding<'tcx>> {
+        self.bindings.get(name)
+    }
+
+    /// Returns a reference to the binding corresponding to the name.
+    ///
+    /// Search a binding from the parent (if any) if a binding not found in
+    /// this scope.
+    pub fn lookup(&self, name: &str) -> Option<&Binding<'tcx>> {
         if let Some(binding) = self.bindings.get(name) {
             Some(binding)
         } else if let Some(parent) = self.parent {
-            parent.get(name)
+            parent.lookup(name)
         } else {
             None
         }
@@ -503,7 +512,7 @@ fn analyze_stmt<'nd, 'tcx>(
                 return;
             }
 
-            if let Some(pattern_ty) = pattern.ty() {
+            if let Some(pattern_ty) = pattern.explicit_ty() {
                 // the pattern has an explicit type annotation.
                 analyze_let_pattern(
                     tcx,
@@ -798,7 +807,7 @@ fn analyze_expr<'nd, 'tcx>(
             unify_type(tcx.boolean(), expr, errors);
         }
         syntax::ExprKind::Var(name) => {
-            if let Some(binding) = vars.get(name) {
+            if let Some(binding) = vars.lookup(name) {
                 unify_type(binding.ty(), expr, errors);
             } else {
                 errors.push(
@@ -1204,11 +1213,6 @@ fn analyze_pattern<'nd, 'tcx>(
                     .cloned()
                     .collect();
 
-                // dbg!(&sub_pat);
-                // dbg!(&expected_ty_candidate);
-                // dbg!(&unique_names);
-                // dbg!(&bindings);
-                // dbg!(&new_bindings);
                 for name in unique_names {
                     match (bindings.get(&name), new_bindings.get_mut(&name)) {
                         (None, Some(_)) | (Some(_), None) => {
@@ -1251,8 +1255,16 @@ fn analyze_pattern<'nd, 'tcx>(
     // Add bindings introduced in sub-patterns.
     if let Some(bindings) = bindings {
         for (var_name, var_ty) in bindings {
-            let binding = Binding::new(var_name, var_ty);
-            vars.insert(binding);
+            // You can not introduce duplicate variables in the pattern.
+            if vars.get(&var_name).is_some() {
+                errors.push(
+                    SemanticErrorKind::DuplicateBoundingPattern { name: var_name },
+                    pat,
+                );
+            } else {
+                let binding = Binding::new(var_name, var_ty);
+                vars.insert(binding);
+            }
         }
     }
     // Assign type for or-pattern
@@ -1273,7 +1285,9 @@ fn _analyze_pattern<'nd, 'tcx>(
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) -> bool {
-    // Pattern has explicit type
+    // The pattern type must be compatible with the target type.
+    // The pattern value must be narrower than the target type,
+    // but the pattern type may be wider than the target type.
     if let Some(explicit_ty) = pat.explicit_ty() {
         if !expect_assignable_type(expected_ty, explicit_ty, pat, errors) {
             return false;
@@ -1431,7 +1445,7 @@ fn _analyze_pattern<'nd, 'tcx>(
 
                         if let Some(spread_name) = spread.name() {
                             // Bind rest fields to the name.
-                            if vars.get(spread_name).is_some() {
+                            if vars.lookup(spread_name).is_some() {
                                 errors.push(
                                     SemanticErrorKind::DuplicateBoundingPattern {
                                         name: spread_name.to_string(),
@@ -1470,15 +1484,8 @@ fn _analyze_pattern<'nd, 'tcx>(
             // We need the type of pattern.
             let type_matched = unify_type(expected_ty, pat, errors);
 
-            if vars.get(name).is_some() {
-                errors.push(
-                    SemanticErrorKind::DuplicateBoundingPattern { name: name.clone() },
-                    pat,
-                );
-            } else {
-                let binding = Binding::new(name.to_string(), pat.expect_ty());
-                vars.insert(binding);
-            }
+            let binding = Binding::new(name.to_string(), pat.expect_ty());
+            vars.insert(binding);
 
             // already unified.
             return type_matched;
