@@ -337,9 +337,13 @@ fn analyze_explicit_type_annotations_decl<'nd, 'tcx>(
     match decl.kind() {
         syntax::DeclarationKind::Function(fun) => {
             // Resolved parameter types before using it as key.
-            for p in fun.params() {
-                analyze_explicit_type_annotations_pattern(tcx, p.pattern(), named_types, errors);
-                resolve_declared_type(p.ty(), named_types, errors);
+            for param in fun.params() {
+                analyze_explicit_type_annotations_pattern(
+                    tcx,
+                    param.pattern(),
+                    named_types,
+                    errors,
+                );
             }
             for stmt in fun.body() {
                 analyze_explicit_type_annotations_stmt(tcx, stmt, named_types, errors);
@@ -361,7 +365,7 @@ fn analyze_explicit_type_annotations_stmt<'nd, 'tcx>(
 ) {
     match stmt.kind() {
         StmtKind::Let { pattern, .. } => {
-            if let Some(ty) = pattern.ty() {
+            if let Some(ty) = pattern.explicit_ty() {
                 resolve_declared_type(ty, named_types, errors);
             }
         }
@@ -392,7 +396,7 @@ fn analyze_explicit_type_annotations_pattern<'nd, 'tcx>(
         for sub_pat in sub_patterns {
             analyze_explicit_type_annotations_pattern(tcx, sub_pat, named_types, errors);
         }
-    } else if let Some(ty) = pattern.ty() {
+    } else if let Some(ty) = pattern.explicit_ty() {
         resolve_declared_type(ty, named_types, errors);
     }
 }
@@ -1042,7 +1046,7 @@ fn analyze_expr<'nd, 'tcx>(
 
             let head_ty = head
                 .ty()
-                .unwrap_or_else(|| panic!("Untyped head expression for {} - {:?}", head, head))
+                .unwrap_or_else(|| panic!("Untyped head expression for `{}` - {:?}", head, head))
                 .bottom_ty();
 
             // The result type of the expression.
@@ -1480,21 +1484,26 @@ fn _analyze_pattern<'nd, 'tcx>(
                 );
             }
         }
-        PatternKind::Var(name) => {
-            // We need the type of pattern.
-            let type_matched = unify_type(expected_ty, pat, errors);
-
-            let binding = Binding::new(name.to_string(), pat.expect_ty());
-            vars.insert(binding);
-
-            // already unified.
-            return type_matched;
-        }
-        PatternKind::Wildcard => {}
+        PatternKind::Var(_) | PatternKind::Wildcard => {}
         PatternKind::Or(_) => unreachable!("Or-pattern shouldn't be handled here."),
     };
 
-    unify_type(expected_ty, pat, errors)
+    if let Some(explicit_ty) = pat.explicit_ty() {
+        if !unify_type(explicit_ty, pat, errors) {
+            return false;
+        }
+    }
+
+    if !unify_type(expected_ty, pat, errors) {
+        return false;
+    }
+
+    if let PatternKind::Var(name) = pat.kind() {
+        let binding = Binding::new(name.to_string(), pat.expect_ty());
+        vars.insert(binding);
+    }
+
+    true
 }
 fn analyze_let_pattern<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,

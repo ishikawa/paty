@@ -400,6 +400,30 @@ assert '1 100
   func(T { a: 4, b: (1, 300) })
   func(T { a: 4, b: (400, 1) })
   func(T { a: 2, b: (3, 0) })'
+
+# ---------------------------------
+# Explict type annotation
+# ---------------------------------
+assert '1000' '
+  def foo(n: int64)
+    case n
+    when x: int64
+      puts(x)
+    end
+  end
+  foo(1000)'
+# assert 'thousand
+# 1000' '
+#   def foo(n: int64)
+#     case n
+#     when x: 1000
+#       puts("thousand")
+#     when x: int64
+#       puts(x)
+#     end
+#   end
+#   foo(1000)
+#   foo(1001)'
 # literal types
 assert '1' '
   case "A"

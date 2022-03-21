@@ -452,7 +452,10 @@ assert 'non-exhaustive pattern' '
   when 1
     puts(n)
   end'
-# literal types
+
+# ---------------------------------
+# Literal Types
+# ---------------------------------
 assert 'expected type `"A"`, found `"B"`' '
   case "A"
   when "A"

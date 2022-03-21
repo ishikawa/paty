@@ -1035,11 +1035,10 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let pat_ty = pat.expect_ty().bottom_ty();
 
         match pat.kind() {
-            PatternKind::Var(_) | PatternKind::Wildcard => Self::wildcard(pat_ty),
             &PatternKind::Integer(value) => Self::from_i64(value, pat_ty),
-            &PatternKind::Boolean(b) => Self::from_bool(b, pat_ty),
+            &PatternKind::Boolean(value) => Self::from_bool(value, pat_ty),
+            PatternKind::String(value) => Self::from_string(value.clone(), pat_ty),
             &PatternKind::Range { lo, hi, end } => Self::from_range(lo, hi, pat_ty, end),
-            PatternKind::String(s) => Self::from_string(s.clone(), pat_ty),
             PatternKind::Tuple(sub_pats) => {
                 let ctor = Constructor::Single;
                 let pats: Vec<_> = sub_pats
@@ -1077,6 +1076,15 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 let fields = Fields::from_iter(cx, sub_pats);
                 DeconstructedPat::new(ctor, fields, pat_ty)
             }
+            PatternKind::Var(_) | PatternKind::Wildcard => {
+                // If the pattern is explicitly typed with a literal type, the pattern matches
+                // a corresponding literal value.
+                if let Some(explicit_ty) = pat.explicit_ty() {
+                    Self::_from_explicit_ty(cx, explicit_ty)
+                } else {
+                    Self::wildcard(pat_ty)
+                }
+            }
             PatternKind::Or(..) => {
                 let ctor = Constructor::Or;
                 let pats = expand_or_pat(pat)
@@ -1088,6 +1096,8 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         }
     }
     pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
+        // If the context type is an union type, each pattern should be one/some of
+        // member(s) of it.
         if let Type::Union(member_types) = pat.context_ty().unwrap() {
             if !matches!(pat.kind(), PatternKind::Or(_)) {
                 return Self::to_union_variants(cx, member_types, pat);
@@ -1095,6 +1105,32 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         }
 
         Self::_from_pat(cx, pat)
+    }
+    fn _from_explicit_ty(cx: &MatchCheckContext<'p, 'tcx>, explicit_ty: &'tcx Type<'tcx>) -> Self {
+        let pat_ty = explicit_ty.bottom_ty();
+
+        match pat_ty {
+            &Type::LiteralInt64(value) => Self::from_i64(value, pat_ty),
+            &Type::LiteralBoolean(value) => Self::from_bool(value, pat_ty),
+            Type::LiteralString(value) => Self::from_string(value.clone(), pat_ty),
+            Type::Union(member_types) => {
+                let mut pats = vec![];
+
+                for member_ty in expand_union_ty(member_types) {
+                    let pat = Self::_from_explicit_ty(cx, member_ty);
+
+                    if pat.ctor().is_wildcard() {
+                        return Self::wildcard(pat_ty);
+                    }
+
+                    pats.push(pat);
+                }
+
+                let fields = Fields::from_iter(cx, pats);
+                DeconstructedPat::new(Constructor::Or, fields, pat_ty)
+            }
+            _ => Self::wildcard(pat_ty),
+        }
     }
 
     // Only used for error description

@@ -70,7 +70,7 @@ fn main() {
         let ir_stmt_arena = Arena::new();
         let tmp_var_arena = Arena::new();
 
-        let mut builder =
+        let builder =
             ir::builder::Builder::new(tcx, &ir_expr_arena, &ir_stmt_arena, &tmp_var_arena);
         let mut program = builder.build(&body);
 

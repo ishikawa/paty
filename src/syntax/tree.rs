@@ -507,7 +507,7 @@ impl<'nd, 'tcx> Parameter<'nd, 'tcx> {
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.pattern
-            .ty()
+            .explicit_ty()
             .expect("function parameter type must be explicit")
     }
 }
@@ -730,10 +730,10 @@ impl<'nd, 'tcx> Node for CaseArm<'nd, 'tcx> {
 #[derive(Debug)]
 pub struct Pattern<'nd, 'tcx> {
     kind: PatternKind<'nd, 'tcx>,
+    ty: Cell<Option<&'tcx Type<'tcx>>>,
+    explicit_ty: Cell<Option<&'tcx Type<'tcx>>>,
     // A pattern holds both the type of the pattern expression itself and
     // the type of the target when the pattern is tested.
-    ty: Cell<Option<&'tcx Type<'tcx>>>,
-    explicit_ty: Cell<bool>,
     context_ty: Cell<Option<&'tcx Type<'tcx>>>,
     data: NodeData,
 }
@@ -743,7 +743,7 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
         Self {
             kind,
             ty: Cell::new(None),
-            explicit_ty: Cell::new(false),
+            explicit_ty: Cell::new(None),
             context_ty: Cell::new(None),
             data: NodeData::new(),
         }
@@ -770,11 +770,10 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
     /// check whether a pattern has been annotated explicitly or not by
     /// `Pattern.explicit_ty()` method.
     pub fn explicit_ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.explicit_ty.get().then(|| self.ty()).flatten()
+        self.explicit_ty.get()
     }
     pub fn assign_explicit_ty(&self, ty: &'tcx Type<'tcx>) {
-        self.assign_ty(ty);
-        self.explicit_ty.set(true);
+        self.explicit_ty.set(Some(ty));
     }
 }
 
@@ -1276,9 +1275,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
     ) -> Result<Parameter<'nd, 'tcx>, ParseError<'t>> {
         let pat = self.pattern(it)?;
 
-        if pat.ty().is_none() {
-            // Int64 for omitted type
-            pat.assign_ty(self.tcx.int64());
+        // Parameter type must be specified explicitly and
+        // `int64` for omitted.
+        if pat.explicit_ty().is_none() {
+            pat.assign_explicit_ty(self.tcx.int64());
         }
 
         let mut param = Parameter::new(pat);
