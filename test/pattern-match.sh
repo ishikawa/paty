@@ -68,6 +68,19 @@ assert '1
   foo((1, "test 1"))
   foo((2, "test 2"))
   foo((3, "test 3"))'
+# destructuring
+assert '300
+400' '
+  def foo(t: ("add" | "mul", int64, int64))
+    case t
+    when ("add", x, y)
+      puts(x + y)
+    when ("mul", x, y)
+      puts(x * y)
+    end
+  end
+  foo(("add", 100, 200))
+  foo(("mul", 20, 20))'
 # struct
 assert '🇯🇵
 🇬🇧

@@ -1136,8 +1136,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         // type annotated pattern. If the pattern has an explicit type
         // annotation, the value is checked for type conformity, and if necessary,
         // the value is converted to that type.
-        let pat_ty = pat.expect_ty().bottom_ty();
-
         let ty_cond = if let Some(explicit_ty) = pat.explicit_ty() {
             self._build_pattern_type_test(
                 target_expr,
@@ -1151,8 +1149,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             None
         };
 
-        let value_expr = self.promote_to(target_expr, pat_ty, tmp_vars, outer_stmts);
-
+        let value_expr = self.promote_to(target_expr, pat.expect_ty(), tmp_vars, outer_stmts);
         let pat_cond =
             self._build_pattern_test(value_expr, pat, tmp_vars, program, outer_stmts, stmts);
 
@@ -1178,6 +1175,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) -> Option<&'a Expr<'a, 'tcx>> {
         let target_ty = target_expr.ty().bottom_ty();
         let pat_ty = pat_ty.bottom_ty();
+        assert!(pat_ty.is_assignable_to(target_ty));
 
         match (target_ty, pat_ty) {
             // literal types
@@ -1218,24 +1216,31 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     })
                     .reduce(|lhs, rhs| self.and(lhs, rhs))
             }
-            (Type::Struct(target_struct_ty), Type::Struct(pat_struct_ty)) => {
-                assert!(target_struct_ty == pat_struct_ty);
-                pat_struct_ty
-                    .fields()
+            (Type::Union(target_member_types), pat_ty) => {
+                let target_member_types = expand_union_ty(target_member_types);
+
+                let tag = target_member_types
                     .iter()
-                    .filter_map(|field| {
-                        let operand = self.struct_field_access(target_expr, field.name());
-                        self._build_pattern_type_test(
-                            operand,
-                            field.ty(),
-                            tmp_vars,
-                            program,
-                            outer_stmts,
-                            stmts,
-                        )
-                    })
-                    .reduce(|lhs, rhs| self.and(lhs, rhs))
+                    .position(|ty| ty.is_assignable_to(pat_ty))
+                    .unwrap_or_else(|| panic!("no matching {} in union {}", pat_ty, target_ty));
+
+                Some(self.eq(self.union_tag(target_expr), self.usize(tag)))
             }
+            (Type::Struct(_), Type::Struct(pat_struct_ty)) => pat_struct_ty
+                .fields()
+                .iter()
+                .filter_map(|field| {
+                    let operand = self.struct_field_access(target_expr, field.name());
+                    self._build_pattern_type_test(
+                        operand,
+                        field.ty(),
+                        tmp_vars,
+                        program,
+                        outer_stmts,
+                        stmts,
+                    )
+                })
+                .reduce(|lhs, rhs| self.and(lhs, rhs)),
             (Type::Int64 | Type::NativeInt, Type::Int64 | Type::NativeInt)
             | (Type::Boolean, Type::Boolean)
             | (Type::String, Type::String) => None,
