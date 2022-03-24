@@ -52,7 +52,7 @@ fn main() {
         }
         Ok(body) => body,
     };
-    //println!("Syntax tree = {:?}", body);
+    //eprintln!("Syntax tree = {:#?}", body);
 
     if let Err(errors) = sem::analyze(tcx, &body) {
         assert!(!errors.is_empty());

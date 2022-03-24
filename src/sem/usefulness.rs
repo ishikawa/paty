@@ -1080,7 +1080,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 // If the pattern is explicitly typed with a literal type, the pattern matches
                 // a corresponding literal value.
                 if let Some(explicit_ty) = pat.explicit_ty() {
-                    Self::_from_explicit_ty(cx, explicit_ty)
+                    Self::_from_explicit_ty(cx, explicit_ty, pat.context_ty().unwrap())
                 } else {
                     Self::wildcard(pat_ty)
                 }
@@ -1106,30 +1106,126 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
         Self::_from_pat(cx, pat)
     }
-    fn _from_explicit_ty(cx: &MatchCheckContext<'p, 'tcx>, explicit_ty: &'tcx Type<'tcx>) -> Self {
+    fn _from_explicit_ty(
+        cx: &MatchCheckContext<'p, 'tcx>,
+        explicit_ty: &'tcx Type<'tcx>,
+        context_ty: &'tcx Type<'tcx>,
+    ) -> Self {
         let pat_ty = explicit_ty.bottom_ty();
 
-        match pat_ty {
-            &Type::LiteralInt64(value) => Self::from_i64(value, pat_ty),
-            &Type::LiteralBoolean(value) => Self::from_bool(value, pat_ty),
-            Type::LiteralString(value) => Self::from_string(value.clone(), pat_ty),
-            Type::Union(member_types) => {
-                let mut pats = vec![];
+        // If the pattern type is an union type, build an Or-pattern which contains
+        // all patterns from union members.
+        if let Type::Union(member_types) = pat_ty {
+            let mut pats = vec![];
 
-                for member_ty in expand_union_ty(member_types) {
-                    let pat = Self::_from_explicit_ty(cx, member_ty);
+            for member_ty in expand_union_ty(member_types) {
+                let pat = Self::_from_explicit_ty(cx, member_ty, context_ty);
 
-                    if pat.ctor().is_wildcard() {
-                        return Self::wildcard(pat_ty);
-                    }
-
-                    pats.push(pat);
+                // If an union type includes a wildcard pattern, this pattern matches
+                // any value for its type.
+                if pat.ctor().is_wildcard() {
+                    return Self::wildcard(pat_ty);
                 }
 
-                let fields = Fields::from_iter(cx, pats);
-                DeconstructedPat::new(Constructor::Or, fields, pat_ty)
+                pats.push(pat);
             }
-            _ => Self::wildcard(pat_ty),
+
+            let fields = Fields::from_iter(cx, pats);
+            DeconstructedPat::new(Constructor::Or, fields, pat_ty)
+        }
+        // If the context type is an union type, each pattern should be one/some of
+        // member(s) of it.
+        else if let Type::Union(context_member_types) = context_ty {
+            let context_member_types = expand_union_ty(context_member_types);
+
+            let mut de_pats: Vec<_> = context_member_types
+                .iter()
+                .enumerate()
+                .filter_map(|(tag, context_member_ty)| {
+                    // Create a constant field if the pattern type contains some of
+                    // the members of the union type. Handle this first to check
+                    // usefulness of range pattern properly.
+                    let ctor = Constructor::Variant(VariantIdx(tag));
+
+                    if pat_ty.is_assignable_to(context_member_ty) {
+                        let de_pat = Self::_from_explicit_ty(cx, pat_ty, context_member_ty);
+
+                        if matches!(de_pat.ctor(), Constructor::Single) {
+                            // Don't wrap with Constructor::Single when the type is union.
+                            // It will be inconsistent with Self::specialize()
+                            Some(DeconstructedPat::new(
+                                ctor,
+                                de_pat.fields,
+                                context_member_ty,
+                            ))
+                        } else {
+                            Some(DeconstructedPat::new(
+                                ctor,
+                                Fields::from_one(cx, de_pat),
+                                context_member_ty,
+                            ))
+                        }
+                    }
+                    // If the pattern type contains all members of the union type,
+                    // create the field as a wildcard
+                    else if context_member_ty.is_assignable_to(pat_ty) {
+                        Some(DeconstructedPat::new(
+                            ctor,
+                            Fields::wildcards_from_tys(cx, once(*context_member_ty)),
+                            context_member_ty,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            assert!(!de_pats.is_empty());
+            if de_pats.len() == 1 {
+                de_pats.remove(0)
+            } else {
+                DeconstructedPat::new(Constructor::Or, Fields::from_iter(cx, de_pats), pat_ty)
+            }
+        }
+        // Otherwise, create a single pattern from the type.
+        else {
+            match pat_ty {
+                &Type::LiteralInt64(value) => Self::from_i64(value, pat_ty),
+                &Type::LiteralBoolean(value) => Self::from_bool(value, pat_ty),
+                Type::LiteralString(value) => Self::from_string(value.clone(), pat_ty),
+                Type::Tuple(fs) => {
+                    let context_fs = context_ty.tuple_ty().unwrap();
+                    assert!(fs.len() == context_fs.len());
+
+                    let pats: Vec<_> = fs
+                        .iter()
+                        .zip(context_fs)
+                        .map(|(ty, cty)| Self::_from_explicit_ty(cx, ty, cty))
+                        .collect();
+
+                    let fields = Fields::from_iter(cx, pats);
+                    DeconstructedPat::new(Constructor::Single, fields, pat_ty)
+                }
+                Type::Struct(struct_ty) => {
+                    let context_struct_ty = context_ty.struct_ty().unwrap();
+
+                    let pats: Vec<_> = struct_ty
+                        .fields()
+                        .iter()
+                        .zip(context_struct_ty.fields())
+                        .map(|(f, cf)| Self::_from_explicit_ty(cx, f.ty(), cf.ty()))
+                        .collect();
+
+                    let fields = Fields::from_iter(cx, pats);
+                    DeconstructedPat::new(Constructor::Single, fields, pat_ty)
+                }
+                Type::Int64 | Type::NativeInt | Type::Boolean | Type::String => {
+                    Self::wildcard(pat_ty)
+                }
+                Type::Named(_) | Type::Undetermined | Type::Union(_) => {
+                    unreachable!("bug: type {} shouldn't be handled here.", pat_ty)
+                }
+            }
         }
     }
 
@@ -1695,7 +1791,7 @@ pub fn check_match<'tcx>(
                 }
             }
         }
-
+        /*
         if matches!(reachability, Reachability::Unreachable) {
             if has_else && i == (report.arm_usefulness.len() - 1) {
                 // "else"
@@ -1712,6 +1808,7 @@ pub fn check_match<'tcx>(
                 ));
             }
         }
+        */
     }
     // non exhaustiveness
     for de_pat in report.non_exhaustiveness_witnesses {

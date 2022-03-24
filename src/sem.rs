@@ -1313,7 +1313,7 @@ fn _analyze_pattern<'nd, 'tcx>(
             unify_type(tcx.int64(), pat, errors);
         }
         PatternKind::Tuple(patterns) => {
-            let sub_types = if let Type::Tuple(sub_types) = expected_ty.bottom_ty() {
+            let expected_elem_types = if let Type::Tuple(sub_types) = expected_ty.bottom_ty() {
                 if sub_types.len() != patterns.len() {
                     errors.push(
                         SemanticErrorKind::MismatchedType {
@@ -1338,7 +1338,7 @@ fn _analyze_pattern<'nd, 'tcx>(
 
             if !patterns
                 .iter()
-                .zip(sub_types.iter())
+                .zip(expected_elem_types.iter())
                 .all(|(sub_pat, sub_ty)| {
                     analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, named_types, errors)
                 })
@@ -1346,7 +1346,8 @@ fn _analyze_pattern<'nd, 'tcx>(
                 return false;
             }
 
-            unify_type(tcx.tuple(sub_types.clone()), pat, errors);
+            let sub_types = patterns.iter().map(|sub_pat| sub_pat.expect_ty()).collect();
+            unify_type(tcx.tuple(sub_types), pat, errors);
         }
         PatternKind::Struct(struct_pat) => {
             // Struct type check

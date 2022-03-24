@@ -1111,7 +1111,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         self.push_expr_alloc(Expr::printf(self.tcx, vec![format_spec]), tmp_vars, stmts)
     }
 
-    /*
     /// Returns condition expression for the pattern test.
     ///
     /// The pattern consists of the following elements
@@ -1125,10 +1124,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     /// 1. Test if the target value matches the type.
     /// 2. Next, test if it matches the pattern. If necessary, convert to a value matching the pattern type.
     /// 3. Bind to the variable.
-    fn __build_pattern(
+    fn build_pattern(
         &self,
         target_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
+        tmp_vars: &mut TmpVars<'a, 'tcx>,
         program: &mut Program<'a, 'tcx>,
         outer_stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
@@ -1136,8 +1136,36 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         // type annotated pattern. If the pattern has an explicit type
         // annotation, the value is checked for type conformity, and if necessary,
         // the value is converted to that type.
+        let pat_ty = pat.expect_ty().bottom_ty();
 
-        None
+        let ty_cond = if let Some(explicit_ty) = pat.explicit_ty() {
+            self._build_pattern_type_test(
+                target_expr,
+                explicit_ty,
+                tmp_vars,
+                program,
+                outer_stmts,
+                stmts,
+            )
+        } else {
+            None
+        };
+
+        let value_expr = self.promote_to(target_expr, pat_ty, tmp_vars, outer_stmts);
+
+        let pat_cond =
+            self._build_pattern_test(value_expr, pat, tmp_vars, program, outer_stmts, stmts);
+
+        // binding variable
+        if let PatternKind::Var(name) = pat.kind() {
+            let stmt = Stmt::VarDef(VarDef::new(name.clone(), value_expr));
+            stmts.push(self.stmt_arena.alloc(stmt));
+        }
+
+        [ty_cond, pat_cond]
+            .iter()
+            .filter_map(|c| *c)
+            .reduce(|lhs, rhs| self.and(lhs, rhs))
     }
     fn _build_pattern_type_test(
         &self,
@@ -1190,6 +1218,27 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     })
                     .reduce(|lhs, rhs| self.and(lhs, rhs))
             }
+            (Type::Struct(target_struct_ty), Type::Struct(pat_struct_ty)) => {
+                assert!(target_struct_ty == pat_struct_ty);
+                pat_struct_ty
+                    .fields()
+                    .iter()
+                    .filter_map(|field| {
+                        let operand = self.struct_field_access(target_expr, field.name());
+                        self._build_pattern_type_test(
+                            operand,
+                            field.ty(),
+                            tmp_vars,
+                            program,
+                            outer_stmts,
+                            stmts,
+                        )
+                    })
+                    .reduce(|lhs, rhs| self.and(lhs, rhs))
+            }
+            (Type::Int64 | Type::NativeInt, Type::Int64 | Type::NativeInt)
+            | (Type::Boolean, Type::Boolean)
+            | (Type::String, Type::String) => None,
             _ => todo!("target_ty = {:?}, pat_ty = {:?}", target_ty, pat_ty),
         }
     }
@@ -1283,33 +1332,22 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     }
                 }
 
-                pattern_fields.iter().fold(None, |cond, pat_field| {
-                    let operand = self.struct_field_access(value_expr, pat_field.name());
-                    let sub_cond = self.build_pattern(
-                        operand,
-                        pat_field.pattern(),
-                        tmp_vars,
-                        program,
-                        outer_stmts,
-                        stmts,
-                    );
-
-                    match (cond, sub_cond) {
-                        (Some(cond), Some(sub_cond)) => Some(self.and(cond, sub_cond)),
-                        (Some(cond), None) => Some(cond),
-                        (None, Some(sub_cond)) => Some(sub_cond),
-                        (None, None) => None,
-                    }
-                })
+                pattern_fields
+                    .iter()
+                    .filter_map(|pat_field| {
+                        let operand = self.struct_field_access(value_expr, pat_field.name());
+                        self.build_pattern(
+                            operand,
+                            pat_field.pattern(),
+                            tmp_vars,
+                            program,
+                            outer_stmts,
+                            stmts,
+                        )
+                    })
+                    .reduce(|lhs, rhs| self.and(lhs, rhs))
             }
-            PatternKind::Var(name) => {
-                // Variable pattern with/without type annotation.
-                // If the pattern has an explicit type annotation, it matches
-                // the member of an union type value.
-                let stmt = Stmt::VarDef(VarDef::new(name.clone(), value_expr));
-                stmts.push(self.stmt_arena.alloc(stmt));
-                None
-            }
+            PatternKind::Var(_) => None,
             PatternKind::Or(sub_pats) => {
                 assert!(sub_pats.len() >= 2);
 
@@ -1381,9 +1419,9 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             PatternKind::Wildcard => None,
         }
     }
-     */
+
     // Returns `None` for no condition.
-    fn build_pattern(
+    fn __build_pattern(
         &self,
         target_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,

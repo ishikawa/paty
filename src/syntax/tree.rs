@@ -1466,8 +1466,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         let mut types = Vec::with_capacity(0);
 
         loop {
-            let ty = self._type_annotation(it)?;
-            types.push(ty);
+            types.push(self._type_annotation(it)?);
             if self.match_token(it, TokenKind::Operator('|')) {
                 it.next();
             } else {
