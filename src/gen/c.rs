@@ -191,10 +191,16 @@ impl<'a, 'tcx> Emitter {
         // body
         code.push_str("{\n");
         for param in &fun.params {
-            // Emit code to ignore unused variable.
-            if let Parameter::TmpVar(t) = param {
-                if t.used() == 0 {
-                    code.push_str(&format!("(void){};\n", tmp_var(t)));
+            if !param.ty().is_zero_sized() {
+                // Emit code to ignore unused variable.
+                if let Parameter::TmpVar(t) = param {
+                    if t.used() == 0 {
+                        code.push_str(&format!("(void){};\n", tmp_var(t)));
+                    }
+                }
+                // TODO: Don't emit `(void)...` unless it is needed.
+                else if let Parameter::Var(var) = param {
+                    code.push_str(&format!("(void){};\n", var.name()));
                 }
             }
         }
