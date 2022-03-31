@@ -1031,6 +1031,22 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         }
     }
 
+    pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
+        // If the context type is an union type, each pattern should be one/some of
+        // member(s) of it.
+        // TODO: can we remove to_union_variants()?
+        if let Some(Type::Union(member_types)) = pat.context_ty() {
+            match pat.kind() {
+                PatternKind::Or(_) => {}
+                PatternKind::Var(_) | PatternKind::Wildcard if pat.explicit_ty().is_some() => {}
+                _ => {
+                    return Self::to_union_variants(cx, member_types, pat);
+                }
+            }
+        }
+
+        Self::_from_pat(cx, pat)
+    }
     fn _from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
         let pat_ty = pat.expect_ty().bottom_ty();
 
@@ -1094,17 +1110,6 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 DeconstructedPat::new(ctor, fields, pat_ty)
             }
         }
-    }
-    pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
-        // If the context type is an union type, each pattern should be one/some of
-        // member(s) of it.
-        if let Type::Union(member_types) = pat.context_ty().unwrap() {
-            if !matches!(pat.kind(), PatternKind::Or(_)) {
-                return Self::to_union_variants(cx, member_types, pat);
-            }
-        }
-
-        Self::_from_pat(cx, pat)
     }
     fn _from_explicit_ty(
         cx: &MatchCheckContext<'p, 'tcx>,
