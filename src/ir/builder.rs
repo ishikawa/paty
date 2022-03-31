@@ -1052,22 +1052,26 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         // type annotated pattern. If the pattern has an explicit type
         // annotation, the value is checked for type conformity, and if necessary,
         // the value is converted to that type.
-        let ty_cond = if let Some(explicit_ty) = pat.explicit_ty() {
-            self._build_pattern_type_test(
+        let (ty_cond, value_expr) = if let Some(explicit_ty) = pat.explicit_ty() {
+            let cond = self._build_pattern_type_test(
                 target_expr,
                 explicit_ty,
                 tmp_vars,
                 program,
                 outer_stmts,
                 stmts,
-            )
+            );
+            let pat_ty = pat.expect_ty().bottom_ty();
+            let value = self.promote_to(target_expr, pat_ty, tmp_vars, outer_stmts);
+
+            program.add_decl_type(pat_ty);
+            (cond, value)
         } else {
-            None
+            (None, target_expr)
         };
 
-        //let value_expr = self.promote_to(target_expr, pat.expect_ty(), tmp_vars, outer_stmts);
         let pat_cond =
-            self._build_pattern_test(target_expr, pat, tmp_vars, program, outer_stmts, stmts);
+            self._build_pattern_test(value_expr, pat, tmp_vars, program, outer_stmts, stmts);
 
         [ty_cond, pat_cond]
             .iter()
@@ -1126,16 +1130,6 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     })
                     .reduce(|lhs, rhs| self.and(lhs, rhs))
             }
-            (Type::Union(target_member_types), pat_ty) => {
-                let target_member_types = expand_union_ty(target_member_types);
-
-                let tag = target_member_types
-                    .iter()
-                    .position(|ty| ty.is_assignable_to(pat_ty))
-                    .unwrap_or_else(|| panic!("no matching {} in union {}", pat_ty, target_ty));
-
-                Some(self.eq(self.union_tag(target_expr), self.usize(tag)))
-            }
             (Type::Struct(_), Type::Struct(pat_struct_ty)) => pat_struct_ty
                 .fields()
                 .iter()
@@ -1151,6 +1145,18 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     )
                 })
                 .reduce(|lhs, rhs| self.and(lhs, rhs)),
+            (Type::Union(target_member_types), pat_ty) => {
+                let target_member_types = expand_union_ty(target_member_types);
+
+                target_member_types
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(tag, ty)| {
+                        ty.is_assignable_to(pat_ty)
+                            .then(|| self.eq(self.union_tag(target_expr), self.usize(tag)))
+                    })
+                    .reduce(|lhs, rhs| self.or(lhs, rhs))
+            }
             (Type::Int64 | Type::NativeInt, Type::Int64 | Type::NativeInt)
             | (Type::Boolean, Type::Boolean)
             | (Type::String, Type::String) => None,
