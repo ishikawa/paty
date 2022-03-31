@@ -635,9 +635,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             expected_ty,
                             |member_value| {
                                 // Pre: member_value is a struct value which have the field.
-                                let access = self
-                                    .expr_arena
-                                    .alloc(Expr::struct_field_access(member_value, name));
+                                let access = self.struct_field_access(member_value, name);
                                 self.promote_to(access, expected_ty, tmp_vars, stmts)
                             },
                         );
@@ -1053,6 +1051,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         // annotation, the value is checked for type conformity, and if necessary,
         // the value is converted to that type.
         let (ty_cond, value_expr) = if let Some(explicit_ty) = pat.explicit_ty() {
+            // Pattern can introduce a new type
+            let pat_ty = pat.expect_ty().bottom_ty();
+            program.add_decl_type(pat_ty);
+
             let cond = self._build_pattern_type_test(
                 target_expr,
                 explicit_ty,
@@ -1061,10 +1063,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 outer_stmts,
                 stmts,
             );
-            let pat_ty = pat.expect_ty().bottom_ty();
+
+            // Although type check have been completed in the immediately preceding
+            // process, the tag of union values will be checked again by generic
+            // type promotion. The performance impact should be insignificant because
+            // these accesses should be in CPU cache.
             let value = self.promote_to(target_expr, pat_ty, tmp_vars, outer_stmts);
 
-            program.add_decl_type(pat_ty);
             (cond, value)
         } else {
             (None, target_expr)
@@ -1495,7 +1500,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             .collect::<Vec<_>>()
     }
 
-    /// Generates an expression that retrieves a value according to the tag of a union type operand.
+    /// Generates an expression that retrieves a value according to the tag of
+    /// a union type operand. Type mismatched values will be ignored.
     /// A conversion function can be specified.
     fn build_union_members_mapped_value<F>(
         &self,
@@ -1512,19 +1518,18 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         let vs: Vec<_> = operand_member_types
             .iter()
             .enumerate()
-            .map(|(tag, member_ty)| {
+            .filter_map(|(tag, member_ty)| {
                 let value = self.expr_arena.alloc(Expr::usize(self.tcx, tag));
-                let cond = self
-                    .expr_arena
-                    .alloc(Expr::eq(self.tcx, operand_union_tag, value));
+                let cond = self.eq(operand_union_tag, value);
+                let member_value = self.union_member_access(operand, tag, member_ty);
+                let value = member_value_mapper(member_value);
 
-                // member access
-                let member_value = self
-                    .expr_arena
-                    .alloc(Expr::union_member_access(operand, tag, member_ty));
-
-                let result = member_value_mapper(member_value);
-                (&*cond, result)
+                // Type mismatched value should be dropped.
+                if value.ty().is_assignable_to(expected_ty) {
+                    Some((&*cond, value))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -1532,18 +1537,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         // Note, the last condition will be ignored as `else` condition because
         // the these conditions must be exhausted.
         assert!(!vs.is_empty());
-        let cond_value_expr =
-            vs.iter()
-                .rev()
-                .skip(1)
-                .fold(vs.last().unwrap().1, |else_value, (cond, then_value)| {
-                    let kind = ExprKind::CondValue {
-                        cond,
-                        then_value,
-                        else_value,
-                    };
-                    self.expr_arena.alloc(Expr::new(kind, expected_ty))
-                });
+        let cond_value_expr = vs
+            .iter()
+            .rev()
+            .skip(1)
+            .fold(vs.last().unwrap().1, |else_value, (cond, then_value)| {
+                self.cond_value(cond, then_value, else_value)
+            });
 
         cond_value_expr
     }

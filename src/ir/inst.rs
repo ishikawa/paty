@@ -564,11 +564,19 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         then_value: &'a Expr<'a, 'tcx>,
         else_value: &'a Expr<'a, 'tcx>,
     ) -> Self {
+        let then_ty = then_value.ty().bottom_ty();
+        let else_ty = else_value.ty().bottom_ty();
+
         assert!(
-            then_value.ty().bottom_ty() == else_value.ty().bottom_ty(),
-            "conditional values must have the same type, but was {} and {}",
-            then_value.ty(),
-            else_value.ty()
+            then_ty == else_ty,
+            concat!(
+                "conditional values must have the same type, but was `{}` and `{}`.",
+                " then_value = {:#?}, else_value = {:#?}"
+            ),
+            then_ty,
+            else_ty,
+            then_value,
+            else_value
         );
 
         let kind = ExprKind::CondValue {
