@@ -93,12 +93,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     fn and_some(
         &self,
         lhs: Option<&'a Expr<'a, 'tcx>>,
-        rhs: &'a Expr<'a, 'tcx>,
-    ) -> &'a Expr<'a, 'tcx> {
-        if let Some(lhs) = lhs {
-            self.expr_arena.alloc(Expr::and(self.tcx, lhs, rhs))
-        } else {
-            rhs
+        rhs: Option<&'a Expr<'a, 'tcx>>,
+    ) -> Option<&'a Expr<'a, 'tcx>> {
+        match (lhs, rhs) {
+            (Some(lhs), Some(rhs)) => Some(self.expr_arena.alloc(Expr::and(self.tcx, lhs, rhs))),
+            (None, Some(rhs)) => Some(rhs),
+            (Some(lhs), None) => Some(lhs),
+            (None, None) => None,
         }
     }
     #[inline]
@@ -1215,7 +1216,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     }
                     _ => {
                         let c = self.eq(value, self.int64(n));
-                        Some(self.and_some(cond, c))
+                        self.and_some(cond, Some(c))
                     }
                 })
                 .reduce(|lhs, rhs| self.or(lhs, rhs)),
@@ -1231,7 +1232,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     }
                     _ => {
                         let c = if b { value } else { self.not(value) };
-                        Some(self.and_some(cond, c))
+                        self.and_some(cond, Some(c))
                     }
                 })
                 .reduce(|lhs, rhs| self.or(lhs, rhs)),
@@ -1254,7 +1255,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             self.tcx.native_int(),
                         );
                         let c = self.eq(strcmp, self.native_int(0));
-                        Some(self.and_some(cond, c))
+                        self.and_some(cond, Some(c))
                     }
                 })
                 .reduce(|lhs, rhs| self.or(lhs, rhs)),
@@ -1281,7 +1282,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             syntax::RangeEnd::Excluded => self.lt(value, hi),
                         };
 
-                        Some(self.and_some(cond, self.and(lhs, rhs)))
+                        let c = self.and(lhs, rhs);
+                        self.and_some(cond, Some(c))
                     }
                 })
                 .reduce(|lhs, rhs| self.or(lhs, rhs)),
@@ -1291,14 +1293,27 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     "Empty tuple must be zero-sized type. It should be handled above."
                 );
 
-                sub_pats
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, pat)| {
-                        let operand = self.tuple_index_access(target_expr, i);
-                        self.build_pattern(operand, pat, tmp_vars, program, outer_stmts, stmts)
+                cond_and_values
+                    .into_iter()
+                    .filter_map(|(cond, value)| {
+                        let c = sub_pats
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, pat)| {
+                                let operand = self.tuple_index_access(value, i);
+                                self.build_pattern(
+                                    operand,
+                                    pat,
+                                    tmp_vars,
+                                    program,
+                                    outer_stmts,
+                                    stmts,
+                                )
+                            })
+                            .reduce(|lhs, rhs| self.and(lhs, rhs));
+                        self.and_some(cond, c)
                     })
-                    .reduce(|lhs, rhs| self.and(lhs, rhs))
+                    .reduce(|lhs, rhs| self.or(lhs, rhs))
             }
             PatternKind::Struct(struct_pat) => {
                 assert!(
