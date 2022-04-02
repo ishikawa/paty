@@ -1063,23 +1063,15 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         let pat_ty = pat.expect_ty().bottom_ty();
         program.add_decl_type(pat_ty);
 
-        // TODO: skip pattern test
         // type annotated pattern. If the pattern has an explicit type
-        // annotation, the value is checked for type conformity, and if necessary,
-        // the value is converted to that type.
-        let ty_cond = if let Some(explicit_ty) = pat.explicit_ty() {
-            self._build_pattern_type_test(target_expr, explicit_ty)
-        } else {
-            None
-        };
-
-        let pat_cond =
-            self._build_pattern_test(target_expr, pat, tmp_vars, program, outer_stmts, stmts);
-
-        [ty_cond, pat_cond]
-            .iter()
-            .filter_map(|c| *c)
-            .reduce(|lhs, rhs| self.and(lhs, rhs))
+        // annotation, the value is checked for type conformity, but isn't
+        // converted to that type. The value will be converted when it is bound to
+        // a variable.
+        let ty_cond = pat
+            .explicit_ty()
+            .and_then(|explicit_ty| self._build_pattern_type_test(target_expr, explicit_ty));
+        let pat_cond = self._build_pattern(target_expr, pat, tmp_vars, program, outer_stmts, stmts);
+        self.and_some(ty_cond, pat_cond)
     }
     fn _build_pattern_type_test(
         &self,
@@ -1170,7 +1162,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             _ => unreachable!("bug: types must be compatible."),
         }
     }
-    fn _build_pattern_test(
+    fn _build_single_pattern(
         &self,
         target_expr: &'a Expr<'a, 'tcx>,
         pat: &'nd syntax::Pattern<'nd, 'tcx>,
@@ -1179,141 +1171,94 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         outer_stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> Option<&'a Expr<'a, 'tcx>> {
-        let pat_ty = pat.expect_ty().bottom_ty();
-
-        // TODO: Don't compute `cond_and_values` unless necessary.
-        // TODO: Don't emit redundant condition check or optimize away these expressions.
-        let cond_and_values: Vec<_> =
-            if let Type::Union(member_types) = target_expr.ty().bottom_ty() {
-                expand_union_ty(member_types)
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(tag, member_ty)| {
-                        if is_type_compatible(member_ty, pat_ty) {
-                            Some((
-                                Some(self.eq(self.union_tag(target_expr), self.usize(tag))),
-                                self.union_member_access(target_expr, tag, member_ty),
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            } else {
-                vec![(None, target_expr)]
-            };
-
         match pat.kind() {
-            &PatternKind::Integer(n) => cond_and_values
-                .into_iter()
-                .filter_map(|(cond, value)| match value.ty() {
-                    &Type::LiteralInt64(tn) => {
-                        if n == tn {
-                            cond
-                        } else {
-                            Some(self.bool(false))
-                        }
+            &PatternKind::Integer(value) => {
+                if let &Type::LiteralInt64(ty_value) = target_expr.ty() {
+                    if value == ty_value {
+                        None
+                    } else {
+                        // Returns `false` condition because literal type of
+                        // different values don't match each other.
+                        Some(self.bool(false))
                     }
-                    _ => {
-                        let c = self.eq(value, self.int64(n));
-                        self.and_some(cond, Some(c))
+                } else {
+                    Some(self.eq(target_expr, self.int64(value)))
+                }
+            }
+            &PatternKind::Boolean(value) => {
+                if let &Type::LiteralBoolean(ty_value) = target_expr.ty() {
+                    if value == ty_value {
+                        None
+                    } else {
+                        // Returns `false` condition because literal type of
+                        // different values don't match each other.
+                        Some(self.bool(false))
                     }
-                })
-                .reduce(|lhs, rhs| self.or(lhs, rhs)),
-            &PatternKind::Boolean(b) => cond_and_values
-                .into_iter()
-                .filter_map(|(cond, value)| match value.ty() {
-                    &Type::LiteralBoolean(tb) => {
-                        if b == tb {
-                            cond
-                        } else {
-                            Some(self.bool(false))
-                        }
+                } else if value {
+                    Some(target_expr)
+                } else {
+                    Some(self.not(target_expr))
+                }
+            }
+            PatternKind::String(value) => {
+                if let Type::LiteralString(ty_value) = target_expr.ty() {
+                    if value == ty_value {
+                        None
+                    } else {
+                        // Returns `false` condition because literal type of
+                        // different values don't match each other.
+                        Some(self.bool(false))
                     }
-                    _ => {
-                        let c = if b { value } else { self.not(value) };
-                        self.and_some(cond, Some(c))
+                } else {
+                    // Compare the value of head expression and pattern string with
+                    // POSIX `strcmp` function.
+                    let strcmp = self.call_c(
+                        "strcmp".to_string(),
+                        vec![target_expr, self.const_string(value)],
+                        self.tcx.native_int(),
+                    );
+                    Some(self.eq(strcmp, self.native_int(0)))
+                }
+            }
+            &PatternKind::Range { lo, hi, end } => {
+                if let &Type::LiteralInt64(ty_value) = target_expr.ty() {
+                    if match end {
+                        syntax::RangeEnd::Included => ty_value >= lo && ty_value <= hi,
+                        syntax::RangeEnd::Excluded => ty_value >= lo && ty_value < hi,
+                    } {
+                        None
+                    } else {
+                        // Returns `false` condition because the value of literal type is
+                        // outside of the pattern range.
+                        Some(self.bool(false))
                     }
-                })
-                .reduce(|lhs, rhs| self.or(lhs, rhs)),
-            PatternKind::String(pat_str) => cond_and_values
-                .into_iter()
-                .filter_map(|(cond, value)| match value.ty() {
-                    Type::LiteralString(ty_str) => {
-                        if pat_str == ty_str {
-                            cond
-                        } else {
-                            Some(self.bool(false))
-                        }
-                    }
-                    _ => {
-                        // Compare the value of head expression and pattern string with
-                        // POSIX `strcmp` function.
-                        let strcmp = self.call_c(
-                            "strcmp".to_string(),
-                            vec![target_expr, self.const_string(pat_str)],
-                            self.tcx.native_int(),
-                        );
-                        let c = self.eq(strcmp, self.native_int(0));
-                        self.and_some(cond, Some(c))
-                    }
-                })
-                .reduce(|lhs, rhs| self.or(lhs, rhs)),
-            &PatternKind::Range { lo, hi, end } => cond_and_values
-                .into_iter()
-                .filter_map(|(cond, value)| match value.ty() {
-                    &Type::LiteralInt64(tn) => {
-                        if match end {
-                            syntax::RangeEnd::Included => tn >= lo && tn <= hi,
-                            syntax::RangeEnd::Excluded => tn >= lo && tn < hi,
-                        } {
-                            cond
-                        } else {
-                            Some(self.bool(false))
-                        }
-                    }
-                    _ => {
-                        let lo = self.int64(lo);
-                        let hi = self.int64(hi);
+                } else {
+                    let lo = self.int64(lo);
+                    let hi = self.int64(hi);
 
-                        let lhs = self.ge(value, lo);
-                        let rhs = match end {
-                            syntax::RangeEnd::Included => self.le(value, hi),
-                            syntax::RangeEnd::Excluded => self.lt(value, hi),
-                        };
+                    let lhs = self.ge(target_expr, lo);
+                    let rhs = match end {
+                        syntax::RangeEnd::Included => self.le(target_expr, hi),
+                        syntax::RangeEnd::Excluded => self.lt(target_expr, hi),
+                    };
 
-                        let c = self.and(lhs, rhs);
-                        self.and_some(cond, Some(c))
-                    }
-                })
-                .reduce(|lhs, rhs| self.or(lhs, rhs)),
+                    Some(self.and(lhs, rhs))
+                }
+            }
             PatternKind::Tuple(sub_pats) => {
                 assert!(
                     !sub_pats.is_empty(),
                     "Empty tuple must be zero-sized type. It should be handled above."
                 );
 
-                cond_and_values
-                    .into_iter()
-                    .filter_map(|(cond, value)| {
-                        let c = sub_pats
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, pat)| {
-                                let operand = self.tuple_index_access(value, i);
-                                self.build_pattern(
-                                    operand,
-                                    pat,
-                                    tmp_vars,
-                                    program,
-                                    outer_stmts,
-                                    stmts,
-                                )
-                            })
-                            .reduce(|lhs, rhs| self.and(lhs, rhs));
-                        self.and_some(cond, c)
+                sub_pats
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, pat)| {
+                        let operand = self.tuple_index_access(target_expr, i);
+                        self.build_pattern(operand, pat, tmp_vars, program, outer_stmts, stmts)
                     })
-                    .reduce(|lhs, rhs| self.or(lhs, rhs))
+                    .reduce(|lhs, rhs| self.and(lhs, rhs))
             }
             PatternKind::Struct(struct_pat) => {
                 assert!(
@@ -1336,6 +1281,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         }
                     }
                 }
+
+                // pattern match
                 if let Some(spread_pat) = spread_pat {
                     if let Some(spread_name) = spread_pat.name() {
                         let spread_ty = spread_pat.expect_ty();
@@ -1347,9 +1294,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             .expr_arena
                             .alloc(Expr::new(ExprKind::StructValue(values), spread_ty));
 
-                        let var_def =
-                            Stmt::VarDef(VarDef::new(spread_name.to_string(), struct_value));
-                        stmts.push(self.stmt_arena.alloc(var_def));
+                        stmts.push(self.var_def_stmt(spread_name.to_string(), struct_value));
                     }
                 }
 
@@ -1368,61 +1313,75 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     })
                     .reduce(|lhs, rhs| self.and(lhs, rhs))
             }
+            PatternKind::Var(_) | PatternKind::Wildcard => {
+                unreachable!("these pattern should be handled in _build_pattern")
+            }
+            PatternKind::Or(_) => unreachable!("not a single pattern"),
+        }
+    }
+    fn _build_pattern(
+        &self,
+        target_expr: &'a Expr<'a, 'tcx>,
+        pat: &'nd syntax::Pattern<'nd, 'tcx>,
+        tmp_vars: &mut TmpVars<'a, 'tcx>,
+        program: &mut Program<'a, 'tcx>,
+        outer_stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+    ) -> Option<&'a Expr<'a, 'tcx>> {
+        let pat_ty = pat.expect_ty().bottom_ty();
+
+        match pat.kind() {
             PatternKind::Var(name) => {
                 // Although type check have been completed in the immediately preceding
                 // process, the tag of union values will be checked again by generic
                 // type promotion. The performance impact should be insignificant because
                 // these accesses should be in CPU cache.
-                let value_expr = self.promote_to(target_expr, pat_ty, tmp_vars, outer_stmts);
-
-                let stmt = Stmt::VarDef(VarDef::new(name.clone(), value_expr));
-                stmts.push(self.stmt_arena.alloc(stmt));
+                let value_expr = self.promote_to(target_expr, pat_ty, tmp_vars, stmts);
+                stmts.push(self.var_def_stmt(name.to_string(), value_expr));
                 None
             }
+            PatternKind::Wildcard => None,
             PatternKind::Or(sub_pats) => {
                 assert!(sub_pats.len() >= 2);
 
                 let mut vars: HashMap<&str, Vec<(&Expr<'_, '_>, &VarDef<'_, '_>)>> = HashMap::new();
-                let cond = sub_pats.iter().fold(None, |cond, sub_pat| {
-                    // control flow variable
-                    let cfv = tmp_vars.next_control_flow_var(&self.tcx);
-                    let cfv_expr = self.tmp_var(cfv);
+                let pat_cond = sub_pats
+                    .iter()
+                    .map(|sub_pat| {
+                        // control flow variable
+                        let cfv = tmp_vars.next_control_flow_var(&self.tcx);
+                        let cfv_expr = self.tmp_var(cfv);
 
-                    outer_stmts.push(self.tmp_var_def_stmt(cfv, self.bool(false)));
+                        outer_stmts.push(self.tmp_var_def_stmt(cfv, self.bool(false)));
 
-                    // build a sub pattern
-                    let mut inner_stmts = vec![];
-                    let sub_cond = self.build_pattern(
-                        target_expr,
-                        sub_pat,
-                        tmp_vars,
-                        program,
-                        outer_stmts,
-                        &mut inner_stmts,
-                    );
+                        // build a sub pattern
+                        let mut inner_stmts = vec![];
+                        let sub_cond = self.build_pattern(
+                            target_expr,
+                            sub_pat,
+                            tmp_vars,
+                            program,
+                            outer_stmts,
+                            &mut inner_stmts,
+                        );
 
-                    // collects var definitions for this sub pattern for
-                    // merging definitions across multiple sub patterns.
-                    for stmt in inner_stmts {
-                        if let Stmt::VarDef(def) = stmt {
-                            if let Some(defs) = vars.get_mut(def.name()) {
-                                defs.push((cfv_expr, def));
+                        // collects var definitions for this sub pattern for
+                        // merging definitions across multiple sub patterns.
+                        for stmt in inner_stmts {
+                            if let Stmt::VarDef(def) = stmt {
+                                if let Some(defs) = vars.get_mut(def.name()) {
+                                    defs.push((cfv_expr, def));
+                                } else {
+                                    vars.insert(def.name(), vec![(cfv_expr, def)]);
+                                }
                             } else {
-                                vars.insert(def.name(), vec![(cfv_expr, def)]);
+                                stmts.push(stmt);
                             }
-                        } else {
-                            unreachable!("stmt in branch must be var def, but was: {:?}", stmt);
                         }
-                    }
 
-                    let cond_and_assign = self.cond_and_assign(sub_cond, cfv);
-
-                    if let Some(cond) = cond {
-                        Some(self.or(cond, cond_and_assign))
-                    } else {
-                        Some(cond_and_assign)
-                    }
-                });
+                        self.cond_and_assign(sub_cond, cfv)
+                    })
+                    .reduce(|lhs, rhs| self.or(lhs, rhs));
 
                 // merge var definitions across multiple sub-patterns.
                 for (name, defs) in vars {
@@ -1445,9 +1404,46 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     stmts.push(self.var_def_stmt(name.to_string(), init));
                 }
 
-                cond
+                pat_cond
             }
-            PatternKind::Wildcard => None,
+            _ => {
+                // TODO: Don't emit redundant condition check or optimize away these expressions.
+                // TODO: Use an iterator instead of vec
+                // If the head value is a union type, only compatible types are taken to
+                // generate the condition for pattern matching.
+                let cond_and_values: Vec<_> =
+                    if let Type::Union(member_types) = target_expr.ty().bottom_ty() {
+                        expand_union_ty(member_types)
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, member_ty)| is_type_compatible(member_ty, pat_ty))
+                            .map(|(tag, member_ty)| {
+                                (
+                                    Some(self.eq(self.union_tag(target_expr), self.usize(tag))),
+                                    self.union_member_access(target_expr, tag, member_ty),
+                                )
+                            })
+                            .collect()
+                    } else {
+                        vec![(None, target_expr)]
+                    };
+
+                cond_and_values
+                    .into_iter()
+                    .filter_map(|(cond, value_expr)| {
+                        let pat_cond = self._build_single_pattern(
+                            value_expr,
+                            pat,
+                            tmp_vars,
+                            program,
+                            outer_stmts,
+                            stmts,
+                        );
+
+                        self.and_some(cond, pat_cond)
+                    })
+                    .reduce(|lhs, rhs| self.or(lhs, rhs))
+            }
         }
     }
 
