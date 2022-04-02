@@ -568,9 +568,9 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         let else_ty = else_value.ty().bottom_ty();
 
         assert!(
-            then_ty == else_ty,
+            then_ty.is_compatible(else_ty),
             concat!(
-                "conditional values must have the same type, but was `{}` and `{}`.",
+                "conditional values must be compatible each other, but was `{}` and `{}`.",
                 " then_value = {:#?}, else_value = {:#?}"
             ),
             then_ty,

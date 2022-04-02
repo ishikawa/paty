@@ -195,6 +195,59 @@ impl<'tcx> Type<'tcx> {
         }
     }
 
+    /// Returns `true` if both types are compatible on its value representation.
+    /// It should be consistent with promote_type().
+    pub fn is_compatible(&self, other: &Self) -> bool {
+        match (self, other) {
+            // Primitive types
+            (Type::LiteralInt64(_), Type::Int64 | Type::NativeInt)
+            | (Type::LiteralBoolean(_), Type::Boolean)
+            | (Type::LiteralString(_), Type::String) => true,
+            (Type::Int64 | Type::NativeInt, Type::LiteralInt64(_))
+            | (Type::Boolean, Type::LiteralBoolean(_))
+            | (Type::String, Type::LiteralString(_)) => true,
+            (Type::LiteralInt64(_), Type::LiteralInt64(_))
+            | (Type::LiteralBoolean(_), Type::LiteralBoolean(_))
+            | (Type::LiteralString(_), Type::LiteralString(_)) => true,
+            // Compound types
+            (Type::Tuple(t1), Type::Tuple(t2)) => {
+                t1.len() == t2.len() && t1.iter().zip(t2).all(|(a, b)| a.is_compatible(b))
+            }
+            (Type::Struct(l0), Type::Struct(r0)) => {
+                // Different named structs are incompatible.
+                if l0.name() != r0.name() {
+                    return false;
+                }
+                // Is assignable by structural.
+                if l0.fields().len() != r0.fields().len() {
+                    return false;
+                }
+                l0.fields()
+                    .iter()
+                    .zip(r0.fields())
+                    .all(|(a, b)| a.name() == b.name() && a.ty().is_compatible(b.ty()))
+            }
+            // union type
+            (Type::Union(l0), other_ty) => l0.iter().all(|x| x.is_compatible(other_ty)),
+            (x, Type::Union(ms)) => ms.iter().any(|m| x.is_compatible(m)),
+            // named type
+            (Type::Named(named_ty1), ty2) => {
+                let ty1 = named_ty1.ty().unwrap_or_else(|| {
+                    panic!("Named type `{:?}` was not resolved yet.", named_ty1)
+                });
+                ty1.is_compatible(ty2)
+            }
+            (ty1, Type::Named(named_ty2)) => {
+                let ty2 = named_ty2.ty().unwrap_or_else(|| {
+                    panic!("Named type `{:?}` was not resolved yet.", named_ty2)
+                });
+                ty1.is_compatible(ty2)
+            }
+            (Type::Undetermined, _) | (_, Type::Undetermined) => false,
+            _ => self == other,
+        }
+    }
+
     /// Returns `true` if the type can be assigned to the `other` type.
     /// A type can be assigned to other type if the type is compatible to other.
     pub fn is_assignable_to(&self, other: &Self) -> bool {

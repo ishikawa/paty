@@ -1080,7 +1080,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) -> Option<&'a Expr<'a, 'tcx>> {
         let target_ty = target_expr.ty().bottom_ty();
         let pat_ty = pat_ty.bottom_ty();
-        assert!(pat_ty.is_assignable_to(target_ty));
+        assert!(pat_ty.is_compatible(target_ty));
 
         match (target_ty, pat_ty) {
             // literal types
@@ -1126,14 +1126,23 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 .reduce(|lhs, rhs| self.and(lhs, rhs)),
             (Type::Union(target_member_types), pat_ty) => {
                 let target_member_types = expand_union_ty(target_member_types);
-                target_member_types
+                assert!(!target_member_types.is_empty());
+
+                if target_member_types
                     .iter()
-                    .enumerate()
-                    .filter_map(|(tag, ty)| {
-                        ty.is_assignable_to(pat_ty)
-                            .then(|| self.eq(self.union_tag(target_expr), self.usize(tag)))
-                    })
-                    .reduce(|lhs, rhs| self.or(lhs, rhs))
+                    .all(|ty| ty.is_assignable_to(pat_ty))
+                {
+                    None
+                } else {
+                    target_member_types
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(tag, ty)| {
+                            ty.is_assignable_to(pat_ty)
+                                .then(|| self.eq(self.union_tag(target_expr), self.usize(tag)))
+                        })
+                        .reduce(|lhs, rhs| self.or(lhs, rhs))
+                }
             }
             (target_ty, Type::Union(pat_member_types)) => {
                 let pat_member_types = expand_union_ty(pat_member_types);
@@ -1416,7 +1425,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         expand_union_ty(member_types)
                             .iter()
                             .enumerate()
-                            .filter(|(_, member_ty)| is_type_compatible(member_ty, pat_ty))
+                            .filter(|(_, member_ty)| member_ty.is_compatible(pat_ty))
                             .map(|(tag, member_ty)| {
                                 (
                                     Some(self.eq(self.union_tag(target_expr), self.usize(tag))),
@@ -1576,7 +1585,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let value = member_value_mapper(member_value);
 
                 // Incompatible typed value should be dropped.
-                if is_type_compatible(value.ty(), expected_ty) {
+                if value.ty().is_compatible(expected_ty) {
                     Some((&*cond, value))
                 } else {
                     None
@@ -1602,55 +1611,5 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             });
 
         cond_value_expr
-    }
-}
-
-/// Returns `true` if both types are compatible on its value representation.
-/// It should be consistent with promote_type().
-fn is_type_compatible<'tcx>(ty1: &Type<'tcx>, ty2: &Type<'tcx>) -> bool {
-    match (ty1, ty2) {
-        // Primitive types
-        (Type::LiteralInt64(_), Type::Int64 | Type::NativeInt)
-        | (Type::LiteralBoolean(_), Type::Boolean)
-        | (Type::LiteralString(_), Type::String) => true,
-        (Type::Int64 | Type::NativeInt, Type::LiteralInt64(_))
-        | (Type::Boolean, Type::LiteralBoolean(_))
-        | (Type::String, Type::LiteralString(_)) => true,
-        // Compound types
-        (Type::Tuple(t1), Type::Tuple(t2)) => {
-            t1.len() == t2.len() && t1.iter().zip(t2).all(|(a, b)| is_type_compatible(a, b))
-        }
-        (Type::Struct(l0), Type::Struct(r0)) => {
-            // Different named structs are incompatible.
-            if l0.name() != r0.name() {
-                return false;
-            }
-            // Is assignable by structural.
-            if l0.fields().len() != r0.fields().len() {
-                return false;
-            }
-            l0.fields()
-                .iter()
-                .zip(r0.fields())
-                .all(|(a, b)| a.name() == b.name() && is_type_compatible(a.ty(), b.ty()))
-        }
-        // union type
-        (Type::Union(l0), other_ty) => l0.iter().all(|x| is_type_compatible(x, other_ty)),
-        (x, Type::Union(ms)) => ms.iter().any(|m| is_type_compatible(x, m)),
-        // named type
-        (Type::Named(named_ty1), ty2) => {
-            let ty1 = named_ty1
-                .ty()
-                .unwrap_or_else(|| panic!("Named type `{:?}` was not resolved yet.", named_ty1));
-            is_type_compatible(ty1, ty2)
-        }
-        (ty1, Type::Named(named_ty2)) => {
-            let ty2 = named_ty2
-                .ty()
-                .unwrap_or_else(|| panic!("Named type `{:?}` was not resolved yet.", named_ty2));
-            is_type_compatible(ty1, ty2)
-        }
-        (Type::Undetermined, _) | (_, Type::Undetermined) => false,
-        _ => ty1 == ty2,
     }
 }

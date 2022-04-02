@@ -1534,16 +1534,16 @@ def foo(n: 1 | 2)
 end
 foo(1)
 foo(2)'
-# assert '1
-# 2' '
-# def foo(n: 1 | 2)
-#   case n
-#   when x: int64
-#     puts(x)
-#   end
-# end
-# foo(1)
-# foo(2)'
+assert '1
+2' '
+def foo(n: 1 | 2)
+  case n
+  when x: int64
+    puts(x)
+  end
+end
+foo(1)
+foo(2)'
 assert '1
 2' '
 def foo(n: 1 | 2)

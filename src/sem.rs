@@ -1199,8 +1199,14 @@ fn analyze_pattern<'nd, 'tcx>(
             }
 
             // Save context type
-            assert!(sub_pat.context_ty().is_none());
-            sub_pat.assign_context_ty(expected_ty);
+            // For or-patterns, there can be already assigned context type.
+            // We combine these types to make a new union type.
+            if let Some(context_ty) = sub_pat.context_ty() {
+                let union_ty = tcx.union(&[context_ty, expected_ty]);
+                sub_pat.assign_context_ty(union_ty);
+            } else {
+                sub_pat.assign_context_ty(expected_ty);
+            }
 
             // check new variables.
             let mut new_bindings: HashMap<_, _> = sub_vars
@@ -1271,6 +1277,7 @@ fn analyze_pattern<'nd, 'tcx>(
             }
         }
     }
+
     // Assign type for or-pattern
     if matches!(pat.kind(), PatternKind::Or(_)) {
         pat.assign_context_ty(expected_ty);
@@ -1289,14 +1296,24 @@ fn _analyze_pattern<'nd, 'tcx>(
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) -> bool {
+    // Proceed with type inference assuming that the pattern type is
+    // either explicitly specified or expected.
+    let assumed_pat_ty = pat.explicit_ty().unwrap_or(expected_ty);
+
+    /*
     // The pattern type must be compatible with the target type.
     // The pattern value must be narrower than the target type,
     // but the pattern type may be wider than the target type.
     if let Some(explicit_ty) = pat.explicit_ty() {
-        if !expect_assignable_type(expected_ty, explicit_ty, pat, errors) {
+        let mut err = Errors::new();
+        if !expect_assignable_type(expected_ty, explicit_ty, pat, &mut err)
+            && !expect_assignable_type(explicit_ty, expected_ty, pat, &mut err)
+        {
+            errors.extend(err);
             return false;
         }
     }
+     */
 
     // Infer the type of pattern from its values.
     match pat.kind() {
@@ -1313,11 +1330,11 @@ fn _analyze_pattern<'nd, 'tcx>(
             unify_type(tcx.int64(), pat, errors);
         }
         PatternKind::Tuple(patterns) => {
-            let expected_elem_types = if let Type::Tuple(sub_types) = expected_ty.bottom_ty() {
+            let expected_elem_types = if let Type::Tuple(sub_types) = assumed_pat_ty.bottom_ty() {
                 if sub_types.len() != patterns.len() {
                     errors.push(
                         SemanticErrorKind::MismatchedType {
-                            expected: expected_ty,
+                            expected: assumed_pat_ty,
                             actual: pattern_to_type(tcx, pat, named_types),
                         },
                         pat,
@@ -1328,7 +1345,7 @@ fn _analyze_pattern<'nd, 'tcx>(
             } else {
                 errors.push(
                     SemanticErrorKind::MismatchedType {
-                        expected: expected_ty,
+                        expected: assumed_pat_ty,
                         actual: pattern_to_type(tcx, pat, named_types),
                     },
                     pat,
@@ -1351,12 +1368,12 @@ fn _analyze_pattern<'nd, 'tcx>(
         }
         PatternKind::Struct(struct_pat) => {
             // Struct type check
-            let struct_ty = if let Type::Struct(struct_ty) = expected_ty.bottom_ty() {
+            let struct_ty = if let Type::Struct(struct_ty) = assumed_pat_ty.bottom_ty() {
                 struct_ty
             } else {
                 errors.push(
                     SemanticErrorKind::MismatchedType {
-                        expected: expected_ty,
+                        expected: assumed_pat_ty,
                         actual: pattern_to_type(tcx, pat, named_types),
                     },
                     pat,
@@ -1379,7 +1396,7 @@ fn _analyze_pattern<'nd, 'tcx>(
             } else if struct_ty.name().is_some() {
                 errors.push(
                     SemanticErrorKind::MismatchedType {
-                        expected: expected_ty,
+                        expected: assumed_pat_ty,
                         actual: pattern_to_type(tcx, pat, named_types),
                     },
                     pat,
@@ -1387,7 +1404,7 @@ fn _analyze_pattern<'nd, 'tcx>(
                 return false;
             }
 
-            if !unify_type(expected_ty, pat, errors) {
+            if !unify_type(assumed_pat_ty, pat, errors) {
                 return false;
             }
 
@@ -1485,20 +1502,39 @@ fn _analyze_pattern<'nd, 'tcx>(
                 );
             }
         }
-        PatternKind::Var(_) | PatternKind::Wildcard => {}
+        PatternKind::Var(_) | PatternKind::Wildcard => {
+            unify_type(assumed_pat_ty, pat, errors);
+        }
         PatternKind::Or(_) => unreachable!("Or-pattern shouldn't be handled here."),
     };
 
+    // The pattern has an explicit type annotation. It must be
+    // wider than the inferred type and override the inferred type.
     if let Some(explicit_ty) = pat.explicit_ty() {
         if !unify_type(explicit_ty, pat, errors) {
             return false;
+        } else {
+            pat.assign_ty(explicit_ty);
         }
     }
 
-    if !unify_type(expected_ty, pat, errors) {
+    // The type of a pattern must be able to assign to
+    // An intersection of the type of a pattern and an expected type,
+    // This means that either can be substituted for the other.
+    if !pat.expect_ty().is_assignable_to(expected_ty)
+        && !expected_ty.is_assignable_to(pat.expect_ty())
+    {
+        errors.push(
+            SemanticErrorKind::MismatchedType {
+                expected: expected_ty,
+                actual: pat.expect_ty(),
+            },
+            pat,
+        );
         return false;
     }
 
+    // Create a binding
     if let PatternKind::Var(name) = pat.kind() {
         let binding = Binding::new(name.to_string(), pat.expect_ty());
         vars.insert(binding);
