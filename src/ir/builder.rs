@@ -194,6 +194,16 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             .alloc(Expr::union_member_access(operand, tag, member_ty))
     }
     #[inline]
+    fn union_value(
+        &self,
+        operand: &'a Expr<'a, 'tcx>,
+        tag: usize,
+        union_ty: &'tcx Type<'tcx>,
+    ) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena
+            .alloc(Expr::union_value(operand, tag, union_ty))
+    }
+    #[inline]
     fn var_def_stmt(&self, name: String, init: &'a Expr<'a, 'tcx>) -> &'a Stmt<'a, 'tcx> {
         let new_var_def = Stmt::VarDef(VarDef::new(name, init));
         self.stmt_arena.alloc(new_var_def)
@@ -427,6 +437,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 for (sub, fty) in sub_exprs.iter().zip(tuple_fs) {
                     let value = self.build_expr(sub, tmp_vars, program, stmts);
                     let value = self.promote_to(value, fty, tmp_vars, stmts);
+
                     values.push(value);
                 }
 
@@ -612,7 +623,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             &operand_member_types,
                             union_tag,
                             expected_ty,
-                            |member_value| {
+                            &mut vec![],
+                            |member_value, _| {
                                 // Pre: member_value is a tuple value which have the element.
                                 let access = self.tuple_index_access(member_value, index);
                                 self.promote_to(access, expected_ty, tmp_vars, stmts)
@@ -644,7 +656,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             &operand_member_types,
                             union_tag,
                             expected_ty,
-                            |member_value| {
+                            &mut vec![],
+                            |member_value, _| {
                                 // Pre: member_value is a struct value which have the field.
                                 let access = self.struct_field_access(member_value, name);
                                 self.promote_to(access, expected_ty, tmp_vars, stmts)
@@ -776,6 +789,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         tmp_vars: &mut TmpVars<'a, 'tcx>,
         stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
     ) -> &'a Expr<'a, 'tcx> {
+        self._promote_to(operand, expected_ty, &mut vec![], tmp_vars, stmts)
+    }
+
+    fn _promote_to(
+        &self,
+        operand: &'a Expr<'a, 'tcx>,
+        expected_ty: &'tcx Type<'tcx>,
+        non_matched_conditions: &mut Vec<&'a Expr<'a, 'tcx>>,
+        tmp_vars: &mut TmpVars<'a, 'tcx>,
+        stmts: &mut Vec<&'a Stmt<'a, 'tcx>>,
+    ) -> &'a Expr<'a, 'tcx> {
         let operand_ty = operand.ty().bottom_ty();
         let expected_ty = expected_ty.bottom_ty();
 
@@ -794,7 +818,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     &operand_member_types,
                     union_tag,
                     expected_ty,
-                    |member_value| {
+                    non_matched_conditions,
+                    |member_value, non_matched_conditions| {
                         // Find an expected member type which is compatible with
                         // this member type. it must exist.
                         let member_ty = member_value.ty();
@@ -808,11 +833,16 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                     member_ty, expected_ty
                                 );
                             });
-                        let member_value =
-                            self.promote_to(member_value, expected_member_ty, tmp_vars, stmts);
+                        let member_value = self._promote_to(
+                            member_value,
+                            expected_member_ty,
+                            non_matched_conditions,
+                            tmp_vars,
+                            stmts,
+                        );
 
                         &*self.push_expr_alloc(
-                            Expr::union_value(self.tcx, member_value, expected_tag, expected_ty),
+                            Expr::union_value(member_value, expected_tag, expected_ty),
                             tmp_vars,
                             stmts,
                         )
@@ -820,16 +850,69 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 );
                 self.push_expr(union_member_value, tmp_vars, stmts)
             }
-            (operand_ty, Type::Union(member_types)) => {
-                let member_types = expand_union_ty(member_types);
+            (operand_ty, Type::Union(expected_member_types)) => {
+                let expected_member_types = expand_union_ty(expected_member_types);
 
-                for (tag, mty) in member_types.iter().enumerate() {
-                    if operand_ty.is_assignable_to(mty) {
-                        let value = self.promote_to(operand, mty, tmp_vars, stmts);
-                        let kind = ExprKind::UnionValue { value, tag };
-                        return self.push_expr_kind(kind, expected_ty, tmp_vars, stmts);
+                let mut cond_values: Vec<(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>)> = vec![];
+
+                for (tag, expected_member_type) in expected_member_types.iter().enumerate() {
+                    // Found assignable member, return promoted value.
+                    if operand_ty.is_assignable_to(expected_member_type) {
+                        let value = self._promote_to(
+                            operand,
+                            expected_member_type,
+                            non_matched_conditions,
+                            tmp_vars,
+                            stmts,
+                        );
+
+                        return self.push_expr(
+                            self.union_value(value, tag, expected_ty),
+                            tmp_vars,
+                            stmts,
+                        );
+                    }
+                    // Types are compatible with each other but cannot be directly assigned to each other,
+                    // so we must selectively convert the operand value.
+                    else if expected_member_type.is_assignable_to(operand_ty) {
+                        let mut non_matched_conditions = vec![];
+
+                        let promoted = self._promote_to(
+                            operand,
+                            expected_member_type,
+                            &mut non_matched_conditions,
+                            tmp_vars,
+                            stmts,
+                        );
+
+                        let cond = non_matched_conditions
+                            .iter()
+                            .map(|cond| self.not(cond))
+                            .reduce(|lhs, rhs| self.and(lhs, rhs));
+
+                        let union_value = self.push_expr(
+                            self.union_value(promoted, tag, expected_ty),
+                            tmp_vars,
+                            stmts,
+                        );
+
+                        if let Some(cond) = cond {
+                            cond_values.push((cond, union_value));
+                        } else {
+                            return union_value;
+                        }
                     }
                 }
+
+                if !cond_values.is_empty() {
+                    return cond_values.iter().rev().skip(1).fold(
+                        cond_values.last().unwrap().1,
+                        |else_value, (cond, then_value)| {
+                            self.cond_value(cond, then_value, else_value)
+                        },
+                    );
+                }
+
                 unreachable!(
                     "no matched member type for union {} with operand: {}",
                     expected_ty, operand_ty
@@ -843,7 +926,16 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     &operand_member_types,
                     union_tag,
                     expected_ty,
-                    |member_value| self.promote_to(member_value, expected_ty, tmp_vars, stmts),
+                    non_matched_conditions,
+                    |member_value, non_matched_conditions| {
+                        self._promote_to(
+                            member_value,
+                            expected_ty,
+                            non_matched_conditions,
+                            tmp_vars,
+                            stmts,
+                        )
+                    },
                 );
                 self.push_expr(union_member_value, tmp_vars, stmts)
             }
@@ -862,7 +954,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     .map(|f| {
                         let expr = Expr::struct_field_access(operand, f.name());
                         let expr = self.push_expr_alloc(expr, tmp_vars, stmts);
-                        let value = self.promote_to(expr, f.ty(), tmp_vars, stmts);
+                        let value =
+                            self._promote_to(expr, f.ty(), non_matched_conditions, tmp_vars, stmts);
 
                         (f.name().to_string(), value)
                     })
@@ -886,7 +979,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     .map(|(i, fty)| {
                         let expr = Expr::tuple_index_access(operand, i);
                         let expr = self.push_expr_alloc(expr, tmp_vars, stmts);
-                        self.promote_to(expr, fty, tmp_vars, stmts)
+                        self._promote_to(expr, fty, non_matched_conditions, tmp_vars, stmts)
                     })
                     .collect();
                 self.push_expr_kind(ExprKind::Tuple(m), expected_ty, tmp_vars, stmts)
@@ -1144,17 +1237,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         .reduce(|lhs, rhs| self.or(lhs, rhs))
                 }
             }
-            (target_ty, Type::Union(pat_member_types)) => {
-                let pat_member_types = expand_union_ty(pat_member_types);
-
-                pat_member_types
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(tag, ty)| {
-                        ty.is_assignable_to(target_ty)
-                            .then(|| self.eq(self.union_tag(target_expr), self.usize(tag)))
-                    })
-                    .reduce(|lhs, rhs| self.or(lhs, rhs))
+            (_, Type::Union(_)) => {
+                // The type of the target value is not a union type and the type of
+                // the pattern is a union type.
+                None
             }
             (Type::Int64 | Type::NativeInt, Type::Int64 | Type::NativeInt)
             | (Type::Boolean, Type::Boolean)
@@ -1569,10 +1655,11 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         operand_member_types: &[&'tcx Type<'tcx>],
         operand_union_tag: &'a Expr<'a, 'tcx>,
         expected_ty: &'tcx Type<'tcx>,
+        non_matched_conditions: &mut Vec<&'a Expr<'a, 'tcx>>,
         mut member_value_mapper: F,
     ) -> &'a Expr<'a, 'tcx>
     where
-        F: FnMut(&'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx>,
+        F: FnMut(&'a Expr<'a, 'tcx>, &mut Vec<&'a Expr<'a, 'tcx>>) -> &'a Expr<'a, 'tcx>,
     {
         // condition and value conversion.
         let vs: Vec<_> = operand_member_types
@@ -1582,12 +1669,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let value = self.expr_arena.alloc(Expr::usize(self.tcx, tag));
                 let cond = self.eq(operand_union_tag, value);
                 let member_value = self.union_member_access(operand, tag, member_ty);
-                let value = member_value_mapper(member_value);
+                let value = member_value_mapper(member_value, non_matched_conditions);
 
                 // Incompatible typed value should be dropped.
                 if value.ty().is_compatible(expected_ty) {
                     Some((&*cond, value))
                 } else {
+                    non_matched_conditions.push(cond);
                     None
                 }
             })

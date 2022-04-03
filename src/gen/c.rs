@@ -301,7 +301,9 @@ impl<'a, 'tcx> Emitter {
             }
             ExprKind::Not(operand) => {
                 code.push('!');
+                code.push('(');
                 self.emit_expr(operand, code);
+                code.push(')');
             }
             ExprKind::Add(lhs, rhs) => {
                 code.push('(');

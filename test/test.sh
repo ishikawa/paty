@@ -1554,18 +1554,18 @@ def foo(n: 1 | 2)
 end
 foo(1)
 foo(2)'
-# assert '1 2
-# three 4' '
-#   type T = (int64, int64) | (string, int64)
-#   type U = (int64 | string, int64)
-#   def foo(t: U)
-#     case t
-#     when x: T
-#       puts(x.0, x.1)
-#     end        
-#   end          
-#   foo((1, 2))
-#   foo(("three", 4))'
+assert '1 2
+three 4' '
+  type T = (int64, int64) | (string, int64)
+  type U = (int64 | string, int64)
+  def foo(t: U)
+    case t
+    when x: T
+      puts(x.0, x.1)
+    end
+  end
+  foo((1, 2))
+  foo(("three", 4))'
 # union type introduce a new union type
 # assert '1 two
 # three 4' '

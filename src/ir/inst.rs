@@ -550,12 +550,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         let kind = ExprKind::UnionMemberAccess { operand, tag };
         Self::new(kind, member_ty)
     }
-    pub fn union_value(
-        _tcx: TypeContext<'tcx>,
-        value: &'a Expr<'a, 'tcx>,
-        tag: usize,
-        union_ty: &'tcx Type<'tcx>,
-    ) -> Self {
+    pub fn union_value(value: &'a Expr<'a, 'tcx>, tag: usize, union_ty: &'tcx Type<'tcx>) -> Self {
         let kind = ExprKind::UnionValue { value, tag };
         Self::new(kind, union_ty)
     }
