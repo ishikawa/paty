@@ -1173,7 +1173,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) -> Option<&'a Expr<'a, 'tcx>> {
         let target_ty = target_expr.ty().bottom_ty();
         let pat_ty = pat_ty.bottom_ty();
-        assert!(pat_ty.is_compatible(target_ty));
+
+        assert!(
+            target_ty.is_assignable_to(pat_ty) || pat_ty.is_assignable_to(target_ty),
+            "pat_ty = {:#?} target_ty => {:#?}",
+            pat_ty,
+            target_ty,
+        );
 
         match (target_ty, pat_ty) {
             // literal types
@@ -1535,6 +1541,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             stmts,
                         );
 
+                        // TODO: convert var defs into conditional expression.
                         self.and_some(cond, pat_cond)
                     })
                     .reduce(|lhs, rhs| self.or(lhs, rhs))

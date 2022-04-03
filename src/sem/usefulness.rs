@@ -848,11 +848,31 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         Fields { fields }
     }
 
-    fn wildcards_from_tys(
+    fn wildcards_from_field_types(
         cx: &MatchCheckContext<'p, 'tcx>,
         tys: impl IntoIterator<Item = &'tcx Type<'tcx>>,
     ) -> Self {
         Fields::from_iter(cx, tys.into_iter().map(DeconstructedPat::wildcard))
+    }
+
+    fn wildcards_from_type(cx: &MatchCheckContext<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
+        match ty.bottom_ty() {
+            Type::Tuple(fs) => Fields::wildcards_from_field_types(cx, fs.iter().copied()),
+            Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
+                cx,
+                struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
+            ),
+            Type::Int64
+            | Type::NativeInt
+            | Type::Boolean
+            | Type::String
+            | Type::LiteralInt64(_)
+            | Type::LiteralBoolean(_)
+            | Type::LiteralString(_) => Fields::wildcards_from_field_types(cx, iter::once(ty)),
+            Type::Union(_) | Type::Named(_) | Type::Undetermined => {
+                unreachable!("unhandled type for wildcards: {:?}", ty)
+            }
+        }
     }
 
     /// Creates a new list of wildcard fields for a given constructor. The result must have a
@@ -864,14 +884,11 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
     ) -> Self {
         match constructor {
             Constructor::Single => match ty.bottom_ty() {
-                Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
-                Type::Struct(struct_ty) => Fields::wildcards_from_tys(
+                Type::Tuple(fs) => Fields::wildcards_from_field_types(cx, fs.iter().copied()),
+                Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
                     cx,
                     struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
                 ),
-                Type::String | Type::LiteralString(_) => {
-                    Fields::wildcards_from_tys(cx, iter::once(ty))
-                }
                 ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
             },
             Constructor::Variant(idx) => match ty.bottom_ty() {
@@ -880,15 +897,17 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
 
                     assert!(idx.0 < member_types.len());
                     match member_types[idx.0] {
-                        Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
-                        Type::Struct(struct_ty) => Fields::wildcards_from_tys(
+                        Type::Tuple(fs) => {
+                            Fields::wildcards_from_field_types(cx, fs.iter().copied())
+                        }
+                        Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
                             cx,
                             struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
                         ),
-                        mty => Fields::wildcards_from_tys(cx, iter::once(mty)),
+                        mty => Fields::wildcards_from_field_types(cx, iter::once(mty)),
                     }
                 }
-                ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
+                ty => unreachable!("Unexpected type for `Variant` constructor: {:?}", ty),
             },
             Constructor::IntRange(..)
             | Constructor::Str(..)
@@ -981,45 +1000,36 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let pat_ty = pat.expect_ty().bottom_ty();
         let member_types = expand_union_ty(member_types);
 
-        let fs = member_types
+        let mut pats: Vec<_> = member_types
             .iter()
             .enumerate()
             .filter_map(|(tag, member_ty)| {
+                let ctor = Constructor::Variant(VariantIdx(tag));
+
                 // Create a constant field if the pattern type contains some of
                 // the members of the union type. Handle this first to check
                 // usefulness of range pattern properly.
                 if pat_ty.is_assignable_to(member_ty) {
                     let de_pat = Self::_from_pat(cx, pat);
 
-                    if matches!(de_pat.ctor(), Constructor::Single) {
+                    let fields = if matches!(de_pat.ctor(), Constructor::Single) {
                         // Don't wrap with Constructor::Single when the type is union.
                         // It will be inconsistent with Self::specialize()
-                        Some((tag, member_ty, de_pat.fields))
+                        de_pat.fields
                     } else {
-                        Some((tag, member_ty, Fields::from_one(cx, de_pat)))
-                    }
+                        Fields::from_one(cx, de_pat)
+                    };
+
+                    Some(DeconstructedPat::new(ctor, fields, pat_ty))
                 }
                 // If the pattern type contains all members of the union type,
                 // create the field as a wildcard
                 else if member_ty.is_assignable_to(pat_ty) {
-                    Some((
-                        tag,
-                        member_ty,
-                        Fields::wildcards_from_tys(cx, once(*member_ty)),
-                    ))
+                    let fields = Fields::wildcards_from_type(cx, *member_ty);
+                    Some(DeconstructedPat::new(ctor, fields, pat_ty))
                 } else {
                     None
                 }
-            });
-        let mut pats: Vec<_> = fs
-            .map(|(tag, member_ty, fields)| {
-                assert!(
-                    !matches!(member_ty, Type::Union(_)),
-                    "union type should be flatten"
-                );
-
-                let ctor = Constructor::Variant(VariantIdx(tag));
-                DeconstructedPat::new(ctor, fields, pat_ty)
             })
             .collect();
 
@@ -1176,7 +1186,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     else if context_member_ty.is_assignable_to(pat_ty) {
                         Some(DeconstructedPat::new(
                             ctor,
-                            Fields::wildcards_from_tys(cx, once(*context_member_ty)),
+                            Fields::wildcards_from_field_types(cx, once(*context_member_ty)),
                             context_member_ty,
                         ))
                     } else {

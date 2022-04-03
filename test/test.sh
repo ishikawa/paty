@@ -1566,19 +1566,6 @@ three 4' '
   end
   foo((1, 2))
   foo(("three", 4))'
-# union type introduce a new union type
-# assert '1 two
-# three 4' '
-#   def foo(n: (int64, string) | (string, int64))
-#     case n
-#     when (x, y)
-#       # x: int64 | string
-#       # y: string | int64
-#       puts(x, y)
-#     end
-#   end
-#   foo((1, "two"))
-#   foo(("three", 4))'
 # or-pattern contains slightly different patterns
 # assert '1 2
 # three 4
@@ -1603,5 +1590,5 @@ three 4' '
 # examples
 assert 13 "$(cat examples/foo.paty)"
 assert 55 "$(cat examples/fib.paty)"
-  
+
 echo OK
