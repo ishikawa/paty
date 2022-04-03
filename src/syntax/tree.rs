@@ -945,6 +945,20 @@ impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
         Self { name, fields }
     }
 
+    // convenient constructors
+    pub fn from_name_and_fields<T>(name: String, fields: T) -> Self
+    where
+        T: IntoIterator<Item = PatternField<'nd, 'tcx>>,
+    {
+        Self::new(
+            Some(name),
+            fields
+                .into_iter()
+                .map(PatternFieldOrSpread::PatternField)
+                .collect(),
+        )
+    }
+
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
@@ -1536,7 +1550,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             TokenKind::Identifier(name) => {
                 it.next();
 
-                let ty = Type::Named(NamedTy::new(name));
+                let ty = Type::Named(NamedTy::new(name.into()));
                 self.tcx.type_arena.alloc(ty)
             }
             TokenKind::Integer(n) => {

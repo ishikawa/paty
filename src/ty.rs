@@ -13,36 +13,71 @@ impl<'tcx> TypeContext<'tcx> {
         Self { type_arena }
     }
 
+    #[inline]
     pub fn int64(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Int64)
     }
-
+    #[inline]
     pub fn boolean(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Boolean)
     }
-
+    #[inline]
     pub fn string(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::String)
     }
-
+    #[inline]
     pub fn literal_int64(&self, value: i64) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::LiteralInt64(value))
     }
-
+    #[inline]
     pub fn literal_boolean(&self, value: bool) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::LiteralBoolean(value))
     }
-
+    #[inline]
     pub fn literal_string(&self, value: String) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::LiteralString(value))
     }
-
+    #[inline]
     pub fn undetermined(&self) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Undetermined)
     }
-
+    #[inline]
     pub fn tuple(&self, value_types: Vec<&'tcx Type<'tcx>>) -> &'tcx Type<'tcx> {
         self.type_arena.alloc(Type::Tuple(value_types))
+    }
+    #[inline]
+    /// Returns a struct type whose name is `name` and has no value.
+    pub fn empty_struct_ty(&self, name: String) -> &'tcx Type<'tcx> {
+        let struct_ty = StructTy::new_named(name, vec![]);
+        self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+    #[inline]
+    pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
+        self.anon_struct_ty(vec![])
+    }
+    #[inline]
+    pub fn anon_struct_ty(&self, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
+        let struct_ty = StructTy::new_anonymous(fields);
+        self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+    #[inline]
+    pub fn struct_ty(&self, name: String, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
+        let struct_ty = StructTy::new_named(name, fields);
+        self.type_arena.alloc(Type::Struct(struct_ty))
+    }
+    #[inline]
+    pub fn unit(&self) -> &'tcx Type<'tcx> {
+        self.tuple_n(0)
+    }
+    #[inline]
+    pub fn native_int(&self) -> &'tcx Type<'tcx> {
+        self.type_arena.alloc(Type::NativeInt)
+    }
+    #[inline]
+    pub fn named(&self, name: String, ty: &'tcx Type<'tcx>) -> &'tcx Type<'tcx> {
+        let named_ty = NamedTy::new(name);
+        named_ty.assign_ty(ty);
+        self.type_arena.alloc(Type::Named(named_ty))
     }
 
     /// Creates an union type from types. Returns the first type if types has
@@ -71,30 +106,6 @@ impl<'tcx> TypeContext<'tcx> {
         }
     }
 
-    /// Returns a struct type whose name is `name` and has no value.
-    pub fn empty_struct_ty(&self, name: String) -> &'tcx Type<'tcx> {
-        let struct_ty = StructTy::new_named(name, vec![]);
-        self.type_arena.alloc(Type::Struct(struct_ty))
-    }
-
-    pub fn empty_anon_struct_ty(&self) -> &'tcx Type<'tcx> {
-        self.anon_struct_ty(vec![])
-    }
-
-    pub fn anon_struct_ty(&self, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
-        let struct_ty = StructTy::new_anonymous(fields);
-        self.type_arena.alloc(Type::Struct(struct_ty))
-    }
-
-    pub fn struct_ty(&self, name: String, fields: Vec<TypedField<'tcx>>) -> &'tcx Type<'tcx> {
-        let struct_ty = StructTy::new_named(name, fields);
-        self.type_arena.alloc(Type::Struct(struct_ty))
-    }
-
-    pub fn unit(&self) -> &'tcx Type<'tcx> {
-        self.tuple_n(0)
-    }
-
     /// Returns a tuple type whose element type is unknown but has N elements.
     pub fn tuple_n(&self, n: usize) -> &'tcx Type<'tcx> {
         let mut value_types = vec![];
@@ -108,10 +119,6 @@ impl<'tcx> TypeContext<'tcx> {
         }
 
         self.tuple(value_types)
-    }
-
-    pub fn native_int(&self) -> &'tcx Type<'tcx> {
-        self.type_arena.alloc(Type::NativeInt)
     }
 }
 
@@ -539,9 +546,9 @@ pub struct NamedTy<'tcx> {
 }
 
 impl<'tcx> NamedTy<'tcx> {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: String) -> Self {
         Self {
-            name: name.to_string(),
+            name,
             ty: Cell::new(None),
         }
     }
@@ -621,8 +628,8 @@ mod tests_types {
     /// Unresolved type aliases are equated by name only.
     #[test]
     fn unresolved_named_type_eq() {
-        let named_ty1 = Type::Named(NamedTy::new("T1"));
-        let named_ty2 = Type::Named(NamedTy::new("T2"));
+        let named_ty1 = Type::Named(NamedTy::new("T1".into()));
+        let named_ty2 = Type::Named(NamedTy::new("T2".into()));
 
         assert!(named_ty1 == named_ty1);
         assert!(named_ty2 == named_ty2);
@@ -633,9 +640,9 @@ mod tests_types {
     /// Resolved type aliases are equated by name and actual type.
     #[test]
     fn resolved_named_type_eq() {
-        let named_ty1 = NamedTy::new("T1");
+        let named_ty1 = NamedTy::new("T1".into());
         named_ty1.assign_ty(&Type::Int64);
-        let named_ty2 = NamedTy::new("T2");
+        let named_ty2 = NamedTy::new("T2".into());
         named_ty2.assign_ty(&Type::Int64);
 
         let ty1 = Type::Named(named_ty1);

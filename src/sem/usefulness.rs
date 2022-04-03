@@ -1005,6 +1005,8 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let pat_ty = pat.expect_ty().bottom_ty();
         let member_types = expand_union_ty(member_types);
 
+        dbg!(pat_ty);
+        dbg!(&member_types);
         let mut pats: Vec<_> = member_types
             .iter()
             .enumerate()
@@ -1651,6 +1653,7 @@ fn is_useful<'p, 'tcx>(
         for v in v.expand_or_pat() {
             let usefulness = is_useful(cx, &matrix, &v, witness_preference, is_under_guard, false);
             ret.extend(usefulness);
+
             // If pattern has a guard don't add it to the matrix.
             if !is_under_guard {
                 // We push the already-seen patterns into the matrix in order to detect redundant

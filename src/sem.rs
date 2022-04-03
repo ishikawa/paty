@@ -1920,3 +1920,257 @@ fn pattern_to_type<'nd, 'tcx>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests_analyze_pattern {
+    use super::*;
+    use crate::syntax::{Pattern, PatternField, RangeEnd, StructPattern};
+    use typed_arena::Arena;
+
+    fn _analyze_pattern_1<'nd, 'tcx>(
+        tcx: TypeContext<'tcx>,
+        pat: &syntax::Pattern<'nd, 'tcx>,
+        context_ty: &'tcx Type<'tcx>,
+    ) -> bool {
+        let named_types = HashMap::new();
+        _analyze_pattern_2(tcx, pat, context_ty, &named_types)
+    }
+    fn _analyze_pattern_2<'nd, 'tcx>(
+        tcx: TypeContext<'tcx>,
+        pat: &syntax::Pattern<'nd, 'tcx>,
+        context_ty: &'tcx Type<'tcx>,
+        named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    ) -> bool {
+        let functions = vec![];
+        let mut vars = Scope::new();
+        let mut errors = Errors::new();
+
+        analyze_pattern(
+            tcx,
+            pat,
+            context_ty,
+            &mut vars,
+            &functions,
+            &named_types,
+            &mut errors,
+        )
+    }
+
+    #[test]
+    fn int_range_pattern_inference() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        let head_ty = tcx.int64();
+        let kind = PatternKind::Range {
+            lo: 1,
+            hi: 2,
+            end: RangeEnd::Included,
+        };
+        let pat = Pattern::new(kind);
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(pat.expect_ty(), head_ty);
+        assert_eq!(pat.context_ty().unwrap(), head_ty);
+    }
+
+    #[test]
+    fn tuple_pattern_inference() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head :: (int64, int64)
+        let head_ty = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+
+        // pattern :: (1, 2)
+        let pat1 = Pattern::new(PatternKind::Integer(1));
+        let pat2 = Pattern::new(PatternKind::Integer(2));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&pat1, &pat2]));
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(
+            pat.expect_ty(),
+            tcx.tuple(vec![tcx.literal_int64(1), tcx.literal_int64(2)])
+        );
+        assert_eq!(pat.context_ty().unwrap(), head_ty);
+
+        assert!(pat1.ty().is_some());
+        assert!(pat1.explicit_ty().is_none());
+        assert_eq!(pat1.expect_ty(), tcx.literal_int64(1));
+        assert_eq!(pat1.context_ty().unwrap(), tcx.int64());
+
+        assert!(pat2.ty().is_some());
+        assert!(pat2.explicit_ty().is_none());
+        assert_eq!(pat2.expect_ty(), tcx.literal_int64(2));
+        assert_eq!(pat2.context_ty().unwrap(), tcx.int64());
+    }
+
+    #[test]
+    fn struct_pattern_inference() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // struct S { x: int64 }
+        let struct_name = "S".to_string();
+        let struct_ty = tcx.struct_ty(
+            struct_name.clone(),
+            vec![TypedField::new("x".to_string(), tcx.int64())],
+        );
+
+        let mut named_types = HashMap::new();
+        named_types.insert(struct_name.clone(), struct_ty);
+
+        // head :: S { x: int64 }
+        let head_ty = tcx.named(struct_name.clone(), struct_ty);
+
+        // pattern :: S { x: 1 }
+        let one = Pattern::new(PatternKind::Integer(1));
+        let pat = Pattern::new(PatternKind::Struct(StructPattern::from_name_and_fields(
+            struct_name.clone(),
+            [PatternField::new("x".into(), &one)],
+        )));
+        assert!(_analyze_pattern_2(tcx, &pat, head_ty, &named_types));
+
+        // pattern type :: S
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(pat.expect_ty(), struct_ty);
+        assert_eq!(pat.context_ty().unwrap(), struct_ty);
+
+        assert!(one.ty().is_some());
+        assert!(one.explicit_ty().is_none());
+        assert_eq!(one.expect_ty(), tcx.literal_int64(1));
+        assert_eq!(one.context_ty().unwrap(), tcx.int64());
+    }
+
+    #[test]
+    fn variable_pattern_tuple() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head :: (int64, int64)
+        let head_ty = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+
+        // pattern :: (x, y)
+        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
+        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(pat.expect_ty(), head_ty);
+        assert_eq!(pat.context_ty().unwrap(), head_ty);
+
+        assert!(var1.ty().is_some());
+        assert!(var1.explicit_ty().is_none());
+        assert_eq!(var1.expect_ty(), tcx.int64());
+        assert_eq!(var1.context_ty().unwrap(), tcx.int64());
+
+        assert!(var2.ty().is_some());
+        assert!(var2.explicit_ty().is_none());
+        assert_eq!(var2.expect_ty(), tcx.int64());
+        assert_eq!(var2.context_ty().unwrap(), tcx.int64());
+    }
+
+    #[test]
+    fn variable_pattern_tuple_explicit_with_union_type() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head :: (int64, int64) | (string, string)
+        let tuple_ty1 = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let tuple_ty2 = tcx.tuple(vec![tcx.string(), tcx.string()]);
+        let head_ty = tcx.union(&[tuple_ty1, tuple_ty2]);
+
+        // pattern :: (x, y): (int64, int64)
+        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
+        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
+        pat.assign_explicit_ty(tuple_ty1);
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_some());
+        assert_eq!(pat.expect_ty(), tuple_ty1);
+        assert_eq!(pat.context_ty().unwrap(), head_ty);
+
+        // sub-pattern :: int64
+        assert!(var1.ty().is_some());
+        // explicit_ty should not be propagated
+        assert!(var1.explicit_ty().is_none());
+        assert_eq!(var1.expect_ty(), tcx.int64());
+
+        assert!(var2.ty().is_some());
+        assert!(var2.explicit_ty().is_none());
+        assert_eq!(var2.expect_ty(), tcx.int64());
+    }
+
+    // TODO
+    #[test]
+    #[ignore]
+    fn variable_pattern_tuple_explicit_with_union_type_context_ty() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head :: (int64, int64) | (string, string)
+        let tuple_ty1 = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let tuple_ty2 = tcx.tuple(vec![tcx.string(), tcx.string()]);
+        let head_ty = tcx.union(&[tuple_ty1, tuple_ty2]);
+
+        // pattern :: (x, y): (int64, int64)
+        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
+        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
+        pat.assign_explicit_ty(tuple_ty1);
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        // sub-context :: int64 | string
+        let int_str_ty = tcx.union(&[tcx.int64(), tcx.string()]);
+        assert!(var1.context_ty().is_some());
+        assert_eq!(var1.context_ty().unwrap(), int_str_ty);
+        assert!(var2.context_ty().is_some());
+        assert_eq!(var2.context_ty().unwrap(), int_str_ty);
+    }
+
+    // TODO
+    #[test]
+    #[ignore]
+    fn variable_pattern_tuple_with_union_type() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head :: (int64, int64) | (string, string)
+        let tuple_ty1 = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let tuple_ty2 = tcx.tuple(vec![tcx.string(), tcx.string()]);
+        let head_ty = tcx.union(&[tuple_ty1, tuple_ty2]);
+
+        // pattern :: (x, y)
+        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
+        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        // sub-pattern :: int64 | string
+        let int_str_ty = tcx.union(&[tcx.int64(), tcx.string()]);
+
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(pat.expect_ty(), head_ty);
+        assert_eq!(pat.context_ty().unwrap(), head_ty);
+
+        assert!(var1.ty().is_some());
+        assert!(var1.explicit_ty().is_none());
+        assert_eq!(var1.expect_ty(), int_str_ty);
+        assert_eq!(var1.context_ty().unwrap(), int_str_ty);
+
+        assert!(var2.ty().is_some());
+        assert!(var2.explicit_ty().is_none());
+        assert_eq!(var2.expect_ty(), int_str_ty);
+        assert_eq!(var2.context_ty().unwrap(), int_str_ty);
+    }
+}
