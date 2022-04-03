@@ -1587,26 +1587,6 @@ three 4' '
   end
   foo((1, "two"))
   foo(("three", 4))'
-# or-pattern contains slightly different patterns
-# assert '1 2
-# three 4
-# 5 six
-# seven eight' '
-#   struct T1 { value: int64 }
-#   struct T2 { value: string }
-#   type T3 = (T1 | T2, int64)
-#   type T4 = (T1 | T2, string)
-#   def foo(t: T3 | T4)
-#     case t
-#     when (T1 { value } | T2 { value }, x)
-#       puts(value, x)
-#     end
-#   end
-#   foo((T1 { value: 1 }, 2))             # T3
-#   foo((T2 { value: "three" }, 4))       # T3
-#   foo((T1 { value: 5 }, "six"))         # T4
-#   foo((T2 { value: "seven" }, "eight")) # T4
-# '
 
 # examples
 assert 13 "$(cat examples/foo.paty)"

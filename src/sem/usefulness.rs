@@ -857,7 +857,9 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
 
     fn wildcards_from_type(cx: &MatchCheckContext<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         match ty.bottom_ty() {
-            Type::Tuple(fs) => Fields::wildcards_from_field_types(cx, fs.iter().copied()),
+            Type::Tuple(fs) => {
+                Fields::wildcards_from_field_types(cx, fs.iter().map(|ty| ty.bottom_ty()))
+            }
             Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
                 cx,
                 struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
@@ -884,7 +886,9 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
     ) -> Self {
         match constructor {
             Constructor::Single => match ty.bottom_ty() {
-                Type::Tuple(fs) => Fields::wildcards_from_field_types(cx, fs.iter().copied()),
+                Type::Tuple(fs) => {
+                    Fields::wildcards_from_field_types(cx, fs.iter().map(|ty| ty.bottom_ty()))
+                }
                 Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
                     cx,
                     struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
@@ -897,9 +901,10 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
 
                     assert!(idx.0 < member_types.len());
                     match member_types[idx.0] {
-                        Type::Tuple(fs) => {
-                            Fields::wildcards_from_field_types(cx, fs.iter().copied())
-                        }
+                        Type::Tuple(fs) => Fields::wildcards_from_field_types(
+                            cx,
+                            fs.iter().map(|ty| ty.bottom_ty()),
+                        ),
                         Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
                             cx,
                             struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
@@ -1186,7 +1191,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     else if context_member_ty.is_assignable_to(pat_ty) {
                         Some(DeconstructedPat::new(
                             ctor,
-                            Fields::wildcards_from_field_types(cx, once(*context_member_ty)),
+                            Fields::wildcards_from_type(cx, *context_member_ty),
                             context_member_ty,
                         ))
                     } else {
