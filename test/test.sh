@@ -1566,6 +1566,27 @@ three 4' '
   end
   foo((1, 2))
   foo(("three", 4))'
+# variable pattern captures every product of union member types.
+assert '1 two
+three 4' '
+  def foo(n: (int64, string) | (string, int64))
+    case n
+    when (x: int64 | string, y: string | int64)
+      puts(x, y)
+    end
+  end
+  foo((1, "two"))
+  foo(("three", 4))'
+assert '1 two
+three 4' '
+  def foo(n: (int64, string) | (string, int64))
+    case n
+    when (x, y): (int64 | string, string | int64)
+      puts(x, y)
+    end
+  end
+  foo((1, "two"))
+  foo(("three", 4))'
 # or-pattern contains slightly different patterns
 # assert '1 2
 # three 4

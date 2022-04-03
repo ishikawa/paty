@@ -1445,6 +1445,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             PatternKind::Or(sub_pats) => {
                 assert!(sub_pats.len() >= 2);
 
+                // [var name => (condition, var definition)]
                 let mut vars: HashMap<&str, Vec<(&Expr<'_, '_>, &VarDef<'_, '_>)>> = HashMap::new();
                 let pat_cond = sub_pats
                     .iter()
@@ -1508,6 +1509,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 pat_cond
             }
             _ => {
+                // [var name => (condition, var definition)]
+                let mut vars: HashMap<&str, Vec<(Option<&Expr<'_, '_>>, &VarDef<'_, '_>)>> =
+                    HashMap::new();
+
                 // TODO: Don't emit redundant condition check or optimize away these expressions.
                 // TODO: Use an iterator instead of vec
                 // If the head value is a union type, only compatible types are taken to
@@ -1529,22 +1534,68 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         vec![(None, target_expr)]
                     };
 
-                cond_and_values
+                let pat_cond = cond_and_values
                     .into_iter()
                     .filter_map(|(cond, value_expr)| {
+                        let mut inner_stmts = vec![];
                         let pat_cond = self._build_single_pattern(
                             value_expr,
                             pat,
                             tmp_vars,
                             program,
                             outer_stmts,
-                            stmts,
+                            &mut inner_stmts,
                         );
+
+                        // collects var definitions for this sub pattern for
+                        // merging definitions across multiple sub patterns.
+                        for stmt in inner_stmts {
+                            if let Stmt::VarDef(def) = stmt {
+                                if let Some(defs) = vars.get_mut(def.name()) {
+                                    defs.push((self.and_some(cond, pat_cond), def));
+                                } else {
+                                    vars.insert(
+                                        def.name(),
+                                        vec![(self.and_some(cond, pat_cond), def)],
+                                    );
+                                }
+                            } else {
+                                stmts.push(stmt);
+                            }
+                        }
 
                         // TODO: convert var defs into conditional expression.
                         self.and_some(cond, pat_cond)
                     })
-                    .reduce(|lhs, rhs| self.or(lhs, rhs))
+                    .reduce(|lhs, rhs| self.or(lhs, rhs));
+
+                // merge var definitions across multiple sub-patterns.
+                for (name, defs) in vars {
+                    assert!(!defs.is_empty());
+
+                    // build a new type for the definition.
+                    let def_ty = self.tcx.union(
+                        defs.iter()
+                            .map(|(_, d)| d.init().ty())
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    );
+                    program.add_decl_type(def_ty);
+
+                    let init = self.promote_to(defs[0].1.init(), def_ty, tmp_vars, stmts);
+                    let init = defs.iter().fold(init, |else_value, (cond, var_def)| {
+                        let then_value = self.promote_to(var_def.init(), def_ty, tmp_vars, stmts);
+
+                        if let Some(cond) = cond {
+                            self.cond_value(cond, then_value, else_value)
+                        } else {
+                            then_value
+                        }
+                    });
+                    stmts.push(self.var_def_stmt(name.to_string(), init));
+                }
+
+                pat_cond
             }
         }
     }
