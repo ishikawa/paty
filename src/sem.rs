@@ -1156,7 +1156,11 @@ fn analyze_pattern<'nd, 'tcx>(
 
     // Expand union type
     let expected_ty_candidates = if let Type::Union(member_types) = expected_ty {
-        let mut types = vec![expected_ty];
+        let mut types = Vec::with_capacity(member_types.len() + 1);
+
+        // Suppose a type is `U = A | B | C`:
+        // U, A, B, C
+        types.push(expected_ty);
         types.extend(member_types);
         types
     } else {
@@ -2034,10 +2038,10 @@ mod tests_analyze_pattern {
         let mut named_types = HashMap::new();
         named_types.insert(struct_name.clone(), struct_ty);
 
-        // head :: S { x: int64 }
+        // head: S { x: int64 }
         let head_ty = tcx.named(struct_name.clone(), struct_ty);
 
-        // pattern :: S { x: 1 }
+        // pattern = S { x: 1 }
         let one = Pattern::new(PatternKind::Integer(1));
         let pat = Pattern::new(PatternKind::Struct(StructPattern::from_name_and_fields(
             struct_name.clone(),
@@ -2045,7 +2049,7 @@ mod tests_analyze_pattern {
         )));
         assert!(_analyze_pattern_2(tcx, &pat, head_ty, &named_types));
 
-        // pattern type :: S
+        // pattern : S
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), struct_ty);
@@ -2079,15 +2083,120 @@ mod tests_analyze_pattern {
         assert_eq!(pat.expect_ty(), pat_ty);
         assert_eq!(pat.context_ty().unwrap(), head_ty);
 
+        // 1 : 1
         assert!(one.ty().is_some());
         assert!(one.explicit_ty().is_none());
         assert_eq!(one.expect_ty(), tcx.literal_int64(1));
         assert_eq!(one.context_ty().unwrap(), head_ty);
 
+        // 2 : 2
         assert!(two.ty().is_some());
         assert!(two.explicit_ty().is_none());
         assert_eq!(two.expect_ty(), tcx.literal_int64(2));
         assert_eq!(two.context_ty().unwrap(), head_ty);
+    }
+
+    #[test]
+    fn or_pattern_head_union_ty() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head: int64 | string
+        let head_ty = tcx.union([tcx.int64(), tcx.string()]);
+
+        // pattern = 1 | "two"
+        let one = Pattern::new(PatternKind::Integer(1));
+        let two = Pattern::new(PatternKind::String("two".into()));
+        let pat = Pattern::new(PatternKind::Or(vec![&one, &two]));
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        // pattern : 1 | "two"
+        let pat_ty = tcx.union([tcx.literal_int64(1), tcx.literal_string("two".into())]);
+
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(pat.expect_ty(), pat_ty);
+        assert_eq!(pat.context_ty().unwrap(), head_ty);
+
+        // 1 : 1
+        assert!(one.ty().is_some());
+        assert!(one.explicit_ty().is_none());
+        assert_eq!(one.expect_ty(), tcx.literal_int64(1));
+        assert_eq!(one.context_ty().unwrap(), head_ty);
+
+        // "two" : "two"
+        assert!(two.ty().is_some());
+        assert!(two.explicit_ty().is_none());
+        assert_eq!(two.expect_ty(), tcx.literal_string("two".into()));
+        assert_eq!(two.context_ty().unwrap(), head_ty);
+    }
+
+    #[test]
+    fn or_struct_pattern_head_union_ty() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // struct T1 { value: int64 }
+        // struct T2 { value: string }
+        let t1_struct_ty = tcx.struct_ty(
+            "T1".into(),
+            vec![TypedField::new("value".into(), tcx.int64())],
+        );
+        let t2_struct_ty = tcx.struct_ty(
+            "T2".into(),
+            vec![TypedField::new("value".into(), tcx.string())],
+        );
+
+        let mut named_types = HashMap::new();
+        named_types.insert("T1".to_string(), t1_struct_ty);
+        named_types.insert("T2".to_string(), t2_struct_ty);
+
+        // head: T1 | T2
+        let head_ty = tcx.union([t1_struct_ty, t2_struct_ty]);
+
+        // pattern = T1 { value } | T2 { value }
+        let t1_value_field_pat = Pattern::new(PatternKind::Var("value".into()));
+        let t1_struct_pat = Pattern::new(PatternKind::Struct(StructPattern::from_name_and_fields(
+            "T1".into(),
+            [PatternField::new("value".into(), &t1_value_field_pat)],
+        )));
+        let t2_value_field_pat = Pattern::new(PatternKind::Var("value".into()));
+        let t2_struct_pat = Pattern::new(PatternKind::Struct(StructPattern::from_name_and_fields(
+            "T2".into(),
+            [PatternField::new("value".into(), &t2_value_field_pat)],
+        )));
+        let pat = Pattern::new(PatternKind::Or(vec![&t1_struct_pat, &t2_struct_pat]));
+        assert!(_analyze_pattern_2(tcx, &pat, head_ty, &named_types));
+
+        // pattern : T1 | T2
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(pat.expect_ty(), head_ty);
+        assert_eq!(pat.context_ty().unwrap(), head_ty);
+
+        // T1 : T1
+        assert!(t1_struct_pat.ty().is_some());
+        assert!(t1_struct_pat.explicit_ty().is_none());
+        assert_eq!(t1_struct_pat.expect_ty(), t1_struct_ty);
+        assert_eq!(t1_struct_pat.context_ty().unwrap(), head_ty);
+
+        // T2 : T2
+        assert!(t2_struct_pat.ty().is_some());
+        assert!(t2_struct_pat.explicit_ty().is_none());
+        assert_eq!(t2_struct_pat.expect_ty(), t2_struct_ty);
+        assert_eq!(t2_struct_pat.context_ty().unwrap(), head_ty);
+
+        // T1.value : int64
+        assert!(t1_value_field_pat.ty().is_some());
+        assert!(t1_value_field_pat.explicit_ty().is_none());
+        assert_eq!(t1_value_field_pat.expect_ty(), tcx.int64());
+        assert_eq!(t1_value_field_pat.context_ty().unwrap(), tcx.int64());
+
+        // T2.value : int64
+        assert!(t2_value_field_pat.ty().is_some());
+        assert!(t2_value_field_pat.explicit_ty().is_none());
+        assert_eq!(t2_value_field_pat.expect_ty(), tcx.string());
+        assert_eq!(t2_value_field_pat.context_ty().unwrap(), tcx.string());
     }
 
     #[test]
