@@ -83,7 +83,10 @@ impl<'tcx> TypeContext<'tcx> {
     /// Creates an union type from types. Returns the first type if types has
     /// only one element.
     /// panic if member_types is empty.
-    pub fn union(&self, member_types: &[&'tcx Type<'tcx>]) -> &'tcx Type<'tcx> {
+    pub fn union(
+        &self,
+        member_types: impl IntoIterator<Item = &'tcx Type<'tcx>>,
+    ) -> &'tcx Type<'tcx> {
         // Finally, the array should contain the fewest number of types. Iterates given types and
         // adds a subsequent type if there is no type wider than that type.
         let member_types = flatten_union_ty(member_types);
@@ -415,14 +418,21 @@ impl fmt::Display for Type<'_> {
 }
 
 // TODO: Move to ty::UnionTy
-pub fn flatten_union_ty<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Type<'tcx>> {
+pub fn flatten_union_ty<'tcx>(
+    member_types: impl IntoIterator<Item = &'tcx Type<'tcx>>,
+) -> Vec<&'tcx Type<'tcx>> {
     _expand_union_ty(member_types, false)
 }
-pub fn expand_union_ty<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Type<'tcx>> {
+pub fn expand_union_ty<'tcx>(
+    member_types: impl IntoIterator<Item = &'tcx Type<'tcx>>,
+) -> Vec<&'tcx Type<'tcx>> {
     _expand_union_ty(member_types, true)
 }
+pub fn expand_union_ty_array<'tcx>(member_types: &[&'tcx Type<'tcx>]) -> Vec<&'tcx Type<'tcx>> {
+    _expand_union_ty(member_types.iter().copied(), true)
+}
 fn _expand_union_ty<'tcx>(
-    member_types: &[&'tcx Type<'tcx>],
+    member_types: impl IntoIterator<Item = &'tcx Type<'tcx>>,
     expand_named_ty: bool,
 ) -> Vec<&'tcx Type<'tcx>> {
     fn expand<'tcx>(ty: &'tcx Type<'tcx>, vec: &mut Vec<&'tcx Type<'tcx>>, expand_named_ty: bool) {

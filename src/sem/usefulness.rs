@@ -6,7 +6,7 @@ use crate::syntax::token::RangeEnd;
 use crate::syntax::{
     CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
 };
-use crate::ty::{expand_union_ty, Type};
+use crate::ty::{expand_union_ty, expand_union_ty_array, Type};
 use std::iter;
 use std::{
     cell::Cell,
@@ -366,7 +366,7 @@ impl<'tcx> SplitWildcard {
             Type::LiteralString(s) => vec![Constructor::Str(s.to_string())],
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
             Type::Union(member_types) => {
-                let member_types = expand_union_ty(member_types);
+                let member_types = expand_union_ty_array(member_types);
                 member_types
                     .iter()
                     .enumerate()
@@ -897,7 +897,7 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
             },
             Constructor::Variant(idx) => match ty.bottom_ty() {
                 Type::Union(member_types) => {
-                    let member_types = expand_union_ty(member_types);
+                    let member_types = expand_union_ty_array(member_types);
 
                     assert!(idx.0 < member_types.len());
                     match member_types[idx.0] {
@@ -999,7 +999,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 
     fn to_union_variants(
         cx: &MatchCheckContext<'p, 'tcx>,
-        member_types: &[&'tcx Type<'tcx>],
+        member_types: impl IntoIterator<Item = &'tcx Type<'tcx>>,
         pat: &Pattern<'_, 'tcx>,
     ) -> Self {
         let pat_ty = pat.expect_ty().bottom_ty();
@@ -1057,7 +1057,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 PatternKind::Or(_) => {}
                 PatternKind::Var(_) | PatternKind::Wildcard if pat.explicit_ty().is_some() => {}
                 _ => {
-                    return Self::to_union_variants(cx, member_types, pat);
+                    return Self::to_union_variants(cx, member_types.iter().copied(), pat);
                 }
             }
         }
@@ -1140,7 +1140,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         if let Type::Union(member_types) = pat_ty {
             let mut pats = vec![];
 
-            for member_ty in expand_union_ty(member_types) {
+            for member_ty in expand_union_ty_array(member_types) {
                 let pat = Self::_from_explicit_ty(cx, member_ty, context_ty);
 
                 // If an union type includes a wildcard pattern, this pattern matches
@@ -1158,7 +1158,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         // If the context type is an union type, each pattern should be one/some of
         // member(s) of it.
         else if let Type::Union(context_member_types) = context_ty {
-            let context_member_types = expand_union_ty(context_member_types);
+            let context_member_types = expand_union_ty_array(context_member_types);
 
             let mut de_pats: Vec<_> = context_member_types
                 .iter()

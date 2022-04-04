@@ -2,7 +2,7 @@
 use crate::ir::inst::{
     CallingConvention, Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar,
 };
-use crate::ty::{expand_union_ty, FunctionSignature, Type};
+use crate::ty::{expand_union_ty_array, FunctionSignature, Type};
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -106,7 +106,7 @@ impl<'a, 'tcx> Emitter {
                 code.push_str("};\n\n");
             }
             Type::Union(member_types) => {
-                let member_types = expand_union_ty(member_types);
+                let member_types = expand_union_ty_array(member_types);
                 code.push_str(&c_type_str);
                 code.push_str(" {\n");
 
@@ -797,9 +797,8 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
                 encode_ty(fty, buffer);
             }
         }
-        // TODO: `int64 | string` and `string | int64` should be same type.
         Type::Union(member_types) => {
-            let member_types = expand_union_ty(member_types);
+            let member_types = expand_union_ty_array(member_types);
 
             buffer.push('U');
             buffer.push_str(&member_types.len().to_string());

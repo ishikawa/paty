@@ -3,7 +3,7 @@ use super::inst::{
     Stmt, TmpVar, Var, VarDef,
 };
 use crate::syntax::{self, PatternKind, Typable};
-use crate::ty::{expand_union_ty, FunctionSignature, StructTy, Type, TypeContext};
+use crate::ty::{expand_union_ty_array, FunctionSignature, StructTy, Type, TypeContext};
 use std::collections::{HashMap, HashSet};
 use typed_arena::Arena;
 
@@ -616,7 +616,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         stmts,
                     ),
                     Type::Union(operand_member_types) => {
-                        let operand_member_types = expand_union_ty(operand_member_types);
+                        let operand_member_types = expand_union_ty_array(operand_member_types);
                         let union_tag = self.push_expr(self.union_tag(operand), tmp_vars, stmts);
                         let union_member_value = self.build_union_members_mapped_value(
                             operand,
@@ -649,7 +649,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         stmts,
                     ),
                     Type::Union(operand_member_types) => {
-                        let operand_member_types = expand_union_ty(operand_member_types);
+                        let operand_member_types = expand_union_ty_array(operand_member_types);
                         let union_tag = self.push_expr(self.union_tag(operand), tmp_vars, stmts);
                         let union_member_value = self.build_union_members_mapped_value(
                             operand,
@@ -805,8 +805,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
 
         match (operand_ty, expected_ty) {
             (Type::Union(operand_member_types), Type::Union(expected_member_types)) => {
-                let operand_member_types = expand_union_ty(operand_member_types);
-                let expected_member_types = expand_union_ty(expected_member_types);
+                let operand_member_types = expand_union_ty_array(operand_member_types);
+                let expected_member_types = expand_union_ty_array(expected_member_types);
 
                 if operand_member_types == expected_member_types {
                     return operand;
@@ -851,7 +851,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self.push_expr(union_member_value, tmp_vars, stmts)
             }
             (operand_ty, Type::Union(expected_member_types)) => {
-                let expected_member_types = expand_union_ty(expected_member_types);
+                let expected_member_types = expand_union_ty_array(expected_member_types);
 
                 let mut cond_values: Vec<(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>)> = vec![];
 
@@ -919,7 +919,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 );
             }
             (Type::Union(operand_member_types), expected_ty) => {
-                let operand_member_types = expand_union_ty(operand_member_types);
+                let operand_member_types = expand_union_ty_array(operand_member_types);
                 let union_tag = self.push_expr(self.union_tag(operand), tmp_vars, stmts);
                 let union_member_value = self.build_union_members_mapped_value(
                     operand,
@@ -1073,7 +1073,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 self._build_printf(FormatSpec::Str("}"), tmp_vars, stmts)
             }
             Type::Union(member_types) => {
-                let member_types = expand_union_ty(member_types);
+                let member_types = expand_union_ty_array(member_types);
 
                 // For union type values, the appropriate value is output by
                 // branching on the condition of the tag of the value.
@@ -1224,7 +1224,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 })
                 .reduce(|lhs, rhs| self.and(lhs, rhs)),
             (Type::Union(target_member_types), pat_ty) => {
-                let target_member_types = expand_union_ty(target_member_types);
+                let target_member_types = expand_union_ty_array(target_member_types);
                 assert!(!target_member_types.is_empty());
 
                 if target_member_types
@@ -1490,12 +1490,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     assert!(!defs.is_empty());
 
                     // build a new type for the definition.
-                    let def_ty = self.tcx.union(
-                        defs.iter()
-                            .map(|(_, d)| d.init().ty())
-                            .collect::<Vec<_>>()
-                            .as_slice(),
-                    );
+                    let def_ty = self.tcx.union(defs.iter().map(|(_, d)| d.init().ty()));
                     program.add_decl_type(def_ty);
 
                     let init = self.promote_to(defs[0].1.init(), def_ty, tmp_vars, stmts);
@@ -1519,7 +1514,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 // generate the condition for pattern matching.
                 let cond_and_values: Vec<_> =
                     if let Type::Union(member_types) = target_expr.ty().bottom_ty() {
-                        expand_union_ty(member_types)
+                        expand_union_ty_array(member_types)
                             .iter()
                             .enumerate()
                             .filter(|(_, member_ty)| member_ty.is_compatible(pat_ty))
@@ -1574,12 +1569,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     assert!(!defs.is_empty());
 
                     // build a new type for the definition.
-                    let def_ty = self.tcx.union(
-                        defs.iter()
-                            .map(|(_, d)| d.init().ty())
-                            .collect::<Vec<_>>()
-                            .as_slice(),
-                    );
+                    let def_ty = self.tcx.union(defs.iter().map(|(_, d)| d.init().ty()));
                     program.add_decl_type(def_ty);
 
                     let init = self.promote_to(defs[0].1.init(), def_ty, tmp_vars, stmts);
