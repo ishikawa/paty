@@ -1307,21 +1307,6 @@ fn _analyze_pattern<'nd, 'tcx>(
     // either explicitly specified or expected.
     let assumed_pat_ty = pat.explicit_ty().unwrap_or(expected_ty);
 
-    /*
-    // The pattern type must be compatible with the target type.
-    // The pattern value must be narrower than the target type,
-    // but the pattern type may be wider than the target type.
-    if let Some(explicit_ty) = pat.explicit_ty() {
-        let mut err = Errors::new();
-        if !expect_assignable_type(expected_ty, explicit_ty, pat, &mut err)
-            && !expect_assignable_type(explicit_ty, expected_ty, pat, &mut err)
-        {
-            errors.extend(err);
-            return false;
-        }
-    }
-     */
-
     // Infer the type of pattern from its values.
     match pat.kind() {
         PatternKind::Integer(n) => {

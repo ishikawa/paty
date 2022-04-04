@@ -1005,8 +1005,6 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         let pat_ty = pat.expect_ty().bottom_ty();
         let member_types = expand_union_ty(member_types);
 
-        dbg!(pat_ty);
-        dbg!(&member_types);
         let mut pats: Vec<_> = member_types
             .iter()
             .enumerate()
