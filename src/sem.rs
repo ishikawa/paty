@@ -1160,6 +1160,7 @@ fn analyze_pattern<'nd, 'tcx>(
 
         // Suppose a type is `U = A | B | C`:
         // U, A, B, C
+        // TODO: Remove this line
         types.push(expected_ty);
         types.extend(member_types);
         types
@@ -1500,6 +1501,7 @@ fn _analyze_pattern<'nd, 'tcx>(
         PatternKind::Or(_) => unreachable!("Or-pattern shouldn't be handled here."),
     };
 
+    /*
     // The pattern has an explicit type annotation. It must be
     // wider than the inferred type and override the inferred type.
     if let Some(explicit_ty) = pat.explicit_ty() {
@@ -1509,9 +1511,10 @@ fn _analyze_pattern<'nd, 'tcx>(
             pat.assign_ty(explicit_ty);
         }
     }
+    */
 
     // The type of a pattern must be able to assign to
-    // An intersection of the type of a pattern and an expected type,
+    // an intersection of the type of a pattern and an expected type,
     // This means that either can be substituted for the other.
     if !pat.expect_ty().is_assignable_to(expected_ty)
         && !expected_ty.is_assignable_to(pat.expect_ty())
@@ -2044,6 +2047,25 @@ mod tests_analyze_pattern {
         assert!(one.explicit_ty().is_none());
         assert_eq!(one.expect_ty(), tcx.literal_int64(1));
         assert_eq!(one.context_ty().unwrap(), tcx.int64());
+    }
+
+    #[test]
+    fn variable_pattern_head_union_ty() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head: 1 | 2
+        let head_ty = tcx.union([tcx.literal_int64(1), tcx.literal_int64(2)]);
+
+        // pattern = x
+        let pat = Pattern::new(PatternKind::Var("x".into()));
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        // x: 1 | 2
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(pat.expect_ty(), head_ty);
+        assert_eq!(pat.context_ty().unwrap(), head_ty);
     }
 
     #[test]
