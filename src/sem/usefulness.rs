@@ -1582,7 +1582,7 @@ pub struct Witness<'p, 'tcx>(Vec<DeconstructedPat<'p, 'tcx>>);
 impl<'p, 'tcx> Witness<'p, 'tcx> {
     /// Asserts that the witness contains a single pattern, and returns it.
     fn single_pattern(self) -> DeconstructedPat<'p, 'tcx> {
-        assert_eq!(self.0.len(), 1);
+        assert!(self.0.len() >= 1);
         self.0.into_iter().next().unwrap()
     }
 
@@ -1978,5 +1978,67 @@ mod tests_deconstructed_pat {
         let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
 
         assert_eq!(dc_pat.ty(), &Type::Int64);
+    }
+}
+
+#[cfg(test)]
+mod tests_check_match {
+    use crate::ty::TypeContext;
+
+    use super::*;
+
+    #[test]
+    fn check_match_1() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head :: (int64, int64) | (string, string)
+        // type T1 = (int64, string)
+        // type T2 = (string, int64)
+        let tuple_ty1 = tcx.tuple(vec![tcx.int64(), tcx.string()]);
+        let tuple_ty2 = tcx.tuple(vec![tcx.string(), tcx.int64()]);
+        let named_ty1 = tcx.named("T1".into(), tuple_ty1);
+        let named_ty2 = tcx.named("T2".into(), tuple_ty2);
+
+        //let elem_context_ty = tcx.union([tcx.int64(), tcx.string()]);
+
+        // head: T1 | T2
+        let head_ty = tcx.union([named_ty1, named_ty2]);
+
+        // pattern = (x: int64, y: string)
+        let pat1_x = Pattern::new(PatternKind::Var("x".to_string()));
+        let pat1_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat1 = Pattern::new(PatternKind::Tuple(vec![&pat1_x, &pat1_y]));
+        pat1_x.assign_explicit_ty(tcx.int64());
+        pat1_y.assign_explicit_ty(tcx.string());
+
+        pat1.assign_ty(tuple_ty1);
+        pat1_x.assign_ty(tcx.int64());
+        pat1_y.assign_ty(tcx.string());
+
+        pat1.assign_context_ty(head_ty);
+        pat1_x.assign_context_ty(tcx.int64());
+        pat1_y.assign_context_ty(tcx.string());
+        // pat1_x.assign_context_ty(elem_context_ty);
+        // pat1_y.assign_context_ty(elem_context_ty);
+
+        // pattern = (x: string, y: int64)
+        let pat2_x = Pattern::new(PatternKind::Var("x".to_string()));
+        let pat2_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat2 = Pattern::new(PatternKind::Tuple(vec![&pat1_x, &pat1_y]));
+        pat2_x.assign_explicit_ty(tcx.string());
+        pat2_y.assign_explicit_ty(tcx.int64());
+
+        pat2.assign_ty(tuple_ty2);
+        pat2_x.assign_ty(tcx.string());
+        pat2_y.assign_ty(tcx.int64());
+
+        pat2.assign_context_ty(head_ty);
+        pat2_x.assign_context_ty(tcx.string());
+        pat2_y.assign_context_ty(tcx.int64());
+        // pat1_x.assign_context_ty(elem_context_ty);
+        // pat1_y.assign_context_ty(elem_context_ty);
+
+        assert!(check_match(head_ty, [(&pat1).into(), (&pat2).into()], false).is_ok());
     }
 }
