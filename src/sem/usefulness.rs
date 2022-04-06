@@ -4,7 +4,7 @@
 use super::error::{SemanticError, SemanticErrorKind};
 use crate::syntax::token::RangeEnd;
 use crate::syntax::{
-    CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
+    Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
 };
 use crate::ty::{expand_union_ty, expand_union_ty_array, Type};
 use std::iter;
@@ -1375,6 +1375,32 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 /// The arm of a match expression.
 #[derive(Debug, Clone, Copy)]
 pub struct MatchArm<'p, 'tcx> {
+    pat: &'p Pattern<'p, 'tcx>,
+    has_guard: bool,
+}
+
+impl<'p, 'tcx> MatchArm<'p, 'tcx> {
+    pub fn new(pat: &'p Pattern<'p, 'tcx>, has_guard: bool) -> Self {
+        Self { pat, has_guard }
+    }
+
+    pub fn pattern(&self) -> &'p Pattern<'p, 'tcx> {
+        self.pat
+    }
+
+    pub fn has_guard(&self) -> bool {
+        self.has_guard
+    }
+}
+
+impl<'p, 'tcx> From<&'p Pattern<'p, 'tcx>> for MatchArm<'p, 'tcx> {
+    fn from(pat: &'p Pattern<'p, 'tcx>) -> Self {
+        Self::new(pat, false)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DeconstructedMatchArm<'p, 'tcx> {
     /// The pattern must have been lowered through `check_match::MatchVisitor::lower_pattern`.
     pub pat: &'p DeconstructedPat<'p, 'tcx>,
     pub has_guard: bool,
@@ -1393,10 +1419,9 @@ pub enum Reachability<'p, 'tcx> {
 }
 
 /// The output of checking a match for exhaustiveness and arm reachability.
-
-pub struct UsefulnessReport<'p, 'tcx> {
+struct UsefulnessReport<'p, 'tcx> {
     /// For each arm of the input, whether that arm is reachable after the arms above it.
-    pub arm_usefulness: Vec<(MatchArm<'p, 'tcx>, Reachability<'p, 'tcx>)>,
+    arm_usefulness: Vec<(DeconstructedMatchArm<'p, 'tcx>, Reachability<'p, 'tcx>)>,
     /// If the match is exhaustive, this is empty. If not, this contains witnesses for the lack of
     /// exhaustiveness.
     pub non_exhaustiveness_witnesses: Vec<DeconstructedPat<'p, 'tcx>>,
@@ -1702,7 +1727,7 @@ fn is_useful<'p, 'tcx>(
 /// `check_match::MatchVisitor::lower_pattern`.
 fn compute_match_usefulness<'p, 'tcx>(
     cx: &MatchCheckContext<'p, 'tcx>,
-    arms: &[MatchArm<'p, 'tcx>],
+    arms: &[DeconstructedMatchArm<'p, 'tcx>],
     src_ty: &'tcx Type<'tcx>,
 ) -> UsefulnessReport<'p, 'tcx> {
     let mut matrix = Matrix::empty();
@@ -1741,9 +1766,9 @@ fn compute_match_usefulness<'p, 'tcx>(
     }
 }
 
-pub fn check_match<'tcx>(
+pub fn check_match<'p, 'tcx: 'p>(
     head_ty: &'tcx Type<'tcx>,
-    arms: &[CaseArm<'_, 'tcx>],
+    arms: impl IntoIterator<Item = MatchArm<'p, 'tcx>>,
     has_else: bool,
 ) -> Result<(), Vec<SemanticError<'tcx>>> {
     let pattern_arena = Arena::default();
@@ -1754,15 +1779,15 @@ pub fn check_match<'tcx>(
     };
 
     let mut match_arms: Vec<_> = arms
-        .iter()
+        .into_iter()
         .map(|arm| {
             let pattern = cx
                 .pattern_arena
                 .alloc(DeconstructedPat::from_pat(&cx, arm.pattern()));
 
-            MatchArm {
+            DeconstructedMatchArm {
                 pat: pattern,
-                has_guard: false,
+                has_guard: arm.has_guard(),
             }
         })
         .collect();
@@ -1770,7 +1795,7 @@ pub fn check_match<'tcx>(
     if has_else {
         let pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
 
-        match_arms.push(MatchArm {
+        match_arms.push(DeconstructedMatchArm {
             pat: pattern,
             has_guard: false,
         })

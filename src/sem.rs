@@ -1128,7 +1128,11 @@ fn analyze_expr<'nd, 'tcx>(
             }
 
             // Usefulness check
-            if let Err(err) = usefulness::check_match(head_ty, arms, else_body.is_some()) {
+            if let Err(err) = usefulness::check_match(
+                head_ty,
+                arms.iter().map(|a| a.pattern().into()),
+                else_body.is_some(),
+            ) {
                 errors.extend(err);
             }
         }
