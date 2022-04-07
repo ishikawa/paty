@@ -1,6 +1,6 @@
 //! Semantic analysis
 use self::error::{FormatSymbols, SemanticError, SemanticErrorKind};
-use crate::syntax::{PatternKind, StmtKind, Typable};
+use crate::syntax::{Pattern, PatternKind, StmtKind, Typable};
 use crate::ty::{StructTy, TypedField};
 use crate::{
     syntax,
@@ -1159,27 +1159,21 @@ fn analyze_pattern<'nd, 'tcx>(
     let mut sub_errors = Errors::new();
 
     // Expand union type
-    let expected_ty_candidates = if let Type::Union(member_types) = expected_ty {
-        let mut types = Vec::with_capacity(member_types.len() + 1);
+    let mut expected_ty_candidates: &[&Type<'_>] = &[expected_ty];
+    if let Type::Union(ts) = expected_ty {
+        expected_ty_candidates = ts;
+    }
 
-        // Suppose a type is `U = A | B | C`:
-        // A, B, C
-        types.extend(member_types);
-        types
-    } else {
-        vec![expected_ty]
-    };
     // eprintln!(
     //     ">>> analyze_pattern:\n... pat = {}\n... expected_ty = {}",
     //     pat, expected_ty
     // );
 
     // Expand Or-pattern
-    let sub_pats = if let PatternKind::Or(sub_pats) = pat.kind() {
-        sub_pats.clone()
-    } else {
-        vec![pat]
-    };
+    let mut sub_pats: &[&Pattern<'_, '_>] = &[pat];
+    if let PatternKind::Or(ps) = pat.kind() {
+        sub_pats = ps;
+    }
 
     let mut all_sub_pats_passed = true;
 
@@ -2459,8 +2453,8 @@ mod tests_analyze_pattern {
 
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
-        assert_eq!(pat.expect_ty(), head_ty);
         assert_eq!(pat.context_ty().unwrap(), head_ty);
+        assert_eq!(pat.expect_ty(), head_ty);
 
         assert!(var1.ty().is_some());
         assert!(var1.explicit_ty().is_none());
