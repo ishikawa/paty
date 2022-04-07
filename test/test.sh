@@ -1587,6 +1587,18 @@ three 4' '
   end
   foo((1, "two"))
   foo(("three", 4))'
+# variable/wildcard pattern consumes multiple choice in nested union
+assert '1 100
+true three' '
+  type U = (int64 | boolean, int64 | string)
+  def foo(t: U)
+    case t
+    when (x, y)
+      puts(x, y)
+    end
+  end
+  foo((1, 100))
+  foo((true, "three"))'
 
 # examples
 assert 13 "$(cat examples/foo.paty)"

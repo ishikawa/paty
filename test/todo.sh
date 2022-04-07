@@ -38,17 +38,6 @@ assert() {
 # variable/wildcard pattern consumes multiple choice in nested union
 assert '1 100
 true three' '
-  type U = (int64 | boolean, int64 | string)
-  def foo(t: U)
-    case t
-    when (x, y)
-      puts(x, y)
-    end
-  end
-  foo((1, 100))
-  foo((true, "three"))'
-assert '1 100
-true three' '
   type U1 = (int64, int64)
   type U2 = (boolean, string)
   def foo(t: U1 | U2)

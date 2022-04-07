@@ -1582,7 +1582,7 @@ pub struct Witness<'p, 'tcx>(Vec<DeconstructedPat<'p, 'tcx>>);
 impl<'p, 'tcx> Witness<'p, 'tcx> {
     /// Asserts that the witness contains a single pattern, and returns it.
     fn single_pattern(self) -> DeconstructedPat<'p, 'tcx> {
-        assert!(self.0.len() >= 1);
+        assert!(!self.0.is_empty());
         self.0.into_iter().next().unwrap()
     }
 
