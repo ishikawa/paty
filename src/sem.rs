@@ -1202,6 +1202,7 @@ fn analyze_pattern<'nd, 'tcx>(
                 );
                 false
             } else if unify_type(assumed_pat_ty, *sub_pat, errors) {
+                // TODO: Separate pattern inference and variable binding.
                 // Create a binding
                 if let PatternKind::Var(name) = sub_pat.kind() {
                     let binding = Binding::new(name.into(), sub_pat.expect_ty());
@@ -1212,6 +1213,7 @@ fn analyze_pattern<'nd, 'tcx>(
                 false
             }
         } else {
+            // TODO: Patterns for union types should be tried for as many type candidates possible.
             let mut passed = false;
 
             assert!(!expected_ty_candidates.is_empty());
@@ -1305,6 +1307,7 @@ fn analyze_pattern<'nd, 'tcx>(
         return false;
     }
 
+    // TODO: Separate pattern inference and variable binding.
     // Add bindings introduced in sub-patterns.
     if let Some(bindings) = bindings {
         for (var_name, var_ty) in bindings {
@@ -1505,12 +1508,13 @@ fn _analyze_pattern<'nd, 'tcx>(
                                     },
                                     spread,
                                 );
-                                continue;
+                            } else {
+                                // TODO: Separate pattern inference and variable binding.
+                                // New binding with rest fields.
+                                let binding =
+                                    Binding::new(spread_name.to_string(), spread.expect_ty());
+                                vars.insert(binding);
                             }
-
-                            // New binding with rest fields.
-                            let binding = Binding::new(spread_name.to_string(), spread.expect_ty());
-                            vars.insert(binding);
                         }
 
                         already_spread = true;
