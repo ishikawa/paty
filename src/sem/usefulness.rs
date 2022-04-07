@@ -1859,11 +1859,19 @@ pub fn check_match<'p, 'tcx: 'p>(
     // non exhaustiveness
     for de_pat in report.non_exhaustiveness_witnesses {
         let pat = de_pat.to_pat(&cx);
+        assert!(pat.explicit_ty().is_none());
+
+        // Note that certain wildcard patterns are automatically inserted by
+        // usefulness check, so users may not be able to distinguish them if they are
+        // output as `_`.
+        let pattern = if let PatternKind::Wildcard = pat.kind() {
+            format!("_: {}", pat.expect_ty())
+        } else {
+            pat.to_string()
+        };
 
         errors.push(SemanticError::from_kind(
-            SemanticErrorKind::NonExhaustivePattern {
-                pattern: pat.to_string(),
-            },
+            SemanticErrorKind::NonExhaustivePattern { pattern },
         ));
     }
 

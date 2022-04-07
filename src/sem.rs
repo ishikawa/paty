@@ -1218,8 +1218,10 @@ fn analyze_pattern<'nd, 'tcx>(
                 false
             }
         } else {
+            let mut passed = false;
+
             assert!(!expected_ty_candidates.is_empty());
-            expected_ty_candidates.iter().any(|expected_ty_candidate| {
+            for expected_ty_candidate in expected_ty_candidates.iter() {
                 sub_errors = Errors::new();
 
                 if _analyze_pattern(
@@ -1231,13 +1233,16 @@ fn analyze_pattern<'nd, 'tcx>(
                     named_types,
                     &mut sub_errors,
                 ) {
-                    true
-                } else {
-                    sub_vars = Scope::from_parent(vars);
-                    false
+                    passed = true;
+                    break;
                 }
-            })
+                sub_vars = Scope::from_parent(vars);
+            }
+
+            passed
         };
+
+        // eprintln!("... ... passed({}): pattern = {}", passed, sub_pat);
 
         // Before move on the next pattern, validate new bindings and
         // merge these into the scope on the pattern.
@@ -1254,6 +1259,7 @@ fn analyze_pattern<'nd, 'tcx>(
             } else {
                 sub_pat.assign_context_ty(expected_ty);
             }
+            // dbg!(sub_pat);
 
             // check new variables.
             let mut new_bindings: HashMap<_, _> = sub_vars

@@ -804,8 +804,8 @@ impl fmt::Display for Pattern<'_, '_> {
         // We'd like to print diagnostics with the explicit type
         // for var/wildcard patterns.
         if matches!(self.kind(), PatternKind::Wildcard | PatternKind::Var(_)) {
-            if let Some(ty) = self.ty() {
-                write!(f, ": {}", ty)?;
+            if let Some(explicit_ty) = self.explicit_ty() {
+                write!(f, ": {}", explicit_ty)?;
             }
         }
 
