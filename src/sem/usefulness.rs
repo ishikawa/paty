@@ -997,7 +997,27 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         DeconstructedPat::new(self.ctor.clone(), self.fields, self.ty)
     }
 
-    fn to_union_variants(
+    pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
+        // If the context type is an union type, each pattern should be one/some of
+        // member(s) of it.
+        // TODO: can we remove to_union_variants()?
+        if let Some(Type::Union(member_types)) = pat.context_ty() {
+            match pat.kind() {
+                PatternKind::Or(_) => {}
+                PatternKind::Var(_) | PatternKind::Wildcard if pat.explicit_ty().is_some() => {}
+                _ => {
+                    return Self::_from_pat_to_union_variants(
+                        cx,
+                        member_types.iter().copied(),
+                        pat,
+                    );
+                }
+            }
+        }
+
+        Self::_from_pat(cx, pat)
+    }
+    fn _from_pat_to_union_variants(
         cx: &MatchCheckContext<'p, 'tcx>,
         member_types: impl IntoIterator<Item = &'tcx Type<'tcx>>,
         pat: &Pattern<'_, 'tcx>,
@@ -1044,23 +1064,6 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         } else {
             DeconstructedPat::new(Constructor::Or, Fields::from_iter(cx, pats), pat_ty)
         }
-    }
-
-    pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
-        // If the context type is an union type, each pattern should be one/some of
-        // member(s) of it.
-        // TODO: can we remove to_union_variants()?
-        if let Some(Type::Union(member_types)) = pat.context_ty() {
-            match pat.kind() {
-                PatternKind::Or(_) => {}
-                PatternKind::Var(_) | PatternKind::Wildcard if pat.explicit_ty().is_some() => {}
-                _ => {
-                    return Self::to_union_variants(cx, member_types.iter().copied(), pat);
-                }
-            }
-        }
-
-        Self::_from_pat(cx, pat)
     }
     fn _from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
         let pat_ty = pat.expect_ty().bottom_ty();
@@ -1728,7 +1731,7 @@ fn is_useful<'p, 'tcx>(
 fn compute_match_usefulness<'p, 'tcx>(
     cx: &MatchCheckContext<'p, 'tcx>,
     arms: &[DeconstructedMatchArm<'p, 'tcx>],
-    src_ty: &'tcx Type<'tcx>,
+    head_ty: &'tcx Type<'tcx>,
 ) -> UsefulnessReport<'p, 'tcx> {
     let mut matrix = Matrix::empty();
     let arm_usefulness: Vec<_> = arms
@@ -1753,7 +1756,7 @@ fn compute_match_usefulness<'p, 'tcx>(
         })
         .collect();
 
-    let wild_pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(src_ty));
+    let wild_pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
     let v = PatStack::from_pattern(wild_pattern);
     let usefulness = is_useful(cx, &matrix, &v, ArmType::FakeExtraWildcard, false, true);
     let non_exhaustiveness_witnesses = match usefulness {

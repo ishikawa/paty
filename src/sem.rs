@@ -401,6 +401,7 @@ fn analyze_explicit_type_annotations_pattern<'nd, 'tcx>(
     }
 }
 
+#[allow(clippy::ptr_arg)]
 fn analyze_decl<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     decl: &syntax::Declaration<'nd, 'tcx>,
@@ -1144,7 +1145,7 @@ fn analyze_expr<'nd, 'tcx>(
 // This is the case when the pattern is an Or-pattern or the type is a union type.
 // The analysis is divided into two parts:
 //
-// - Function to analyze one combination of pattern and type each
+// - Analyze one combination of pattern and type each
 // - Generate a combination of pattern and type and try it with the function above
 fn analyze_pattern<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
@@ -1155,7 +1156,30 @@ fn analyze_pattern<'nd, 'tcx>(
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) -> bool {
-    let mut bindings: Option<HashMap<String, &Type>> = None;
+    let passed = _analyze_pattern_type_inference(
+        tcx,
+        pat,
+        expected_ty,
+        vars,
+        functions,
+        named_types,
+        errors,
+    );
+
+    // To catch as many semantic errors as possible, we invoke this function
+    // regardless of whether the type check succeeded or not.
+    _analyze_pattern_bind_vars(tcx, pat, vars, functions, named_types, errors);
+    passed
+}
+fn _analyze_pattern_type_inference<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &syntax::Pattern<'nd, 'tcx>,
+    expected_ty: &'tcx Type<'tcx>,
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &[&syntax::Function<'nd, 'tcx>],
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Errors<'tcx>,
+) -> bool {
     let mut sub_errors = Errors::new();
 
     // Expand union type
@@ -1181,8 +1205,6 @@ fn analyze_pattern<'nd, 'tcx>(
     // - all new variable must be bound in all sub-patterns.
     // - errors occurred in the last sub-pattern are left.
     for sub_pat in sub_pats.iter() {
-        let mut sub_vars = Scope::from_parent(vars);
-
         // Variable pattern matches the union type itself.
         let passed = if matches!(sub_pat.kind(), PatternKind::Var(_) | PatternKind::Wildcard) {
             let assumed_pat_ty = sub_pat.explicit_ty().unwrap_or(expected_ty);
@@ -1201,16 +1223,8 @@ fn analyze_pattern<'nd, 'tcx>(
                     sub_pat,
                 );
                 false
-            } else if unify_type(assumed_pat_ty, *sub_pat, errors) {
-                // TODO: Separate pattern inference and variable binding.
-                // Create a binding
-                if let PatternKind::Var(name) = sub_pat.kind() {
-                    let binding = Binding::new(name.into(), sub_pat.expect_ty());
-                    sub_vars.insert(binding);
-                }
-                true
             } else {
-                false
+                unify_type(assumed_pat_ty, *sub_pat, errors)
             }
         } else {
             // TODO: Patterns for union types should be tried for as many type candidates possible.
@@ -1220,30 +1234,34 @@ fn analyze_pattern<'nd, 'tcx>(
             for expected_ty_candidate in expected_ty_candidates.iter() {
                 sub_errors = Errors::new();
 
-                if _analyze_pattern(
-                    tcx,
-                    sub_pat,
-                    expected_ty_candidate,
-                    &mut sub_vars,
-                    functions,
-                    named_types,
-                    &mut sub_errors,
-                ) {
-                    passed = true;
-                    break;
-                }
-                sub_vars = Scope::from_parent(vars);
+                passed = passed
+                    || _analyze_pattern_type_inference_one(
+                        tcx,
+                        sub_pat,
+                        expected_ty_candidate,
+                        vars,
+                        functions,
+                        named_types,
+                        &mut sub_errors,
+                    );
             }
 
             passed
         };
 
         // eprintln!("... ... passed({}): pattern = {}", passed, sub_pat);
+        all_sub_pats_passed = passed && all_sub_pats_passed;
+
+        // TODO: always check this.
+        // if let Some(context_ty) = sub_pat.context_ty() {
+        //     sub_pat.assign_context_ty(tcx.union([context_ty, expected_ty]));
+        // } else {
+        //     sub_pat.assign_context_ty(expected_ty);
+        // }
 
         // Before move on the next pattern, validate new bindings and
         // merge these into the scope on the pattern.
         if passed {
-            // TODO: always check this.
             // Save context type
             // If the pattern is or-pattern, its sub-pattern may already have
             // a context pattern. e.g:
@@ -1255,47 +1273,6 @@ fn analyze_pattern<'nd, 'tcx>(
             } else {
                 sub_pat.assign_context_ty(expected_ty);
             }
-            // dbg!(sub_pat);
-
-            // check new variables.
-            let mut new_bindings: HashMap<_, _> = sub_vars
-                .bindings_iter()
-                .map(|(name, b)| (name.to_string(), b.ty()))
-                .collect();
-            // eprintln!("... ... unified: bindings = {:#?}", new_bindings);
-
-            if let Some(bindings) = bindings {
-                let unique_names: Vec<_> = bindings
-                    .keys()
-                    .chain(new_bindings.keys())
-                    .unique()
-                    .cloned()
-                    .collect();
-
-                for name in unique_names {
-                    match (bindings.get(&name), new_bindings.get_mut(&name)) {
-                        (None, Some(_)) | (Some(_), None) => {
-                            // bound variable not found in this sub-pattern.
-                            errors.push(
-                                SemanticErrorKind::UnboundVariableInSubPattern {
-                                    name: name.to_string(),
-                                },
-                                sub_pat,
-                            );
-                        }
-                        (Some(expected_ty), Some(actual_ty)) => {
-                            // Variables with the same name in multiple patterns are introduced in
-                            // different types. In this case, they are discriminated as union types.
-                            *actual_ty = tcx.union([*expected_ty, *actual_ty]);
-                        }
-                        (None, None) => unreachable!(),
-                    }
-                }
-            }
-
-            bindings = Some(new_bindings);
-        } else {
-            all_sub_pats_passed = false;
         }
     }
 
@@ -1305,23 +1282,6 @@ fn analyze_pattern<'nd, 'tcx>(
     // Every sub-pattern should be type checked.
     if !all_sub_pats_passed {
         return false;
-    }
-
-    // TODO: Separate pattern inference and variable binding.
-    // Add bindings introduced in sub-patterns.
-    if let Some(bindings) = bindings {
-        for (var_name, var_ty) in bindings {
-            // You can not introduce duplicate variables in the pattern.
-            if vars.get(&var_name).is_some() {
-                errors.push(
-                    SemanticErrorKind::DuplicateBoundingPattern { name: var_name },
-                    pat,
-                );
-            } else {
-                let binding = Binding::new(var_name, var_ty);
-                vars.insert(binding);
-            }
-        }
     }
 
     // Assign type for or-pattern
@@ -1336,7 +1296,7 @@ fn analyze_pattern<'nd, 'tcx>(
     }
 }
 // Returns true if no type error occurred.
-fn _analyze_pattern<'nd, 'tcx>(
+fn _analyze_pattern_type_inference_one<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
@@ -1387,13 +1347,21 @@ fn _analyze_pattern<'nd, 'tcx>(
                 return false;
             };
 
-            if !patterns
-                .iter()
-                .zip(expected_elem_types.iter())
-                .all(|(sub_pat, sub_ty)| {
-                    analyze_pattern(tcx, sub_pat, sub_ty, vars, functions, named_types, errors)
-                })
-            {
+            // We have to run the type check for every elements in a tuple,
+            if !patterns.iter().zip(expected_elem_types.iter()).fold(
+                true,
+                |acc, (sub_pat, sub_ty)| {
+                    acc && _analyze_pattern_type_inference(
+                        tcx,
+                        sub_pat,
+                        sub_ty,
+                        vars,
+                        functions,
+                        named_types,
+                        errors,
+                    )
+                },
+            ) {
                 return false;
             }
 
@@ -1443,7 +1411,9 @@ fn _analyze_pattern<'nd, 'tcx>(
             }
 
             // Fields check
-            // All fields must be covered or omitted by a spread pattern.
+            // All fields must be covered or omitted by a spread pattern. To catch as
+            // many errors as possible, iterates all fields even if an error is occurred.
+            let mut has_error = false;
             let pattern_fields = struct_pat.fields();
             let struct_fields = struct_ty.fields();
 
@@ -1463,21 +1433,24 @@ fn _analyze_pattern<'nd, 'tcx>(
                                         },
                                         field,
                                     );
-                                } else {
-                                    analyze_pattern(
-                                        tcx,
-                                        field.pattern(),
-                                        f.ty().bottom_ty(),
-                                        vars,
-                                        functions,
-                                        named_types,
-                                        errors,
-                                    );
+                                    has_error = true;
+                                } else if _analyze_pattern_type_inference(
+                                    tcx,
+                                    field.pattern(),
+                                    f.ty().bottom_ty(),
+                                    vars,
+                                    functions,
+                                    named_types,
+                                    errors,
+                                ) {
                                     consumed_field_names.insert(field.name());
+                                } else {
+                                    has_error = true;
                                 }
                             }
                             Err(kind) => {
                                 errors.push(kind, field);
+                                has_error = true;
                             }
                         }
                     }
@@ -1489,6 +1462,7 @@ fn _analyze_pattern<'nd, 'tcx>(
                                 },
                                 spread,
                             );
+                            has_error = true;
                         }
 
                         // Assign anonymous struct type to spread pattern.
@@ -1498,25 +1472,6 @@ fn _analyze_pattern<'nd, 'tcx>(
                             .cloned()
                             .collect();
                         spread.assign_ty(tcx.anon_struct_ty(rest_fields));
-
-                        if let Some(spread_name) = spread.name() {
-                            // Bind rest fields to the name.
-                            if vars.lookup(spread_name).is_some() {
-                                errors.push(
-                                    SemanticErrorKind::DuplicateBoundingPattern {
-                                        name: spread_name.to_string(),
-                                    },
-                                    spread,
-                                );
-                            } else {
-                                // TODO: Separate pattern inference and variable binding.
-                                // New binding with rest fields.
-                                let binding =
-                                    Binding::new(spread_name.to_string(), spread.expect_ty());
-                                vars.insert(binding);
-                            }
-                        }
-
                         already_spread = true;
                     }
                 }
@@ -1535,6 +1490,11 @@ fn _analyze_pattern<'nd, 'tcx>(
                     },
                     "",
                 );
+                has_error = true;
+            }
+
+            if has_error {
+                return false;
             }
         }
         PatternKind::Var(_) | PatternKind::Wildcard | PatternKind::Or(_) => {
@@ -1560,6 +1520,168 @@ fn _analyze_pattern<'nd, 'tcx>(
         true
     }
 }
+/// Analyze bindings variables in a pattern.
+///
+/// To catch as many semantic errors as possible, we invoke this function
+/// regardless of whether the type check succeeded or not. So don't assume
+/// the type of a pattern is already fixed. Always check `pat.ty().is_some()`.
+fn _analyze_pattern_bind_vars<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &syntax::Pattern<'nd, 'tcx>,
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &[&syntax::Function<'nd, 'tcx>],
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Errors<'tcx>,
+) {
+    let mut bindings: Option<HashMap<String, &Type>> = None;
+
+    // Expand Or-pattern
+    let mut sub_pats: &[&Pattern<'_, '_>] = &[pat];
+    if let PatternKind::Or(ps) = pat.kind() {
+        sub_pats = ps;
+    }
+
+    // In subsequent patterns
+    // - all new variable must be bound in all sub-patterns.
+    // - errors are collected in all sub patterns
+    for sub_pat in sub_pats.iter() {
+        let mut sub_vars = Scope::from_parent(vars);
+
+        _analyze_pattern_bind_vars_one(tcx, sub_pat, &mut sub_vars, functions, named_types, errors);
+
+        // check new variables.
+        let mut new_bindings: HashMap<_, _> = sub_vars
+            .bindings_iter()
+            .map(|(name, b)| (name.to_string(), b.ty()))
+            .collect();
+
+        if let Some(bindings) = bindings {
+            let unique_names: Vec<_> = bindings
+                .keys()
+                .chain(new_bindings.keys())
+                .unique()
+                .cloned()
+                .collect();
+
+            for name in unique_names {
+                match (bindings.get(&name), new_bindings.get_mut(&name)) {
+                    (None, Some(_)) | (Some(_), None) => {
+                        // bound variable not found in this sub-pattern.
+                        errors.push(
+                            SemanticErrorKind::UnboundVariableInSubPattern {
+                                name: name.to_string(),
+                            },
+                            sub_pat,
+                        );
+                    }
+                    (Some(expected_ty), Some(actual_ty)) => {
+                        // Variables with the same name in multiple patterns are introduced in
+                        // different types. In this case, they are discriminated as union types.
+                        *actual_ty = tcx.union([*expected_ty, *actual_ty]);
+                    }
+                    (None, None) => unreachable!(),
+                }
+            }
+        }
+
+        bindings = Some(new_bindings);
+    }
+
+    // Add bindings introduced in sub-patterns.
+    if let Some(bindings) = bindings {
+        for (var_name, var_ty) in bindings {
+            // You can not introduce duplicate variables in the pattern.
+            if vars.get(&var_name).is_some() {
+                errors.push(
+                    SemanticErrorKind::DuplicateBoundingPattern { name: var_name },
+                    pat,
+                );
+            } else {
+                let binding = Binding::new(var_name, var_ty);
+                vars.insert(binding);
+            }
+        }
+    }
+}
+// Returns true if no type error occurred.
+fn _analyze_pattern_bind_vars_one<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &syntax::Pattern<'nd, 'tcx>,
+    vars: &mut Scope<'_, 'tcx>,
+    functions: &[&syntax::Function<'nd, 'tcx>],
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Errors<'tcx>,
+) {
+    // Infer the type of pattern from its values.
+    match pat.kind() {
+        PatternKind::Integer(_)
+        | PatternKind::Boolean(_)
+        | PatternKind::String(_)
+        | PatternKind::Range { .. } => {}
+        PatternKind::Tuple(fs) => {
+            for sub_pat in fs {
+                _analyze_pattern_bind_vars(tcx, sub_pat, vars, functions, named_types, errors);
+            }
+        }
+        PatternKind::Struct(struct_pat) => {
+            // Struct type check
+            let struct_ty = if let Some(struct_ty) = pat.ty().and_then(|ty| ty.struct_ty()) {
+                struct_ty
+            } else {
+                return;
+            };
+
+            // Fields check
+            // All fields must be covered or omitted by a spread pattern.
+            let pattern_fields = struct_pat.fields();
+            for pat_field_or_spread in pattern_fields {
+                match pat_field_or_spread {
+                    syntax::PatternFieldOrSpread::PatternField(field) => {
+                        if get_struct_field(struct_ty, field.name()).is_ok() {
+                            _analyze_pattern_bind_vars(
+                                tcx,
+                                field.pattern(),
+                                vars,
+                                functions,
+                                named_types,
+                                errors,
+                            );
+                        }
+                    }
+                    syntax::PatternFieldOrSpread::Spread(spread) => {
+                        if let Some(spread_name) = spread.name() {
+                            // Bind rest fields to the name.
+                            if vars.lookup(spread_name).is_none() {
+                                if let Some(spread_ty) = spread.ty() {
+                                    let binding = Binding::new(spread_name.to_string(), spread_ty);
+                                    vars.insert(binding);
+                                }
+                            } else {
+                                errors.push(
+                                    SemanticErrorKind::DuplicateBoundingPattern {
+                                        name: spread_name.to_string(),
+                                    },
+                                    spread,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        PatternKind::Var(name) => {
+            if let Some(pat_ty) = pat.ty() {
+                let binding = Binding::new(name.into(), pat_ty);
+                vars.insert(binding);
+            }
+        }
+        PatternKind::Wildcard => {}
+        PatternKind::Or(_) => {
+            unreachable!("The pattern shouldn't be handled here. {:#?}", pat)
+        }
+    };
+}
+
 fn analyze_let_pattern<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &syntax::Pattern<'nd, 'tcx>,
@@ -2447,27 +2569,29 @@ mod tests_analyze_pattern {
         let head_ty = tcx.union([tuple_ty1, tuple_ty2]);
 
         // pattern :: (x, y)
-        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
-        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
-        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
+        let var_x = Pattern::new(PatternKind::Var("x".to_string()));
+        let var_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
         assert!(_analyze_pattern_1(tcx, &pat, head_ty));
-
-        // sub-pattern :: int64 | string
-        let int_str_ty = tcx.union([tcx.int64(), tcx.string()]);
 
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.context_ty().unwrap(), head_ty);
         assert_eq!(pat.expect_ty(), head_ty);
 
-        assert!(var1.ty().is_some());
-        assert!(var1.explicit_ty().is_none());
-        assert_eq!(var1.expect_ty(), int_str_ty);
-        assert_eq!(var1.context_ty().unwrap(), int_str_ty);
+        // sub-pattern :: int64 | string
+        let int_str_ty = tcx.union([tcx.int64(), tcx.string()]);
 
-        assert!(var2.ty().is_some());
-        assert!(var2.explicit_ty().is_none());
-        assert_eq!(var2.expect_ty(), int_str_ty);
-        assert_eq!(var2.context_ty().unwrap(), int_str_ty);
+        // x: int64 | string
+        assert!(var_x.ty().is_some());
+        assert!(var_x.explicit_ty().is_none());
+        assert_eq!(var_x.expect_ty(), int_str_ty);
+        assert_eq!(var_x.context_ty().unwrap(), int_str_ty);
+
+        // y: int64 | string
+        assert!(var_y.ty().is_some());
+        assert!(var_y.explicit_ty().is_none());
+        assert_eq!(var_y.expect_ty(), int_str_ty);
+        assert_eq!(var_y.context_ty().unwrap(), int_str_ty);
     }
 }

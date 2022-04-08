@@ -276,6 +276,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         self.push_expr(expr, tmp_vars, stmts)
     }
 
+    #[allow(clippy::ptr_arg)]
     fn push_expr_kind(
         &self,
         kind: ExprKind<'a, 'tcx>,
@@ -286,6 +287,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
         self.push_expr_alloc(Expr::new(kind, expr_ty), tmp_vars, stmts)
     }
 
+    #[allow(clippy::ptr_arg)]
     fn build_decl(
         &self,
         decl: &syntax::Declaration<'nd, 'tcx>,
