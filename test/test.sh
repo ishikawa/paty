@@ -1554,6 +1554,16 @@ def foo(n: 1 | 2)
 end
 foo(1)
 foo(2)'
+assert '1
+2' '
+def foo(n: 1 | 2)
+  case n
+  when 1 | 2
+    puts(n)
+  end
+end
+foo(1)
+foo(2)'
 assert '1 2
 three 4' '
   type T = (int64, int64) | (string, int64)

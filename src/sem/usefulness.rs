@@ -19,6 +19,7 @@ use typed_arena::Arena;
 
 #[derive(Clone, Copy)]
 pub struct MatchCheckContext<'p, 'tcx> {
+    pub head_ty: &'tcx Type<'tcx>,
     pub pattern_arena: &'p Arena<DeconstructedPat<'p, 'tcx>>,
     pub tree_pattern_arena: &'p Arena<Pattern<'p, 'tcx>>,
 }
@@ -926,7 +927,7 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
     /// Returns the list of patterns.
     pub fn iter_patterns<'a>(
         &'a self,
-    ) -> impl Iterator<Item = &'p DeconstructedPat<'p, 'tcx>> + 'a {
+    ) -> impl ExactSizeIterator<Item = &'p DeconstructedPat<'p, 'tcx>> + 'a {
         self.fields.iter()
     }
 }
@@ -1003,8 +1004,8 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         // TODO: can we remove to_union_variants()?
         if let Some(Type::Union(member_types)) = pat.context_ty() {
             match pat.kind() {
-                PatternKind::Or(_) => {}
                 PatternKind::Var(_) | PatternKind::Wildcard if pat.explicit_ty().is_some() => {}
+                PatternKind::Or(_) => {}
                 _ => {
                     return Self::_from_pat_to_union_variants(
                         cx,
@@ -1305,11 +1306,11 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         cx.tree_pattern_arena.alloc(pat)
     }
 
-    pub(super) fn ctor(&self) -> &Constructor {
+    pub fn ctor(&self) -> &Constructor {
         &self.ctor
     }
 
-    pub(super) fn ty(&self) -> &'tcx Type<'tcx> {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 
@@ -1777,6 +1778,7 @@ pub fn check_match<'p, 'tcx: 'p>(
     let pattern_arena = Arena::default();
     let tree_pattern_arena = Arena::default();
     let cx = MatchCheckContext {
+        head_ty,
         pattern_arena: &pattern_arena,
         tree_pattern_arena: &tree_pattern_arena,
     };
@@ -1969,26 +1971,415 @@ mod tests_int_range {
 #[cfg(test)]
 mod tests_deconstructed_pat {
     use super::*;
+    use crate::ty::{TypeContext, TypedField};
+
+    /// Tests `ctor` is int range (`range`)
+    macro_rules! assert_int_range_ctor {
+        ($ctor:expr, $range:expr) => {
+            assert!(if let Constructor::IntRange(int_range) = $ctor {
+                assert_eq!(*int_range, $range);
+                true
+            } else {
+                false
+            });
+        };
+    }
+
+    /// Tests `ctor` is int range (`n`)
+    macro_rules! assert_int_ctor {
+        ($ctor:expr, $n:expr) => {
+            let n = $n;
+            assert_int_range_ctor!(
+                $ctor,
+                IntRange::from_range(n, n, &Type::Int64, RangeEnd::Included)
+            );
+        };
+    }
+
+    /// Tests `ctor` is str constructor.
+    macro_rules! assert_str_ctor {
+        ($ctor:expr, $s:expr) => {
+            assert!(if let Constructor::Str(s) = $ctor {
+                assert_eq!(s, $s);
+                true
+            } else {
+                false
+            });
+        };
+    }
+
+    /// Tests `ctor` is variant constructor.
+    macro_rules! assert_variant_ctor {
+        ($ctor:expr, $tag:expr) => {
+            assert!(if let Constructor::Variant(VariantIdx(idx)) = $ctor {
+                assert_eq!(*idx, $tag);
+                true
+            } else {
+                false
+            });
+        };
+    }
+
+    #[derive(Default)]
+    struct TestArena<'p, 'tcx> {
+        pattern_arena: Arena<DeconstructedPat<'p, 'tcx>>,
+        tree_pattern_arena: Arena<Pattern<'p, 'tcx>>,
+        type_arena: Arena<Type<'tcx>>,
+    }
 
     #[test]
-    fn from_pat() {
-        let pattern_arena = Arena::default();
-        let tree_pattern_arena = Arena::default();
+    fn int_range_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
         let cx = MatchCheckContext {
-            pattern_arena: &pattern_arena,
-            tree_pattern_arena: &tree_pattern_arena,
+            head_ty: tcx.int64(),
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
         };
-        let kind = PatternKind::Range {
+        let pat = Pattern::new(PatternKind::Range {
             lo: 1,
             hi: 2,
             end: RangeEnd::Included,
-        };
-        let pat = Pattern::new(kind);
-        pat.assign_ty(&Type::Int64);
-        pat.assign_context_ty(&Type::Int64);
-        let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
+        });
+        pat.assign_ty(tcx.int64());
+        pat.assign_context_ty(tcx.int64());
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
 
-        assert_eq!(dc_pat.ty(), &Type::Int64);
+        assert_int_range_ctor!(
+            de_pat.ctor(),
+            IntRange::from_range(1, 2, tcx.int64(), RangeEnd::Included)
+        );
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+        assert_eq!(de_pat.ty(), tcx.int64());
+    }
+
+    #[test]
+    fn literal_int_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let cx = MatchCheckContext {
+            head_ty: tcx.int64(),
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+        let pat = Pattern::new(PatternKind::Integer(1));
+        pat.assign_ty(tcx.literal_int64(1));
+        pat.assign_context_ty(tcx.int64());
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+
+        assert_int_ctor!(de_pat.ctor(), 1);
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+        assert_eq!(de_pat.ty(), tcx.literal_int64(1));
+    }
+
+    #[test]
+    fn literal_bool_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let cx = MatchCheckContext {
+            head_ty: tcx.boolean(),
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+        let pat = Pattern::new(PatternKind::Boolean(false));
+        pat.assign_ty(tcx.literal_boolean(false));
+        pat.assign_context_ty(tcx.boolean());
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+
+        assert_int_range_ctor!(
+            de_pat.ctor(),
+            IntRange::from_range(0, 0, tcx.boolean(), RangeEnd::Included)
+        );
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+        assert_eq!(de_pat.ty(), tcx.literal_boolean(false));
+    }
+
+    #[test]
+    fn literal_string_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let cx = MatchCheckContext {
+            head_ty: tcx.string(),
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        let pat_ty = tcx.literal_string("A".into());
+        let pat = Pattern::new(PatternKind::String("A".into()));
+        pat.assign_ty(pat_ty);
+        pat.assign_context_ty(tcx.string());
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+
+        assert_str_ctor!(de_pat.ctor(), "A");
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+        assert_eq!(de_pat.ty(), pat_ty);
+    }
+
+    #[test]
+    fn tuple_int_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let head_ty = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let cx = MatchCheckContext {
+            head_ty,
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        let one = Pattern::new(PatternKind::Integer(1));
+        let two = Pattern::new(PatternKind::Integer(2));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&one, &two]));
+
+        one.assign_ty(tcx.literal_int64(1));
+        one.assign_context_ty(tcx.int64());
+
+        two.assign_ty(tcx.literal_int64(2));
+        two.assign_context_ty(tcx.int64());
+
+        let pat_ty = tcx.tuple(vec![one.expect_ty(), two.expect_ty()]);
+        pat.assign_ty(pat_ty);
+        pat.assign_context_ty(tcx.tuple(vec![tcx.int64(), tcx.int64()]));
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+        assert!(matches!(de_pat.ctor(), Constructor::Single));
+        assert_eq!(de_pat.ty(), pat_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert_int_ctor!(fields[0].ctor(), 1);
+        assert_int_ctor!(fields[1].ctor(), 2);
+    }
+
+    #[test]
+    fn struct_int_str_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let struct_ty = tcx.struct_ty(
+            "T".into(),
+            vec![
+                TypedField::new("x".into(), tcx.int64()),
+                TypedField::new("y".into(), tcx.string()),
+            ],
+        );
+        let cx = MatchCheckContext {
+            head_ty: struct_ty,
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern
+        let field1 = Pattern::new(PatternKind::Integer(3));
+        let field2 = Pattern::new(PatternKind::String("three".into()));
+        let pat = Pattern::new(PatternKind::Struct(StructPattern::from_name_and_fields(
+            "T".into(),
+            [
+                PatternField::new("x".into(), &field1),
+                PatternField::new("y".into(), &field2),
+            ],
+        )));
+
+        field1.assign_ty(tcx.literal_int64(3));
+        field1.assign_context_ty(tcx.int64());
+        field2.assign_ty(tcx.literal_string("three".into()));
+        field2.assign_context_ty(tcx.string());
+
+        let pat_ty = struct_ty;
+
+        pat.assign_ty(pat_ty);
+        pat.assign_context_ty(pat_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+        assert!(matches!(de_pat.ctor(), Constructor::Single));
+        assert_eq!(de_pat.ty(), pat_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert_int_ctor!(fields[0].ctor(), 3);
+        assert_str_ctor!(fields[1].ctor(), "three");
+    }
+
+    #[test]
+    fn var_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: int64
+        let cx = MatchCheckContext {
+            head_ty: tcx.int64(),
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = x
+        let pat = Pattern::new(PatternKind::Var("x".into()));
+        let pat_ty = tcx.int64();
+
+        pat.assign_ty(pat_ty);
+        pat.assign_context_ty(pat_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+        assert!(matches!(de_pat.ctor(), Constructor::Wildcard));
+        assert_eq!(de_pat.ty(), pat_ty);
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+    }
+
+    #[test]
+    fn head_tuple_int_int_pat_tuple_var_var() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: (int64, int64)
+        let tuple_ty = tcx.tuple(vec![tcx.int64(), tcx.string()]);
+        let cx = MatchCheckContext {
+            head_ty: tuple_ty,
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = (x, y)
+        let field1 = Pattern::new(PatternKind::Var("x".into()));
+        let field2 = Pattern::new(PatternKind::Var("y".into()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&field1, &field2]));
+
+        field1.assign_ty(tcx.int64());
+        field1.assign_context_ty(tcx.int64());
+
+        field2.assign_ty(tcx.string());
+        field2.assign_context_ty(tcx.string());
+
+        let pat_ty = tcx.tuple(vec![field1.expect_ty(), field2.expect_ty()]);
+        pat.assign_ty(pat_ty);
+        pat.assign_context_ty(tcx.tuple(vec![tcx.int64(), tcx.string()]));
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+        assert!(matches!(de_pat.ctor(), Constructor::Single));
+        assert_eq!(de_pat.ty(), pat_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert!(matches!(fields[0].ctor(), Constructor::Wildcard));
+        assert_eq!(fields[0].fields.iter_patterns().len(), 0);
+
+        assert!(matches!(fields[1].ctor(), Constructor::Wildcard));
+        assert_eq!(fields[1].fields.iter_patterns().len(), 0);
+    }
+
+    #[test]
+    fn head_tuple_int_int_pat_var() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: (int64, int64)
+        let tuple_ty = tcx.tuple(vec![tcx.int64(), tcx.string()]);
+        let cx = MatchCheckContext {
+            head_ty: tuple_ty,
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = x
+        let pat = Pattern::new(PatternKind::Var("x".into()));
+        pat.assign_ty(tuple_ty);
+        pat.assign_context_ty(tuple_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+        assert!(matches!(de_pat.ctor(), Constructor::Wildcard));
+        assert_eq!(de_pat.ty(), tuple_ty);
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+    }
+
+    #[test]
+    fn head_tuple_struct_int_struct_str_pat_tuple_var_var() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // struct T1 { x: int64 }
+        // struct T2 { x: string }
+        // head: (T1, T2)
+        let struct_t1_ty =
+            tcx.struct_ty("T1".into(), vec![TypedField::new("x".into(), tcx.int64())]);
+        let struct_t2_ty =
+            tcx.struct_ty("T2".into(), vec![TypedField::new("x".into(), tcx.string())]);
+        let tuple_ty = tcx.tuple(vec![struct_t1_ty, struct_t2_ty]);
+
+        let cx = MatchCheckContext {
+            head_ty: tuple_ty,
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = (x, y)
+        let var_x = Pattern::new(PatternKind::Var("x".into()));
+        let var_y = Pattern::new(PatternKind::Var("y".into()));
+        var_x.assign_ty(struct_t1_ty);
+        var_x.assign_context_ty(struct_t1_ty);
+        var_y.assign_ty(struct_t2_ty);
+        var_y.assign_context_ty(struct_t2_ty);
+
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
+        pat.assign_ty(tuple_ty);
+        pat.assign_context_ty(tuple_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+        assert!(matches!(de_pat.ctor(), Constructor::Single));
+        assert_eq!(de_pat.ty(), tuple_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert!(matches!(fields[0].ctor(), Constructor::Wildcard));
+        assert_eq!(fields[0].fields.iter_patterns().len(), 0);
+
+        assert!(matches!(fields[1].ctor(), Constructor::Wildcard));
+        assert_eq!(fields[1].fields.iter_patterns().len(), 0);
+    }
+
+    #[test]
+    fn head_union_one_two_pat_or_one_two() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: 1 | 2
+        let head_ty = tcx.union([tcx.literal_int64(1), tcx.literal_int64(2)]);
+
+        let cx = MatchCheckContext {
+            head_ty,
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = 1 | 2
+        let one = Pattern::new(PatternKind::Integer(1));
+        let two = Pattern::new(PatternKind::Integer(2));
+        one.assign_ty(tcx.literal_int64(1));
+        one.assign_context_ty(head_ty);
+        two.assign_ty(tcx.literal_int64(2));
+        two.assign_context_ty(head_ty);
+
+        let pat = Pattern::new(PatternKind::Or(vec![&one, &two]));
+        pat.assign_ty(head_ty);
+        pat.assign_context_ty(head_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat);
+        assert!(matches!(de_pat.ctor(), Constructor::Or));
+        assert_eq!(de_pat.ty(), head_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert_variant_ctor!(fields[0].ctor(), 0);
+        assert_variant_ctor!(fields[1].ctor(), 1);
+
+        let fields0: Vec<_> = fields[0].fields.iter_patterns().collect();
+        assert_eq!(fields0.len(), 1);
+        assert_int_ctor!(fields0[0].ctor(), 1);
+
+        let fields1: Vec<_> = fields[1].fields.iter_patterns().collect();
+        assert_eq!(fields1.len(), 1);
+        assert_int_ctor!(fields1[0].ctor(), 2);
     }
 }
 
