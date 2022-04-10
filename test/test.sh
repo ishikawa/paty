@@ -1358,7 +1358,7 @@ assert '100 200
     (int64, V3, int64)
   def foo(t: T)
     case t
-    when (x: int64, V1 { value })
+    when (x: int64, { value })
       puts(x, value)
     else
       puts(0)

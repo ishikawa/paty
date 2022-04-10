@@ -579,42 +579,14 @@ fn analyze_expr<'nd, 'tcx>(
         }
         syntax::ExprKind::Struct(struct_value) => {
             if let Some(struct_name) = struct_value.name() {
-                let (expected_ty, struct_ty) = match get_struct_ty(tcx, struct_name, named_types) {
-                    Ok(struct_ty) => struct_ty,
-                    Err(err) => {
-                        errors.push(err, expr);
-                        return;
-                    }
-                };
-
-                // We don't permit initialize an anonymous struct with type alias
-                // because it makes difficult to understand code. Only regular
-                // struct can be initialized with named initializer.
-                //
-                // The following code is illegal:
-                //
-                //    type T = { value: int64 }
-                //    t = T { value: 1000 }
-                //
-                // It should be written as:
-                //
-                //    type T = { value: int64 }
-                //    t = { value: 1000 }
-                //
-                // or:
-                //
-                //    struct T { value: int64 }
-                //    type S = T
-                //    t = S { value: 1000 }
-                if struct_ty.name().is_none() {
-                    errors.push(
-                        SemanticErrorKind::InitializeAnonymousStructWithTypeAlias {
-                            alias: struct_name.to_string(),
-                        },
-                        expr,
-                    );
-                    return;
-                }
+                let (expected_ty, struct_ty) =
+                    match ensure_named_struct_ty_exists(tcx, struct_name, named_types) {
+                        Ok(struct_ty) => struct_ty,
+                        Err(err) => {
+                            errors.push(err, expr);
+                            return;
+                        }
+                    };
 
                 unify_type(expected_ty, expr, errors);
 
@@ -1156,22 +1128,203 @@ fn analyze_pattern<'nd, 'tcx>(
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) -> bool {
-    let passed = _analyze_pattern_type_inference(
-        tcx,
-        pat,
-        expected_ty,
-        vars,
-        functions,
-        named_types,
-        errors,
-    );
+    _analyze_pattern_type_inference(tcx, pat);
+
+    let passed = _analyze_pattern_explicit_type(tcx, pat, named_types, errors)
+        && _analyze_pattern_context_type(
+            tcx,
+            pat,
+            expected_ty,
+            vars,
+            functions,
+            named_types,
+            errors,
+        );
 
     // To catch as many semantic errors as possible, we invoke this function
     // regardless of whether the type check succeeded or not.
     _analyze_pattern_bind_vars(tcx, pat, vars, functions, named_types, errors);
     passed
 }
+/// Assign an obvious type from a pattern.
 fn _analyze_pattern_type_inference<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &syntax::Pattern<'nd, 'tcx>,
+) {
+    match pat.kind() {
+        &PatternKind::Integer(n) => {
+            pat.assign_ty(tcx.literal_int64(n));
+        }
+        &PatternKind::Boolean(b) => {
+            pat.assign_ty(tcx.literal_boolean(b));
+        }
+        PatternKind::String(s) => {
+            pat.assign_ty(tcx.literal_string(s.clone()));
+        }
+        PatternKind::Range { .. } => {
+            pat.assign_ty(tcx.int64());
+        }
+        PatternKind::Tuple(fs) => {
+            for sub_pat in fs {
+                _analyze_pattern_type_inference(tcx, sub_pat);
+            }
+        }
+        PatternKind::Struct(struct_pat) => {
+            for field_or_spread in struct_pat.fields() {
+                if let syntax::PatternFieldOrSpread::PatternField(field) = field_or_spread {
+                    _analyze_pattern_type_inference(tcx, field.pattern());
+                }
+            }
+        }
+        PatternKind::Or(sub_pats) => {
+            for sub_pat in sub_pats {
+                _analyze_pattern_type_inference(tcx, sub_pat);
+            }
+        }
+        PatternKind::Var(_) | PatternKind::Wildcard => {}
+    }
+}
+/// Assign a type to a pattern from an explicit annotation or a struct definition.
+fn _analyze_pattern_explicit_type<'nd, 'tcx>(
+    tcx: TypeContext<'tcx>,
+    pat: &syntax::Pattern<'nd, 'tcx>,
+    named_types: &HashMap<String, &'tcx Type<'tcx>>,
+    errors: &mut Errors<'tcx>,
+) -> bool {
+    match pat.kind() {
+        PatternKind::Tuple(sub_pats) | PatternKind::Or(sub_pats) => {
+            if !sub_pats.iter().fold(true, |acc, sub_pat| {
+                _analyze_pattern_explicit_type(tcx, sub_pat, named_types, errors) && acc
+            }) {
+                return false;
+            }
+        }
+        PatternKind::Struct(struct_pat) => {
+            // If the struct pattern has a struct name, lookup a type from the namespace.
+            if let Some(struct_name) = struct_pat.name() {
+                match ensure_named_struct_ty_exists(tcx, struct_name, named_types) {
+                    Ok((ty, _)) => {
+                        unify_type(ty, pat, errors);
+                    }
+                    Err(err) => {
+                        errors.push(err, pat);
+                        return false;
+                    }
+                }
+            }
+            if !struct_pat
+                .fields()
+                .iter()
+                .fold(true, |acc, field_or_spread| {
+                    if let syntax::PatternFieldOrSpread::PatternField(field) = field_or_spread {
+                        _analyze_pattern_explicit_type(tcx, field.pattern(), named_types, errors)
+                            && acc
+                    } else {
+                        acc
+                    }
+                })
+            {
+                return false;
+            }
+        }
+        PatternKind::Integer(_)
+        | PatternKind::Boolean(_)
+        | PatternKind::String(_)
+        | PatternKind::Range { .. }
+        | PatternKind::Var(_)
+        | PatternKind::Wildcard => {}
+    }
+
+    // Explicit type annotation
+    if let Some(explicit_ty) = pat.explicit_ty() {
+        if !unify_type(explicit_ty, pat, errors) {
+            return false;
+        }
+
+        // carry explicit types to sub patterns.
+        match pat.kind() {
+            PatternKind::Tuple(fs) => match explicit_ty.bottom_ty().tuple_ty() {
+                Some(sub_explicit_tys) if sub_explicit_tys.len() == fs.len() => fs
+                    .iter()
+                    .zip(sub_explicit_tys)
+                    .fold(true, |acc, (sub_pat, sub_explicit_ty)| {
+                        if unify_type(sub_explicit_ty, *sub_pat, errors) {
+                            if sub_pat.explicit_ty().is_none() {
+                                sub_pat.assign_explicit_ty(sub_explicit_ty);
+                            }
+                            acc
+                        } else {
+                            false
+                        }
+                    }),
+                _ => {
+                    errors.push(
+                        SemanticErrorKind::MismatchedType {
+                            expected: explicit_ty,
+                            actual: pattern_to_type(tcx, pat, named_types),
+                        },
+                        pat,
+                    );
+                    false
+                }
+            },
+            PatternKind::Struct(struct_pat) => {
+                if let Some(struct_ty) = explicit_ty.bottom_ty().struct_ty() {
+                    struct_pat
+                        .fields()
+                        .iter()
+                        .fold(true, |acc, pat_field_or_spread| {
+                            if let syntax::PatternFieldOrSpread::PatternField(field) =
+                                pat_field_or_spread
+                            {
+                                match get_struct_field(struct_ty, field.name()) {
+                                    Ok(f) => {
+                                        let sub_pat = field.pattern();
+
+                                        if unify_type(f.ty(), sub_pat, errors) {
+                                            if sub_pat.explicit_ty().is_none() {
+                                                sub_pat.assign_explicit_ty(f.ty());
+                                            }
+                                            acc
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                    Err(kind) => {
+                                        errors.push(kind, field);
+                                        false
+                                    }
+                                }
+                            } else {
+                                acc
+                            }
+                        })
+                } else {
+                    false
+                }
+            }
+            PatternKind::Or(sub_pats) => sub_pats.iter().fold(true, |acc, sub_pat| {
+                if unify_type(explicit_ty, *sub_pat, errors) {
+                    if sub_pat.explicit_ty().is_none() {
+                        sub_pat.assign_explicit_ty(explicit_ty);
+                    }
+                    acc
+                } else {
+                    false
+                }
+            }),
+            PatternKind::Integer(_)
+            | PatternKind::Boolean(_)
+            | PatternKind::String(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Var(_)
+            | PatternKind::Wildcard => true,
+        }
+    } else {
+        true
+    }
+}
+fn _analyze_pattern_context_type<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
@@ -1207,12 +1360,12 @@ fn _analyze_pattern_type_inference<'nd, 'tcx>(
     for sub_pat in sub_pats.iter() {
         // Variable pattern matches the union type itself.
         let passed = if matches!(sub_pat.kind(), PatternKind::Var(_) | PatternKind::Wildcard) {
-            if let Some(explicit_ty) = sub_pat.explicit_ty() {
-                sub_pat.assign_ty(explicit_ty);
-            } else if let Some(ty) = sub_pat.ty() {
-                sub_pat.assign_ty(tcx.union([ty, expected_ty]));
-            } else {
-                sub_pat.assign_ty(expected_ty);
+            if sub_pat.explicit_ty().is_none() {
+                if let Some(ty) = sub_pat.ty() {
+                    sub_pat.assign_ty(tcx.union([ty, expected_ty]));
+                } else {
+                    sub_pat.assign_ty(expected_ty);
+                }
             }
 
             let pat_ty = sub_pat.expect_ty();
@@ -1247,7 +1400,7 @@ fn _analyze_pattern_type_inference<'nd, 'tcx>(
                 // 2. The iteration was the last one and every type check iterations were failed.
                 let mut sub_errors = Errors::new();
 
-                if _analyze_pattern_type_inference_one(
+                if _analyze_pattern_context_type_one(
                     tcx,
                     sub_pat,
                     expected_ty_candidate,
@@ -1271,7 +1424,10 @@ fn _analyze_pattern_type_inference<'nd, 'tcx>(
             passed,
             sub_pat,
             expected_ty,
-            sub_pat.expect_ty()
+            sub_pat
+                .ty()
+                .map(|ty| ty.to_string())
+                .unwrap_or_else(|| "none".into())
         );
         all_sub_pats_passed = passed && all_sub_pats_passed;
 
@@ -1316,7 +1472,7 @@ fn _analyze_pattern_type_inference<'nd, 'tcx>(
     }
 }
 // Returns true if no type error occurred.
-fn _analyze_pattern_type_inference_one<'nd, 'tcx>(
+fn _analyze_pattern_context_type_one<'nd, 'tcx>(
     tcx: TypeContext<'tcx>,
     pat: &syntax::Pattern<'nd, 'tcx>,
     expected_ty: &'tcx Type<'tcx>,
@@ -1332,53 +1488,31 @@ fn _analyze_pattern_type_inference_one<'nd, 'tcx>(
         pat, expected_ty
     );
 
-    // Proceed with type inference assuming that the pattern type is
-    // either explicitly specified or expected.
-    let assumed_pat_ty = pat.explicit_ty().unwrap_or(expected_ty);
-
-    // Infer the type of pattern from its values.
     match pat.kind() {
-        PatternKind::Integer(n) => {
-            unify_type(tcx.literal_int64(*n), pat, errors);
-        }
-        PatternKind::Boolean(b) => {
-            unify_type(tcx.literal_boolean(*b), pat, errors);
-        }
-        PatternKind::String(s) => {
-            unify_type(tcx.literal_string(s.clone()), pat, errors);
-        }
-        PatternKind::Range { .. } => {
-            unify_type(tcx.int64(), pat, errors);
-        }
+        PatternKind::Integer(_)
+        | PatternKind::Boolean(_)
+        | PatternKind::String(_)
+        | PatternKind::Range { .. } => {}
         PatternKind::Tuple(patterns) => {
-            let expected_elem_types = if let Type::Tuple(sub_types) = assumed_pat_ty.bottom_ty() {
-                if sub_types.len() != patterns.len() {
+            let expected_elem_types = match expected_ty.bottom_ty().tuple_ty() {
+                Some(sub_types) if sub_types.len() == patterns.len() => sub_types,
+                _ => {
                     errors.push(
                         SemanticErrorKind::MismatchedType {
-                            expected: assumed_pat_ty,
+                            expected: expected_ty,
                             actual: pattern_to_type(tcx, pat, named_types),
                         },
                         pat,
                     );
                     return false;
                 }
-                sub_types
-            } else {
-                errors.push(
-                    SemanticErrorKind::MismatchedType {
-                        expected: assumed_pat_ty,
-                        actual: pattern_to_type(tcx, pat, named_types),
-                    },
-                    pat,
-                );
-                return false;
             };
 
             // We have to run the type check for every elements in a tuple.
             if !patterns.iter().zip(expected_elem_types.iter()).fold(
                 true,
                 |acc, (sub_pat, sub_ty)| {
-                    let passed = _analyze_pattern_type_inference(
+                    _analyze_pattern_context_type(
                         tcx,
                         sub_pat,
                         sub_ty,
@@ -1386,8 +1520,7 @@ fn _analyze_pattern_type_inference_one<'nd, 'tcx>(
                         functions,
                         named_types,
                         errors,
-                    );
-                    acc && passed
+                    ) && acc
                 },
             ) {
                 return false;
@@ -1400,12 +1533,12 @@ fn _analyze_pattern_type_inference_one<'nd, 'tcx>(
         }
         PatternKind::Struct(struct_pat) => {
             // Struct type check
-            let struct_ty = if let Type::Struct(struct_ty) = assumed_pat_ty.bottom_ty() {
+            let struct_ty = if let Type::Struct(struct_ty) = expected_ty.bottom_ty() {
                 struct_ty
             } else {
                 errors.push(
                     SemanticErrorKind::MismatchedType {
-                        expected: assumed_pat_ty,
+                        expected: expected_ty,
                         actual: pattern_to_type(tcx, pat, named_types),
                     },
                     pat,
@@ -1413,22 +1546,11 @@ fn _analyze_pattern_type_inference_one<'nd, 'tcx>(
                 return false;
             };
 
-            // If the struct pattern has a name, the type it refers must be
-            // same as the expected struct type.
-            if let Some(struct_name) = struct_pat.name() {
-                match get_struct_ty(tcx, struct_name, named_types) {
-                    Ok((ty, _)) => {
-                        unify_type(ty, pat, errors);
-                    }
-                    Err(err) => {
-                        errors.push(err, pat);
-                        return false;
-                    }
-                };
-            } else if struct_ty.name().is_some() {
+            // If the expected struct type has a name, a pattern must have name too.
+            if struct_ty.name().is_some() && struct_pat.name().is_none() {
                 errors.push(
                     SemanticErrorKind::MismatchedType {
-                        expected: assumed_pat_ty,
+                        expected: expected_ty,
                         actual: pattern_to_type(tcx, pat, named_types),
                     },
                     pat,
@@ -1436,7 +1558,7 @@ fn _analyze_pattern_type_inference_one<'nd, 'tcx>(
                 return false;
             }
 
-            if !unify_type(assumed_pat_ty, pat, errors) {
+            if !unify_type(expected_ty, pat, errors) {
                 return false;
             }
 
@@ -1464,7 +1586,7 @@ fn _analyze_pattern_type_inference_one<'nd, 'tcx>(
                                         field,
                                     );
                                     has_error = true;
-                                } else if _analyze_pattern_type_inference(
+                                } else if _analyze_pattern_context_type(
                                     tcx,
                                     field.pattern(),
                                     f.ty().bottom_ty(),
@@ -1994,7 +2116,7 @@ fn narrow_type<'nd, 'tcx>(
     Some(Binding::new(binding_name, narrowed_ty))
 }
 
-fn get_struct_ty<'tcx>(
+fn ensure_named_struct_ty_exists<'tcx>(
     tcx: TypeContext<'tcx>,
     struct_name: &str,
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
@@ -2009,7 +2131,32 @@ fn get_struct_ty<'tcx>(
     };
 
     if let Type::Struct(struct_ty) = expected_ty.bottom_ty() {
-        Ok((expected_ty, struct_ty))
+        // We don't permit initialize an anonymous struct with type alias
+        // because it makes difficult to understand code. Only regular
+        // struct can be initialized with named initializer.
+        //
+        // The following code is illegal:
+        //
+        //    type T = { value: int64 }
+        //    t = T { value: 1000 }
+        //
+        // It should be written as:
+        //
+        //    type T = { value: int64 }
+        //    t = { value: 1000 }
+        //
+        // or:
+        //
+        //    struct T { value: int64 }
+        //    type S = T
+        //    t = S { value: 1000 }
+        if struct_ty.name().is_none() {
+            Err(SemanticErrorKind::InitializeAnonymousStructWithTypeAlias {
+                alias: struct_name.to_string(),
+            })
+        } else {
+            Ok((expected_ty, struct_ty))
+        }
     } else {
         Err(SemanticErrorKind::MismatchedType {
             expected: tcx.empty_struct_ty(struct_name.to_string()),
@@ -2054,7 +2201,7 @@ fn pattern_to_type<'nd, 'tcx>(
         PatternKind::Struct(struct_pat) => {
             // Search a named struct in the scope.
             if let Some(struct_name) = struct_pat.name() {
-                if let Ok((ty, _)) = get_struct_ty(tcx, struct_name, named_types) {
+                if let Ok((ty, _)) = ensure_named_struct_ty_exists(tcx, struct_name, named_types) {
                     return ty;
                 }
             }
@@ -2469,9 +2616,9 @@ mod tests_analyze_pattern {
         let head_ty = tcx.union([tuple_ty1, tuple_ty2]);
 
         // pattern :: (x, y): (int64, int64)
-        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
-        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
-        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
+        let var_x = Pattern::new(PatternKind::Var("x".to_string()));
+        let var_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
         pat.assign_explicit_ty(tuple_ty1);
         assert!(_analyze_pattern_1(tcx, &pat, head_ty));
 
@@ -2480,15 +2627,17 @@ mod tests_analyze_pattern {
         assert_eq!(pat.expect_ty(), tuple_ty1);
         assert_eq!(pat.context_ty().unwrap(), head_ty);
 
-        // sub-pattern :: int64
-        assert!(var1.ty().is_some());
-        // explicit_ty should not be propagated
-        assert!(var1.explicit_ty().is_none());
-        assert_eq!(var1.expect_ty(), tcx.int64());
+        // x: int64
+        assert!(var_x.ty().is_some());
+        // explicit_ty should be carried from the parent pattern.
+        assert!(var_x.explicit_ty().is_some());
+        assert_eq!(var_x.explicit_ty().unwrap(), tcx.int64());
+        assert_eq!(var_x.expect_ty(), tcx.int64());
 
-        assert!(var2.ty().is_some());
-        assert!(var2.explicit_ty().is_none());
-        assert_eq!(var2.expect_ty(), tcx.int64());
+        assert!(var_y.ty().is_some());
+        assert!(var_y.explicit_ty().is_some());
+        assert_eq!(var_y.explicit_ty().unwrap(), tcx.int64());
+        assert_eq!(var_y.expect_ty(), tcx.int64());
     }
 
     #[test]
@@ -2502,9 +2651,9 @@ mod tests_analyze_pattern {
         let head_ty = tcx.union([tuple_ty1, tuple_ty2]);
 
         // pattern :: (x, y): (string, string)
-        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
-        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
-        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
+        let var_x = Pattern::new(PatternKind::Var("x".to_string()));
+        let var_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
         pat.assign_explicit_ty(tuple_ty2);
         assert!(_analyze_pattern_1(tcx, &pat, head_ty));
 
@@ -2513,15 +2662,18 @@ mod tests_analyze_pattern {
         assert_eq!(pat.expect_ty(), tuple_ty2);
         assert_eq!(pat.context_ty().unwrap(), head_ty);
 
-        // sub-pattern :: int64
-        assert!(var1.ty().is_some());
-        // explicit_ty should not be propagated
-        assert!(var1.explicit_ty().is_none());
-        assert_eq!(var1.expect_ty(), tcx.string());
+        // x: string
+        assert!(var_x.ty().is_some());
+        // explicit_ty should be carried from the parent pattern.
+        assert!(var_x.explicit_ty().is_some());
+        assert_eq!(var_x.explicit_ty().unwrap(), tcx.string());
+        assert_eq!(var_x.expect_ty(), tcx.string());
 
-        assert!(var2.ty().is_some());
-        assert!(var2.explicit_ty().is_none());
-        assert_eq!(var2.expect_ty(), tcx.string());
+        // y: string
+        assert!(var_y.ty().is_some());
+        assert!(var_x.explicit_ty().is_some());
+        assert_eq!(var_x.explicit_ty().unwrap(), tcx.string());
+        assert_eq!(var_y.expect_ty(), tcx.string());
     }
 
     #[test]
