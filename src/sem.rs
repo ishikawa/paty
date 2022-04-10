@@ -1338,13 +1338,12 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
     if let Type::Union(ts) = expected_ty {
         expected_ty_candidates = ts;
     }
-
-    eprintln!(
-        ">>> analyze_pattern:
-... pat = {}
-... expected_ty = {}",
-        pat, expected_ty
-    );
+    //     eprintln!(
+    //         ">>> analyze_pattern:
+    // ... pat = {}
+    // ... expected_ty = {}",
+    //         pat, expected_ty
+    //     );
 
     // Expand Or-pattern
     let mut sub_pats: &[&Pattern<'_, '_>] = &[pat];
@@ -1358,80 +1357,49 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
     // - all new variable must be bound in all sub-patterns.
     // - errors occurred in the last sub-pattern are left.
     for sub_pat in sub_pats.iter() {
-        // Variable pattern matches the union type itself.
-        let passed = if matches!(sub_pat.kind(), PatternKind::Var(_) | PatternKind::Wildcard) {
-            if sub_pat.explicit_ty().is_none() {
-                if let Some(ty) = sub_pat.ty() {
-                    sub_pat.assign_ty(tcx.union([ty, expected_ty]));
-                } else {
-                    sub_pat.assign_ty(expected_ty);
-                }
+        // Because we have to iterate all type candidates, we can't use `.any()`.
+        let mut passed = false;
+        let mut it = expected_ty_candidates.iter().peekable();
+
+        assert!(!expected_ty_candidates.is_empty());
+
+        while let Some(expected_ty_candidate) = it.next() {
+            // For each type candidate, we capture semantic errors into a temporary
+            // error buffer, and report them in the below cases:
+            //
+            // 1. They were captured even though the type check was failed.
+            // 2. The iteration was the last one and every type check iterations were failed.
+            let mut sub_errors = Errors::new();
+
+            if _analyze_pattern_context_type_one(
+                tcx,
+                sub_pat,
+                expected_ty_candidate,
+                vars,
+                functions,
+                named_types,
+                &mut sub_errors,
+            ) {
+                passed = true;
+                errors.extend(sub_errors);
+            } else if !passed && it.peek().is_none() {
+                errors.extend(sub_errors);
             }
+        }
 
-            let pat_ty = sub_pat.expect_ty();
-
-            // The type of a pattern must be an intersection of
-            // the type of a pattern and an expected type,
-            // This means that either can be substituted for the other.
-            if !pat_ty.is_assignable_to(expected_ty) && !expected_ty.is_assignable_to(pat_ty) {
-                errors.push(
-                    SemanticErrorKind::MismatchedType {
-                        expected: expected_ty,
-                        actual: pat_ty,
-                    },
-                    sub_pat,
-                );
-                false
-            } else {
-                true
-            }
-        } else {
-            // Because we have to iterate all type candidates, we can't use `.any()`.
-            let mut passed = false;
-            let mut it = expected_ty_candidates.iter().peekable();
-
-            assert!(!expected_ty_candidates.is_empty());
-
-            while let Some(expected_ty_candidate) = it.next() {
-                // For each type candidate, we capture semantic errors into a temporary
-                // error buffer, and report them in the below cases:
-                //
-                // 1. They were captured even though the type check was failed.
-                // 2. The iteration was the last one and every type check iterations were failed.
-                let mut sub_errors = Errors::new();
-
-                if _analyze_pattern_context_type_one(
-                    tcx,
-                    sub_pat,
-                    expected_ty_candidate,
-                    vars,
-                    functions,
-                    named_types,
-                    &mut sub_errors,
-                ) {
-                    passed = true;
-                    errors.extend(sub_errors);
-                } else if !passed && it.peek().is_none() {
-                    errors.extend(sub_errors);
-                }
-            }
-
-            passed
-        };
-
-        eprintln!(
-            "... passed:{} - {}: {} => {}",
-            passed,
-            sub_pat,
-            expected_ty,
-            sub_pat
-                .ty()
-                .map(|ty| ty.to_string())
-                .unwrap_or_else(|| "none".into())
-        );
+        // eprintln!(
+        //     "... passed:{} - {}: {} => {}",
+        //     passed,
+        //     sub_pat,
+        //     expected_ty,
+        //     sub_pat
+        //         .ty()
+        //         .map(|ty| ty.to_string())
+        //         .unwrap_or_else(|| "none".into())
+        // );
         all_sub_pats_passed = passed && all_sub_pats_passed;
 
-        // TODO: always check this.
+        // TODO: remove context_ty
         // if let Some(context_ty) = sub_pat.context_ty() {
         //     sub_pat.assign_context_ty(tcx.union([context_ty, expected_ty]));
         // } else {
@@ -1453,6 +1421,7 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
                 sub_pat.assign_context_ty(expected_ty);
             }
         }
+        dbg!(sub_pat);
     }
 
     // Every sub-pattern should be type checked.
@@ -1481,13 +1450,12 @@ fn _analyze_pattern_context_type_one<'nd, 'tcx>(
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) -> bool {
-    eprintln!(
-        "... ... _analyze_pattern_type_inference_one:
-... ... pat = {}
-... ... expected_ty = {}",
-        pat, expected_ty
-    );
-
+    //     eprintln!(
+    //         "... ... _analyze_pattern_type_inference_one:
+    // ... ... pat = {}
+    // ... ... expected_ty = {}",
+    //         pat, expected_ty
+    //     );
     match pat.kind() {
         PatternKind::Integer(_)
         | PatternKind::Boolean(_)
@@ -1649,7 +1617,16 @@ fn _analyze_pattern_context_type_one<'nd, 'tcx>(
                 return false;
             }
         }
-        PatternKind::Var(_) | PatternKind::Wildcard | PatternKind::Or(_) => {
+        PatternKind::Var(_) | PatternKind::Wildcard => {
+            if pat.explicit_ty().is_none() {
+                if let Some(ty) = pat.ty() {
+                    pat.assign_ty(tcx.union([ty, expected_ty]));
+                } else {
+                    pat.assign_ty(expected_ty);
+                }
+            }
+        }
+        PatternKind::Or(_) => {
             unreachable!("The pattern shouldn't be handled here. {:#?}", pat)
         }
     };

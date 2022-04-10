@@ -1001,8 +1001,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
         // If the context type is an union type, each pattern should be one/some of
         // member(s) of it.
-        // TODO: can we remove to_union_variants()?
-        //dbg!(pat);
+
         match (pat.context_ty(), pat.kind()) {
             (_, PatternKind::Var(_)) | (_, PatternKind::Wildcard)
                 if pat.explicit_ty().is_some() =>
