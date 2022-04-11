@@ -799,7 +799,62 @@ impl<'tcx> Typable<'tcx> for Pattern<'_, 'tcx> {
 
 impl fmt::Display for Pattern<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.kind().fmt(f)?;
+        match self.kind() {
+            &PatternKind::Integer(n) => {
+                write!(f, "{}", n)?;
+            }
+            &PatternKind::Boolean(b) => {
+                write!(f, "{}", b)?;
+            }
+            PatternKind::String(s) => {
+                write!(f, "\"{}\"", s.escape_default().collect::<String>())?;
+            }
+            PatternKind::Range { lo, hi, end } => {
+                if *lo == i64::MIN {
+                    write!(f, "int64::MIN")?;
+                } else {
+                    write!(f, "{}", lo)?;
+                }
+
+                write!(f, "{}", end)?;
+
+                if *hi == i64::MAX {
+                    write!(f, "int64::MAX")?;
+                } else {
+                    write!(f, "{}", hi)?;
+                }
+            }
+            PatternKind::Tuple(patterns) => {
+                let mut it = patterns.iter().peekable();
+                write!(f, "(")?;
+                while let Some(sub_pat) = it.next() {
+                    write!(f, "{}", sub_pat)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")?;
+            }
+            PatternKind::Struct(struct_pat) => {
+                struct_pat.fmt(f)?;
+            }
+            PatternKind::Or(patterns) => {
+                let mut it = patterns.iter().peekable();
+
+                while let Some(sub_pat) = it.next() {
+                    write!(f, "{}", sub_pat)?;
+                    if it.peek().is_some() {
+                        write!(f, " | ")?;
+                    }
+                }
+            }
+            PatternKind::Var(name) => {
+                write!(f, "{}", name)?;
+            }
+            PatternKind::Wildcard => {
+                write!(f, "_")?;
+            }
+        }
 
         // We'd like to print diagnostics with the explicit type
         // for var/wildcard patterns.
@@ -824,56 +879,6 @@ pub enum PatternKind<'nd, 'tcx> {
     Var(String),
     Or(Vec<&'nd Pattern<'nd, 'tcx>>),
     Wildcard,
-}
-
-impl fmt::Display for PatternKind<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PatternKind::Integer(n) => write!(f, "{}", n),
-            PatternKind::Boolean(b) => write!(f, "{}", b),
-            PatternKind::String(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
-            PatternKind::Range { lo, hi, end } => {
-                if *lo == i64::MIN {
-                    write!(f, "int64::MIN")?;
-                } else {
-                    write!(f, "{}", lo)?;
-                }
-
-                write!(f, "{}", end)?;
-
-                if *hi == i64::MAX {
-                    write!(f, "int64::MAX")
-                } else {
-                    write!(f, "{}", hi)
-                }
-            }
-            PatternKind::Tuple(patterns) => {
-                let mut it = patterns.iter().peekable();
-                write!(f, "(")?;
-                while let Some(sub_pat) = it.next() {
-                    write!(f, "{}", sub_pat.kind())?;
-                    if it.peek().is_some() {
-                        write!(f, ", ")?;
-                    }
-                }
-                write!(f, ")")
-            }
-            PatternKind::Struct(struct_pat) => struct_pat.fmt(f),
-            PatternKind::Var(name) => write!(f, "{}", name),
-            PatternKind::Or(patterns) => {
-                let mut it = patterns.iter().peekable();
-
-                while let Some(sub_pat) = it.next() {
-                    write!(f, "{}", sub_pat.kind())?;
-                    if it.peek().is_some() {
-                        write!(f, " | ")?;
-                    }
-                }
-                Ok(())
-            }
-            PatternKind::Wildcard => write!(f, "_"),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1093,7 +1098,7 @@ impl<'nd, 'tcx> PatternField<'nd, 'tcx> {
 impl fmt::Display for PatternField<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: ", self.name())?;
-        write!(f, "{}", self.pattern().kind())
+        write!(f, "{}", self.pattern())
     }
 }
 

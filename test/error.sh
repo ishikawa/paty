@@ -553,3 +553,12 @@ assert 'expected type `T`, found `U`' '
   t2: T = ("one", 2)
   u1: U = t1
   t3: T = u1'
+assert 'Semantic error: non-exhaustive pattern: `(_: string)`' '
+  def foo(n: (int64 | string,))
+    case n
+    when (x: int64,)
+      puts(x)
+    end
+  end
+  foo((1,))
+  foo(("two",))'

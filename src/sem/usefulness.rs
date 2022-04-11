@@ -1250,8 +1250,19 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         }
     }
 
-    // Only used for error description
+    // Only used for error description.
+    //
+    // Note that certain wildcard patterns are automatically inserted by
+    // usefulness check, so users may not be able to distinguish them if they are
+    // output as `_`. Because of this, we'll assign explicit type for wildcard patterns.
     pub fn to_pat(&self, cx: &MatchCheckContext<'p, 'tcx>) -> &'p Pattern<'p, 'tcx> {
+        self._to_pat(cx, true)
+    }
+    pub fn _to_pat(
+        &self,
+        cx: &MatchCheckContext<'p, 'tcx>,
+        assign_explicit_ty: bool,
+    ) -> &'p Pattern<'p, 'tcx> {
         let kind = match &self.ctor {
             Constructor::Single => match self.ty() {
                 Type::Tuple(_) => {
@@ -1266,7 +1277,11 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     let pat_fields: Vec<_> = fields
                         .iter()
                         .zip(struct_ty.fields())
-                        .map(|(pat, f)| PatternField::new(f.name().to_string(), pat.to_pat(cx)))
+                        .map(|(de_pat, f)| {
+                            // Explicit types in struct fields may be eye noisy.
+                            // e.g. `T { a: _: boolean, b: _: boolean }`
+                            PatternField::new(f.name().to_string(), de_pat._to_pat(cx, false))
+                        })
                         .map(PatternFieldOrSpread::PatternField)
                         .collect();
 
@@ -1299,6 +1314,11 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         };
 
         let pat = Pattern::new(kind);
+
+        if assign_explicit_ty && matches!(pat.kind(), PatternKind::Wildcard) {
+            pat.assign_explicit_ty(self.ty());
+        }
+
         pat.assign_ty(self.ty());
         cx.tree_pattern_arena.alloc(pat)
     }
@@ -1861,19 +1881,11 @@ pub fn check_match<'p, 'tcx: 'p>(
     // non exhaustiveness
     for de_pat in report.non_exhaustiveness_witnesses {
         let pat = de_pat.to_pat(&cx);
-        assert!(pat.explicit_ty().is_none());
-
-        // Note that certain wildcard patterns are automatically inserted by
-        // usefulness check, so users may not be able to distinguish them if they are
-        // output as `_`.
-        let pattern = if let PatternKind::Wildcard = pat.kind() {
-            format!("_: {}", pat.expect_ty())
-        } else {
-            pat.to_string()
-        };
 
         errors.push(SemanticError::from_kind(
-            SemanticErrorKind::NonExhaustivePattern { pattern },
+            SemanticErrorKind::NonExhaustivePattern {
+                pattern: pat.to_string(),
+            },
         ));
     }
 
@@ -2436,11 +2448,10 @@ mod tests_check_match {
     use super::*;
 
     #[test]
-    fn check_match_1() {
+    fn check_match_union_tuple_pat_explicit_ty() {
         let type_arena = Arena::new();
         let tcx = TypeContext::new(&type_arena);
 
-        // head :: (int64, int64) | (string, string)
         // type T1 = (int64, string)
         // type T2 = (string, int64)
         let tuple_ty1 = tcx.tuple(vec![tcx.int64(), tcx.string()]);
@@ -2448,14 +2459,12 @@ mod tests_check_match {
         let named_ty1 = tcx.named("T1".into(), tuple_ty1);
         let named_ty2 = tcx.named("T2".into(), tuple_ty2);
 
-        //let elem_context_ty = tcx.union([tcx.int64(), tcx.string()]);
-
         // head: T1 | T2
         let head_ty = tcx.union([named_ty1, named_ty2]);
 
         // pattern = (x: int64, y: string)
-        let pat1_x = Pattern::new(PatternKind::Var("x".to_string()));
-        let pat1_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat1_x = Pattern::new(PatternKind::Var("x".into()));
+        let pat1_y = Pattern::new(PatternKind::Var("y".into()));
         let pat1 = Pattern::new(PatternKind::Tuple(vec![&pat1_x, &pat1_y]));
         pat1_x.assign_explicit_ty(tcx.int64());
         pat1_y.assign_explicit_ty(tcx.string());
@@ -2467,12 +2476,10 @@ mod tests_check_match {
         pat1.assign_context_ty(head_ty);
         pat1_x.assign_context_ty(tcx.int64());
         pat1_y.assign_context_ty(tcx.string());
-        // pat1_x.assign_context_ty(elem_context_ty);
-        // pat1_y.assign_context_ty(elem_context_ty);
 
         // pattern = (x: string, y: int64)
-        let pat2_x = Pattern::new(PatternKind::Var("x".to_string()));
-        let pat2_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat2_x = Pattern::new(PatternKind::Var("x".into()));
+        let pat2_y = Pattern::new(PatternKind::Var("y".into()));
         let pat2 = Pattern::new(PatternKind::Tuple(vec![&pat1_x, &pat1_y]));
         pat2_x.assign_explicit_ty(tcx.string());
         pat2_y.assign_explicit_ty(tcx.int64());
@@ -2484,9 +2491,33 @@ mod tests_check_match {
         pat2.assign_context_ty(head_ty);
         pat2_x.assign_context_ty(tcx.string());
         pat2_y.assign_context_ty(tcx.int64());
-        // pat1_x.assign_context_ty(elem_context_ty);
-        // pat1_y.assign_context_ty(elem_context_ty);
 
         assert!(check_match(head_ty, [(&pat1).into(), (&pat2).into()], false).is_ok());
+    }
+
+    #[test]
+    fn check_match_union_tuple_pat_vars() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head: (int64, int64) | (string, string)
+        let tuple1_ty = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let tuple2_ty = tcx.tuple(vec![tcx.string(), tcx.string()]);
+        let head_ty = tcx.union([tuple1_ty, tuple2_ty]);
+
+        // pattern = (x, y)
+        let var_x = Pattern::new(PatternKind::Var("x".into()));
+        let var_y = Pattern::new(PatternKind::Var("y".into()));
+        var_x.assign_ty(tcx.union([tcx.int64(), tcx.string()]));
+        var_x.assign_context_ty(tcx.union([tcx.int64(), tcx.string()]));
+
+        var_y.assign_ty(tcx.union([tcx.string(), tcx.int64()]));
+        var_y.assign_context_ty(tcx.union([tcx.string(), tcx.int64()]));
+
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
+        pat.assign_ty(head_ty);
+        pat.assign_context_ty(head_ty);
+
+        assert!(check_match(head_ty, [(&pat).into()], false).is_ok());
     }
 }

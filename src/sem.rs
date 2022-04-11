@@ -1812,7 +1812,7 @@ fn analyze_let_pattern<'nd, 'tcx>(
         | PatternKind::Tuple(_)
         | PatternKind::Struct(_) => {}
         PatternKind::Range { .. } | PatternKind::Or(..) => {
-            unreachable!("Unsupported let pattern: `{}`", pat.kind());
+            unreachable!("Unsupported let pattern: `{}`", pat);
         }
     }
 

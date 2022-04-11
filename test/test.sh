@@ -1576,6 +1576,16 @@ three 4' '
   end
   foo((1, 2))
   foo(("three", 4))'
+# union type in tuple
+assert "1
+two" 'def foo(n: (int64 | string,))
+  case n
+  when (x,)
+    puts(x)
+  end
+end
+foo((1,))
+foo(("two",))'
 # variable pattern captures every product of union member types.
 assert '1 two
 three 4' '

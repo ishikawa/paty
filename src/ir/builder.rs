@@ -339,7 +339,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         | PatternKind::String(_)
                         | PatternKind::Range { .. }
                         | PatternKind::Or(..) => {
-                            unreachable!("Unsupported let pattern: `{}`", p.pattern().kind());
+                            unreachable!("Unsupported let pattern: `{}`", p.pattern());
                         }
                     };
 
@@ -1669,7 +1669,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             | PatternKind::String(_)
             | PatternKind::Range { .. }
             | PatternKind::Or(..) => {
-                unreachable!("Unsupported let pattern: `{}`", pattern.kind());
+                unreachable!("Unsupported let pattern: `{}`", pattern);
             }
         };
     }
