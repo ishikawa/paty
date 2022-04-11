@@ -1072,44 +1072,33 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             PatternKind::String(value) => Self::from_string(value.clone(), pat_ty),
             &PatternKind::Range { lo, hi, end } => Self::from_range(lo, hi, pat_ty, end),
             PatternKind::Tuple(sub_pats) => {
-                let ctor = Constructor::Single;
-                let pats: Vec<_> = sub_pats
+                let de_pats = sub_pats
                     .iter()
-                    .map(|pat| DeconstructedPat::from_pat(cx, pat))
-                    .collect();
+                    .map(|pat| DeconstructedPat::from_pat(cx, pat));
 
-                let fields = Fields::from_iter(cx, pats);
-                DeconstructedPat::new(ctor, fields, pat_ty)
+                let fields = Fields::from_iter(cx, de_pats);
+                DeconstructedPat::new(Constructor::Single, fields, pat_ty)
             }
             PatternKind::Struct(struct_pat) => {
-                let ctor = Constructor::Single;
-
                 // Convert struct fields to deconstruct patterns.
                 // We must follow the order of fields in the type.
-                let struct_ty = if let Type::Struct(struct_ty) = pat_ty {
-                    struct_ty
-                } else {
+                let struct_ty = pat_ty.struct_ty().unwrap_or_else(|| {
                     unreachable!("Pattern type {} must be struct type.", pat_ty);
-                };
+                });
 
-                let mut sub_pats = vec![];
-
-                for f in struct_ty.fields() {
-                    let sub_pat = if let Some(pat_field) = struct_pat.get_field(f.name()) {
-                        DeconstructedPat::from_pat(cx, pat_field.pattern())
-                    } else {
+                let de_pats = struct_ty.fields().iter().map(|f| {
+                    struct_pat
+                        .get_field(f.name())
+                        .map(|pat_field| DeconstructedPat::from_pat(cx, pat_field.pattern()))
                         // omitted fields are handled by wildcard
-                        DeconstructedPat::wildcard(f.ty())
-                    };
+                        .unwrap_or_else(|| DeconstructedPat::wildcard(f.ty()))
+                });
 
-                    sub_pats.push(sub_pat);
-                }
-
-                let fields = Fields::from_iter(cx, sub_pats);
-                DeconstructedPat::new(ctor, fields, pat_ty)
+                let fields = Fields::from_iter(cx, de_pats);
+                DeconstructedPat::new(Constructor::Single, fields, pat_ty)
             }
             PatternKind::Var(_) | PatternKind::Wildcard => {
-                // If the pattern is explicitly typed with a literal type, the pattern matches
+                // If the pattern has an explicit type annotation with a literal type, the pattern matches
                 // a corresponding literal value.
                 if let Some(explicit_ty) = pat.explicit_ty() {
                     Self::_from_explicit_ty(cx, explicit_ty, pat.context_ty().unwrap())
@@ -1118,12 +1107,11 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 }
             }
             PatternKind::Or(..) => {
-                let ctor = Constructor::Or;
-                let pats = expand_or_pat(pat)
+                let de_pats = expand_or_pat(pat)
                     .into_iter()
                     .map(|pat| DeconstructedPat::from_pat(cx, pat));
-                let fields = Fields::from_iter(cx, pats);
-                DeconstructedPat::new(ctor, fields, pat_ty)
+                let fields = Fields::from_iter(cx, de_pats);
+                DeconstructedPat::new(Constructor::Or, fields, pat_ty)
             }
         }
     }
