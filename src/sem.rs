@@ -1391,29 +1391,6 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
         //         .unwrap_or_else(|| "none".into())
         // );
         all_sub_pats_passed = passed && all_sub_pats_passed;
-
-        // TODO: remove context_ty
-        // if let Some(context_ty) = sub_pat.context_ty() {
-        //     sub_pat.assign_context_ty(tcx.union([context_ty, expected_ty]));
-        // } else {
-        //     sub_pat.assign_context_ty(expected_ty);
-        // }
-
-        // Before move on the next pattern, validate new bindings and
-        // merge these into the scope on the pattern.
-        if passed {
-            // Save context type
-            // If the pattern is or-pattern, its sub-pattern may already have
-            // a context pattern. e.g:
-            // ```ignore
-            // pattern = (x: int64, y: string) | (x: string | y: int64)
-            // ```
-            if let Some(context_ty) = sub_pat.context_ty() {
-                sub_pat.assign_context_ty(tcx.union([context_ty, expected_ty]));
-            } else {
-                sub_pat.assign_context_ty(expected_ty);
-            }
-        }
     }
 
     // Every sub-pattern should be type checked.
@@ -1423,8 +1400,6 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
 
     // Assign type for or-pattern
     if matches!(pat.kind(), PatternKind::Or(_)) {
-        pat.assign_context_ty(expected_ty);
-
         // Construct a new union type from sub patterns.
         let pat_ty = tcx.union(sub_pats.iter().map(|pat| pat.expect_ty()));
         unify_type(pat_ty, pat, errors) && unify_type(expected_ty, pat, errors)
@@ -2257,7 +2232,6 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), head_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
     }
 
     #[test]
@@ -2280,17 +2254,14 @@ mod tests_analyze_pattern {
             pat.expect_ty(),
             tcx.tuple(vec![tcx.literal_int64(1), tcx.literal_int64(2)])
         );
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         assert!(pat1.ty().is_some());
         assert!(pat1.explicit_ty().is_none());
         assert_eq!(pat1.expect_ty(), tcx.literal_int64(1));
-        assert_eq!(pat1.context_ty().unwrap(), tcx.int64());
 
         assert!(pat2.ty().is_some());
         assert!(pat2.explicit_ty().is_none());
         assert_eq!(pat2.expect_ty(), tcx.literal_int64(2));
-        assert_eq!(pat2.context_ty().unwrap(), tcx.int64());
     }
 
     #[test]
@@ -2323,12 +2294,10 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), struct_ty);
-        assert_eq!(pat.context_ty().unwrap(), struct_ty);
 
         assert!(one.ty().is_some());
         assert!(one.explicit_ty().is_none());
         assert_eq!(one.expect_ty(), tcx.literal_int64(1));
-        assert_eq!(one.context_ty().unwrap(), tcx.int64());
     }
 
     #[test]
@@ -2347,7 +2316,6 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), head_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
     }
 
     #[test]
@@ -2370,19 +2338,16 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), pat_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         // 1 : 1
         assert!(one.ty().is_some());
         assert!(one.explicit_ty().is_none());
         assert_eq!(one.expect_ty(), tcx.literal_int64(1));
-        assert_eq!(one.context_ty().unwrap(), head_ty);
 
         // 2 : 2
         assert!(two.ty().is_some());
         assert!(two.explicit_ty().is_none());
         assert_eq!(two.expect_ty(), tcx.literal_int64(2));
-        assert_eq!(two.context_ty().unwrap(), head_ty);
     }
 
     #[test]
@@ -2405,19 +2370,16 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), pat_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         // 1 : 1
         assert!(one.ty().is_some());
         assert!(one.explicit_ty().is_none());
         assert_eq!(one.expect_ty(), tcx.literal_int64(1));
-        assert_eq!(one.context_ty().unwrap(), head_ty);
 
         // "two" : "two"
         assert!(two.ty().is_some());
         assert!(two.explicit_ty().is_none());
         assert_eq!(two.expect_ty(), tcx.literal_string("two".into()));
-        assert_eq!(two.context_ty().unwrap(), head_ty);
     }
 
     #[test]
@@ -2461,31 +2423,26 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), head_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         // T1 : T1
         assert!(t1_struct_pat.ty().is_some());
         assert!(t1_struct_pat.explicit_ty().is_none());
         assert_eq!(t1_struct_pat.expect_ty(), t1_struct_ty);
-        assert_eq!(t1_struct_pat.context_ty().unwrap(), head_ty);
 
         // T2 : T2
         assert!(t2_struct_pat.ty().is_some());
         assert!(t2_struct_pat.explicit_ty().is_none());
         assert_eq!(t2_struct_pat.expect_ty(), t2_struct_ty);
-        assert_eq!(t2_struct_pat.context_ty().unwrap(), head_ty);
 
         // T1.value : int64
         assert!(t1_value_field_pat.ty().is_some());
         assert!(t1_value_field_pat.explicit_ty().is_none());
         assert_eq!(t1_value_field_pat.expect_ty(), tcx.int64());
-        assert_eq!(t1_value_field_pat.context_ty().unwrap(), tcx.int64());
 
         // T2.value : int64
         assert!(t2_value_field_pat.ty().is_some());
         assert!(t2_value_field_pat.explicit_ty().is_none());
         assert_eq!(t2_value_field_pat.expect_ty(), tcx.string());
-        assert_eq!(t2_value_field_pat.context_ty().unwrap(), tcx.string());
     }
 
     #[test]
@@ -2518,21 +2475,18 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), head_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         // x: A
         assert!(xa.ty().is_some());
         assert!(xa.explicit_ty().is_some());
         assert_eq!(xa.explicit_ty().unwrap(), a_named_ty);
         assert_eq!(xa.expect_ty(), a_named_ty);
-        assert_eq!(xa.context_ty().unwrap(), head_ty);
 
         // x: B
         assert!(xb.ty().is_some());
         assert!(xb.explicit_ty().is_some());
         assert_eq!(xb.explicit_ty().unwrap(), b_named_ty);
         assert_eq!(xb.expect_ty(), b_named_ty);
-        assert_eq!(xb.context_ty().unwrap(), head_ty);
     }
 
     #[test]
@@ -2552,17 +2506,14 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), head_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         assert!(var1.ty().is_some());
         assert!(var1.explicit_ty().is_none());
         assert_eq!(var1.expect_ty(), tcx.int64());
-        assert_eq!(var1.context_ty().unwrap(), tcx.int64());
 
         assert!(var2.ty().is_some());
         assert!(var2.explicit_ty().is_none());
         assert_eq!(var2.expect_ty(), tcx.int64());
-        assert_eq!(var2.context_ty().unwrap(), tcx.int64());
     }
 
     #[test]
@@ -2585,7 +2536,6 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_some());
         assert_eq!(pat.expect_ty(), tuple_ty1);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         // x: int64
         assert!(var_x.ty().is_some());
@@ -2620,7 +2570,6 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_some());
         assert_eq!(pat.expect_ty(), tuple_ty2);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         // x: string
         assert!(var_x.ty().is_some());
@@ -2657,7 +2606,6 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), tuple2_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         // sub-pattern :: int64
         assert!(var1.ty().is_some());
@@ -2692,7 +2640,6 @@ mod tests_analyze_pattern {
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), head_ty);
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
 
         // x: int64 | string
         assert!(var_x.ty().is_some());
@@ -2723,13 +2670,6 @@ mod tests_analyze_pattern {
         let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
         pat.assign_explicit_ty(tuple_ty1);
         assert!(_analyze_pattern_1(tcx, &pat, head_ty));
-
-        // sub-context :: int64 | string
-        let int_str_ty = tcx.union([tcx.int64(), tcx.string()]);
-        assert!(var1.context_ty().is_some());
-        assert_eq!(var1.context_ty().unwrap(), int_str_ty);
-        assert!(var2.context_ty().is_some());
-        assert_eq!(var2.context_ty().unwrap(), int_str_ty);
     }
 
     // TODO
@@ -2752,7 +2692,6 @@ mod tests_analyze_pattern {
 
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
-        assert_eq!(pat.context_ty().unwrap(), head_ty);
         assert_eq!(pat.expect_ty(), head_ty);
 
         // sub-pattern :: int64 | string
@@ -2762,12 +2701,10 @@ mod tests_analyze_pattern {
         assert!(var_x.ty().is_some());
         assert!(var_x.explicit_ty().is_none());
         assert_eq!(var_x.expect_ty(), int_str_ty);
-        assert_eq!(var_x.context_ty().unwrap(), int_str_ty);
 
         // y: int64 | string
         assert!(var_y.ty().is_some());
         assert!(var_y.explicit_ty().is_none());
         assert_eq!(var_y.expect_ty(), int_str_ty);
-        assert_eq!(var_y.context_ty().unwrap(), int_str_ty);
     }
 }

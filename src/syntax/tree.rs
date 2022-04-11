@@ -732,9 +732,6 @@ pub struct Pattern<'nd, 'tcx> {
     kind: PatternKind<'nd, 'tcx>,
     ty: Cell<Option<&'tcx Type<'tcx>>>,
     explicit_ty: Cell<Option<&'tcx Type<'tcx>>>,
-    // A pattern holds both the type of the pattern expression itself and
-    // the type of the target when the pattern is tested.
-    context_ty: Cell<Option<&'tcx Type<'tcx>>>,
     data: NodeData,
 }
 
@@ -744,20 +741,12 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
             kind,
             ty: Cell::new(None),
             explicit_ty: Cell::new(None),
-            context_ty: Cell::new(None),
             data: NodeData::new(),
         }
     }
 
     pub fn kind(&self) -> &PatternKind<'nd, 'tcx> {
         &self.kind
-    }
-
-    pub fn context_ty(&self) -> Option<&'tcx Type<'tcx>> {
-        self.context_ty.get()
-    }
-    pub fn assign_context_ty(&self, ty: &'tcx Type<'tcx>) {
-        self.context_ty.set(Some(ty));
     }
 
     /// Users can annotate the type of a pattern explicitly like below:
