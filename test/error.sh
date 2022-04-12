@@ -542,6 +542,11 @@ assert 'expected type `struct T { a: int64 }`, found `{ a: 2 }`' '
   else
     puts(1)
   end'
+# Every sub-patterns should be checked.
+assert 'expected type `1`, found `3`' 'case 1
+  when 1 | 2 | 3
+    puts(1)
+  end'
 # ---------------------------------
 # Union type
 # ---------------------------------

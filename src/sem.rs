@@ -1327,11 +1327,6 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
     named_types: &HashMap<String, &'tcx Type<'tcx>>,
     errors: &mut Errors<'tcx>,
 ) -> bool {
-    // Expand union type
-    let mut expected_ty_candidates: &[&Type<'_>] = &[expected_ty];
-    if let Type::Union(ts) = expected_ty {
-        expected_ty_candidates = ts;
-    }
     //     eprintln!(
     //         ">>> analyze_pattern:
     // ... pat = {}
@@ -1339,23 +1334,24 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
     //         pat, expected_ty
     //     );
 
+    // Expand union type
+    let mut expected_ty_candidates: &[&Type<'_>] = &[expected_ty];
+    if let Type::Union(ts) = expected_ty {
+        expected_ty_candidates = ts;
+    }
+    assert!(!expected_ty_candidates.is_empty());
+
     // Expand Or-pattern
     let mut sub_pats: &[&Pattern<'_, '_>] = &[pat];
     if let PatternKind::Or(ps) = pat.kind() {
         sub_pats = ps;
     }
+    assert!(!sub_pats.is_empty());
 
-    let mut all_sub_pats_passed = true;
-
-    // In subsequent patterns
-    // - all new variable must be bound in all sub-patterns.
-    // - errors occurred in the last sub-pattern are left.
-    for sub_pat in sub_pats.iter() {
+    if !sub_pats.iter().fold(true, |acc, sub_pat| {
         // Because we have to iterate all type candidates, we can't use `.any()`.
         let mut passed = false;
         let mut it = expected_ty_candidates.iter().peekable();
-
-        assert!(!expected_ty_candidates.is_empty());
 
         while let Some(expected_ty_candidate) = it.next() {
             // For each type candidate, we capture semantic errors into a temporary
@@ -1379,7 +1375,6 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
                 errors.extend(sub_errors);
             }
         }
-
         // eprintln!(
         //     "... passed:{} - {}: {} => {}",
         //     passed,
@@ -1390,16 +1385,15 @@ fn _analyze_pattern_context_type<'nd, 'tcx>(
         //         .map(|ty| ty.to_string())
         //         .unwrap_or_else(|| "none".into())
         // );
-        all_sub_pats_passed = passed && all_sub_pats_passed;
-    }
 
-    // Every sub-pattern should be type checked.
-    if !all_sub_pats_passed {
+        passed && acc
+    }) {
+        // Every sub-patterns should be type-checked successfully.
         return false;
     }
 
-    // Assign type for or-pattern
     if matches!(pat.kind(), PatternKind::Or(_)) {
+        // Assign type for or-pattern
         // Construct a new union type from sub patterns.
         let pat_ty = tcx.union(sub_pats.iter().map(|pat| pat.expect_ty()));
         unify_type(pat_ty, pat, errors) && unify_type(expected_ty, pat, errors)
@@ -1453,9 +1447,27 @@ fn _analyze_pattern_context_type_one<'nd, 'tcx>(
                 return false;
             }
 
-            let sub_types = patterns.iter().map(|sub_pat| sub_pat.expect_ty()).collect();
-            if !unify_type(tcx.tuple(sub_types), pat, errors) {
-                return false;
+            /*
+            // Every child elements conform to the expected type. If no type is
+            // explicitly specified, the expected type is accepted.
+            if pat.explicit_ty().is_none() {
+                if let Some(ty) = pat.ty() {
+                    pat.assign_ty(tcx.union([ty, expected_ty]))
+                } else {
+                    pat.assign_ty(expected_ty);
+                }
+            }
+            */
+            // Every child elements conform to the expected type. Update the type of
+            // a pattern with a new type constructed from sub-patterns if no type is
+            // explicitly specified.
+            if pat.explicit_ty().is_none() {
+                let tuple_ty =
+                    tcx.tuple(patterns.iter().map(|sub_pat| sub_pat.expect_ty()).collect());
+                // pat.assign_ty(tuple_ty);
+                if !unify_type(tuple_ty, pat, errors) {
+                    return false;
+                }
             }
         }
         PatternKind::Struct(struct_pat) => {
@@ -2239,10 +2251,10 @@ mod tests_analyze_pattern {
         let type_arena = Arena::new();
         let tcx = TypeContext::new(&type_arena);
 
-        // head :: (int64, int64)
+        // head: (int64, int64)
         let head_ty = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
 
-        // pattern :: (1, 2)
+        // pattern: (1, 2)
         let pat1 = Pattern::new(PatternKind::Integer(1));
         let pat2 = Pattern::new(PatternKind::Integer(2));
         let pat = Pattern::new(PatternKind::Tuple(vec![&pat1, &pat2]));
@@ -2595,31 +2607,64 @@ mod tests_analyze_pattern {
         let tuple2_ty = tcx.tuple(vec![tcx.string(), tcx.int64()]);
         let head_ty = tcx.union([tuple1_ty, tuple2_ty]);
 
-        // pattern :: (x: string, y: int64)
-        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
-        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
-        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
-        var1.assign_explicit_ty(tcx.string());
-        var2.assign_explicit_ty(tcx.int64());
+        // pattern = (x: string, y: int64)
+        let var_x = Pattern::new(PatternKind::Var("x".to_string()));
+        let var_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
+        var_x.assign_explicit_ty(tcx.string());
+        var_y.assign_explicit_ty(tcx.int64());
         assert!(_analyze_pattern_1(tcx, &pat, head_ty));
 
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
         assert_eq!(pat.expect_ty(), tuple2_ty);
 
-        // sub-pattern :: int64
-        assert!(var1.ty().is_some());
-        assert!(var1.explicit_ty().is_some());
-        assert_eq!(var1.explicit_ty().unwrap(), tcx.string());
-        assert_eq!(var1.expect_ty(), tcx.string());
+        // sub-pattern = x: string
+        assert!(var_x.ty().is_some());
+        assert!(var_x.explicit_ty().is_some());
+        assert_eq!(var_x.explicit_ty().unwrap(), tcx.string());
+        assert_eq!(var_x.expect_ty(), tcx.string());
 
-        assert!(var2.ty().is_some());
-        assert!(var2.explicit_ty().is_some());
-        assert_eq!(var2.explicit_ty().unwrap(), tcx.int64());
-        assert_eq!(var2.expect_ty(), tcx.int64());
+        // sub-pattern = y: int64
+        assert!(var_y.ty().is_some());
+        assert!(var_y.explicit_ty().is_some());
+        assert_eq!(var_y.explicit_ty().unwrap(), tcx.int64());
+        assert_eq!(var_y.expect_ty(), tcx.int64());
     }
 
-    // TODO
+    #[test]
+    fn head_union_tuple_int_int_tuple_str_str_pat_tuple_int_int() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head :: (int64, int64) | (string, string)
+        let tuple_ty1 = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let tuple_ty2 = tcx.tuple(vec![tcx.string(), tcx.string()]);
+        let head_ty = tcx.union([tuple_ty1, tuple_ty2]);
+
+        // pattern :: (x, y): (int64, int64)
+        let var_x = Pattern::new(PatternKind::Var("x".to_string()));
+        let var_y = Pattern::new(PatternKind::Var("y".to_string()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
+        pat.assign_explicit_ty(tuple_ty1);
+        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
+
+        assert!(pat.ty().is_some());
+        assert_eq!(pat.expect_ty(), tuple_ty1);
+
+        // sub-pattern = x: int64
+        assert!(var_x.ty().is_some());
+        assert!(var_x.explicit_ty().is_some());
+        assert_eq!(var_x.explicit_ty().unwrap(), tcx.int64());
+        assert_eq!(var_x.expect_ty(), tcx.int64());
+
+        // sub-pattern = y: int64
+        assert!(var_y.ty().is_some());
+        assert!(var_y.explicit_ty().is_some());
+        assert_eq!(var_y.explicit_ty().unwrap(), tcx.int64());
+        assert_eq!(var_y.expect_ty(), tcx.int64());
+    }
+
     #[test]
     #[ignore]
     fn head_union_tuple_int_int_tuple_str_str_pat_tuple_var_var() {
@@ -2649,30 +2694,9 @@ mod tests_analyze_pattern {
         // y: int64 | string
         assert!(var_y.ty().is_some());
         assert!(var_y.explicit_ty().is_none());
-        assert_eq!(var_y.expect_ty(), tcx.union([tcx.string(), tcx.int64()]));
+        assert_eq!(var_y.expect_ty(), tcx.union([tcx.int64(), tcx.string()]));
     }
 
-    // TODO
-    #[test]
-    #[ignore]
-    fn variable_tuple_pattern_explicit_with_union_type_context_ty() {
-        let type_arena = Arena::new();
-        let tcx = TypeContext::new(&type_arena);
-
-        // head :: (int64, int64) | (string, string)
-        let tuple_ty1 = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
-        let tuple_ty2 = tcx.tuple(vec![tcx.string(), tcx.string()]);
-        let head_ty = tcx.union([tuple_ty1, tuple_ty2]);
-
-        // pattern :: (x, y): (int64, int64)
-        let var1 = Pattern::new(PatternKind::Var("x".to_string()));
-        let var2 = Pattern::new(PatternKind::Var("y".to_string()));
-        let pat = Pattern::new(PatternKind::Tuple(vec![&var1, &var2]));
-        pat.assign_explicit_ty(tuple_ty1);
-        assert!(_analyze_pattern_1(tcx, &pat, head_ty));
-    }
-
-    // TODO
     #[test]
     #[ignore]
     fn variable_tuple_pattern_with_union_type() {
