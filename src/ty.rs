@@ -700,4 +700,17 @@ mod tests_types {
         assert!(t.is_assignable_to(&u));
         assert!(!u.is_assignable_to(&t));
     }
+
+    #[test]
+    fn union_type_equality() {
+        // Member types are in the same order.
+        let u0 = Type::Union(vec![&Type::Int64, &Type::String]);
+        let u1 = Type::Union(vec![&Type::Int64, &Type::String]);
+        assert_eq!(u0, u1);
+
+        // Contains the same member types, but in a different order.
+        let u0 = Type::Union(vec![&Type::Int64, &Type::String]);
+        let u1 = Type::Union(vec![&Type::String, &Type::Int64]);
+        assert_ne!(u0, u1); // NOTE: Should we treat these types are equal?
+    }
 }
