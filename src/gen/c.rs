@@ -463,14 +463,12 @@ impl<'a, 'tcx> Emitter {
                                 Type::NativeInt => {
                                     code.push_str("%d");
                                 }
-                                Type::Tuple(_) | Type::Struct(_) => {
+                                Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
                                 }
-                                Type::Union(_) => todo!(),
-                                Type::Named(name) => {
-                                    unreachable!("untyped for the type named: {}", name)
+                                Type::Named(_) | Type::Undetermined => {
+                                    unreachable!("unexpected type: {:?}", value)
                                 }
-                                Type::Undetermined => unreachable!("untyped code"),
                             }
                         }
                         FormatSpec::Quoted(value) => match value.ty() {
@@ -514,8 +512,7 @@ impl<'a, 'tcx> Emitter {
                                 }
                             }
                         }
-                        Type::Union(_) => todo!(),
-                        Type::Tuple(_) | Type::Struct(_) => {
+                        Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => {
                             unreachable!("compound value can't be printed: {:?}", value);
                         }
                         Type::Named(name) => {

@@ -1221,7 +1221,15 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 r#let.data_mut().append_comments_from_node(expr);
                 r#let
             } else if ty.is_some() {
-                todo!("variable definition without rhs.");
+                // variable definition without rhs.
+                return if let Some(token) = it.peek() {
+                    Err(ParseError::UnexpectedToken {
+                        expected: "=".into(),
+                        actual: token,
+                    })
+                } else {
+                    Err(ParseError::PrematureEnd)
+                };
             } else {
                 Stmt::new(StmtKind::Expr(expr))
             };
