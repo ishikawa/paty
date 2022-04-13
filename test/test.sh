@@ -1679,6 +1679,20 @@ assert '1 3
   foo((2, 3))
   foo((1, 4))
   foo((2, 4))'
+assert 'T1 { value: 1 } T2 { value: "two" }
+T2 { value: "three" } T1 { value: 4 }' '
+  struct T1 { value: int64 }
+  struct T2 { value: string }
+  type U1 = (T1, T2)
+  type U2 = (T2, T1)
+  def foo(u: U1 | U2)
+    case u
+    when (x, y)
+      puts(x, y)
+    end
+  end
+  foo((T1 { value: 1 }, T2 { value: "two" }))
+  foo((T2 { value: "three" }, T1 { value: 4 }))'
 # or-pattern contains slightly different patterns.
 assert '1 2
 three 4

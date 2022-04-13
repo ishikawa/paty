@@ -1311,7 +1311,10 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
                 `Missing` should have been processed in `apply_constructors`"
             ),
-            Constructor::Or => unreachable!("can't convert to pattern: {:?}", self),
+            Constructor::Or => {
+                let pats: Vec<_> = self.iter_fields().map(|de_pat| de_pat.to_pat(cx)).collect();
+                PatternKind::Or(pats)
+            }
         };
 
         let pat = Pattern::new(kind);
