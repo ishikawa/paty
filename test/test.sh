@@ -1619,7 +1619,6 @@ true three' '
   end
   foo((1, 100))
   foo((true, "three"))'
-# variable/wildcard pattern consumes multiple choice in nested union
 assert '1 100
 true three' '
   type U1 = (int64, int64)
@@ -1680,7 +1679,6 @@ assert '1 3
   foo((2, 3))
   foo((1, 4))
   foo((2, 4))'
-
 # or-pattern contains slightly different patterns.
 assert '1 2
 three 4

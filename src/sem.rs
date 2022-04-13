@@ -165,50 +165,55 @@ pub fn analyze<'nd, 'tcx>(
         analyze_explicit_type_annotations_top_level(tcx, top_level, &named_types, &mut errors);
     }
 
-    // 3. For all function declarations, collect declarations.
-    for top_level in body {
-        if let syntax::TopLevel::Declaration(decl) = top_level {
-            if let syntax::DeclarationKind::Function(fun) = decl.kind() {
-                let sig = fun.signature();
+    // named types must be resolved
+    if errors.is_empty() {
+        // 3. For all function declarations, collect declarations.
+        for top_level in body {
+            if let syntax::TopLevel::Declaration(decl) = top_level {
+                if let syntax::DeclarationKind::Function(fun) = decl.kind() {
+                    let sig = fun.signature();
 
-                if functions.iter().any(|f| f.signature() == sig) {
-                    errors.push(SemanticErrorKind::DuplicateFunction { signature: sig }, fun);
-                } else {
-                    functions.push(fun);
+                    if functions.iter().any(|f| f.signature() == sig) {
+                        errors.push(SemanticErrorKind::DuplicateFunction { signature: sig }, fun);
+                    } else {
+                        functions.push(fun);
+                    }
                 }
             }
         }
     }
 
-    // 4. Analyze declarations and statements
-    for top_level in body {
-        match top_level {
-            syntax::TopLevel::Declaration(decl) => {
-                analyze_decl(
-                    tcx,
-                    decl,
-                    &mut scope,
-                    &mut functions,
-                    &mut named_types,
-                    &mut errors,
-                );
-            }
-            syntax::TopLevel::Stmt(stmt) => {
-                analyze_stmt(
-                    tcx,
-                    stmt,
-                    &mut scope,
-                    &functions,
-                    &mut named_types,
-                    &mut errors,
-                );
+    if errors.is_empty() {
+        // 4. Analyze declarations and statements
+        for top_level in body {
+            match top_level {
+                syntax::TopLevel::Declaration(decl) => {
+                    analyze_decl(
+                        tcx,
+                        decl,
+                        &mut scope,
+                        &mut functions,
+                        &mut named_types,
+                        &mut errors,
+                    );
+                }
+                syntax::TopLevel::Stmt(stmt) => {
+                    analyze_stmt(
+                        tcx,
+                        stmt,
+                        &mut scope,
+                        &functions,
+                        &mut named_types,
+                        &mut errors,
+                    );
+                }
             }
         }
     }
 
-    // 5. Every function's return type is inferred. Iterates call sites and
-    //    assign expression type if not assigned.
     if errors.is_empty() {
+        // 5. Every function's return type is inferred. Iterates call sites and
+        //    assign expression type if not assigned.
         for top_level in body {
             match top_level {
                 syntax::TopLevel::Declaration(decl) => {

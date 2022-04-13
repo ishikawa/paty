@@ -452,6 +452,12 @@ assert 'non-exhaustive pattern' '
   when 1
     puts(n)
   end'
+# undefined type
+assert 'cannot find named type `U`' '
+  U = 1
+  def foo(x: U)
+    x
+  end'
 
 # ---------------------------------
 # Literal Types
