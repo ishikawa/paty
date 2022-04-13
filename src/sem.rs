@@ -1464,10 +1464,7 @@ fn _analyze_pattern_context_type_one<'nd, 'tcx>(
             if pat.explicit_ty().is_none() {
                 let tuple_ty =
                     tcx.tuple(patterns.iter().map(|sub_pat| sub_pat.expect_ty()).collect());
-                // pat.assign_ty(tuple_ty);
-                if !unify_type(tuple_ty, pat, errors) {
-                    return false;
-                }
+                pat.assign_ty(tuple_ty);
             }
         }
         PatternKind::Struct(struct_pat) => {
@@ -2666,7 +2663,6 @@ mod tests_analyze_pattern {
     }
 
     #[test]
-    #[ignore]
     fn head_union_tuple_int_int_tuple_str_str_pat_tuple_var_var() {
         let type_arena = Arena::new();
         let tcx = TypeContext::new(&type_arena);
@@ -2684,7 +2680,13 @@ mod tests_analyze_pattern {
 
         assert!(pat.ty().is_some());
         assert!(pat.explicit_ty().is_none());
-        assert_eq!(pat.expect_ty(), head_ty);
+        assert_eq!(
+            pat.expect_ty(),
+            tcx.tuple(vec![
+                tcx.union([tcx.int64(), tcx.string()]),
+                tcx.union([tcx.int64(), tcx.string()])
+            ])
+        );
 
         // x: int64 | string
         assert!(var_x.ty().is_some());
@@ -2698,7 +2700,6 @@ mod tests_analyze_pattern {
     }
 
     #[test]
-    #[ignore]
     fn variable_tuple_pattern_with_union_type() {
         let type_arena = Arena::new();
         let tcx = TypeContext::new(&type_arena);
@@ -2714,12 +2715,12 @@ mod tests_analyze_pattern {
         let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
         assert!(_analyze_pattern_1(tcx, &pat, head_ty));
 
-        assert!(pat.ty().is_some());
-        assert!(pat.explicit_ty().is_none());
-        assert_eq!(pat.expect_ty(), head_ty);
-
         // sub-pattern :: int64 | string
         let int_str_ty = tcx.union([tcx.int64(), tcx.string()]);
+
+        assert!(pat.ty().is_some());
+        assert!(pat.explicit_ty().is_none());
+        assert_eq!(pat.expect_ty(), tcx.tuple(vec![int_str_ty, int_str_ty]));
 
         // x: int64 | string
         assert!(var_x.ty().is_some());

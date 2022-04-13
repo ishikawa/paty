@@ -2356,10 +2356,12 @@ mod tests_deconstructed_pat {
         assert_variant_ctor!(fields[0].ctor(), 0);
         assert_variant_ctor!(fields[1].ctor(), 1);
 
+        // sub-pattern = 1
         let fields0: Vec<_> = fields[0].fields.iter_patterns().collect();
         assert_eq!(fields0.len(), 1);
         assert_int_ctor!(fields0[0].ctor(), 1);
 
+        // sub-pattern = 2
         let fields1: Vec<_> = fields[1].fields.iter_patterns().collect();
         assert_eq!(fields1.len(), 1);
         assert_int_ctor!(fields1[0].ctor(), 2);
@@ -2387,11 +2389,12 @@ mod tests_deconstructed_pat {
         var_y.assign_ty(tcx.union([tcx.string(), tcx.int64()]));
 
         let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
-        pat.assign_ty(head_ty);
+        let pat_ty = tcx.tuple(vec![var_x.expect_ty(), var_y.expect_ty()]);
+        pat.assign_ty(pat_ty);
 
         let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
         assert!(matches!(de_pat.ctor(), Constructor::Or));
-        assert_eq!(de_pat.ty(), head_ty);
+        assert_eq!(de_pat.ty(), pat_ty);
 
         let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
         assert_eq!(fields.len(), 2);
@@ -2399,11 +2402,13 @@ mod tests_deconstructed_pat {
         assert_variant_ctor!(fields[0].ctor(), 0);
         assert_variant_ctor!(fields[1].ctor(), 1);
 
+        // sub-pattern = x
         let fields0: Vec<_> = fields[0].fields.iter_patterns().collect();
         assert_eq!(fields0.len(), 2);
         assert!(matches!(fields0[0].ctor(), Constructor::Wildcard));
         assert!(matches!(fields0[1].ctor(), Constructor::Wildcard));
 
+        // sub-pattern = y
         let fields1: Vec<_> = fields[1].fields.iter_patterns().collect();
         assert_eq!(fields1.len(), 2);
         assert!(matches!(fields1[0].ctor(), Constructor::Wildcard));
@@ -2474,7 +2479,8 @@ mod tests_check_match {
         var_y.assign_ty(tcx.union([tcx.string(), tcx.int64()]));
 
         let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
-        pat.assign_ty(head_ty);
+        let pat_ty = tcx.tuple(vec![var_x.expect_ty(), var_y.expect_ty()]);
+        pat.assign_ty(pat_ty);
 
         assert!(check_match(head_ty, [(&pat).into()], false).is_ok());
     }
