@@ -1452,17 +1452,6 @@ fn _analyze_pattern_context_type_one<'nd, 'tcx>(
                 return false;
             }
 
-            /*
-            // Every child elements conform to the expected type. If no type is
-            // explicitly specified, the expected type is accepted.
-            if pat.explicit_ty().is_none() {
-                if let Some(ty) = pat.ty() {
-                    pat.assign_ty(tcx.union([ty, expected_ty]))
-                } else {
-                    pat.assign_ty(expected_ty);
-                }
-            }
-            */
             // Every child elements conform to the expected type. Update the type of
             // a pattern with a new type constructed from sub-patterns if no type is
             // explicitly specified.
@@ -1487,8 +1476,18 @@ fn _analyze_pattern_context_type_one<'nd, 'tcx>(
                 return false;
             };
 
-            // If the expected struct type has a name, a pattern must have name too.
-            if struct_ty.name().is_some() && struct_pat.name().is_none() {
+            // Named and unnamed struct type is not compatible.
+            // And if the given pattern is named struct pattern, the given context
+            // type also be the same named struct type.
+            if match (struct_pat.name(), struct_ty.name()) {
+                (None, Some(_)) | (Some(_), None) => true,
+                (Some(pat_struct_name), Some(ty_struct_name))
+                    if pat_struct_name != ty_struct_name =>
+                {
+                    true
+                }
+                _ => false,
+            } {
                 errors.push(
                     SemanticErrorKind::MismatchedType {
                         expected: expected_ty,
@@ -1499,7 +1498,10 @@ fn _analyze_pattern_context_type_one<'nd, 'tcx>(
                 return false;
             }
 
-            if !unify_type(expected_ty, pat, errors) {
+            // If a type is explicitly specified for the given pattern,
+            // the check is failed if the expected type does not match that type.
+            // Otherwise, type inference is performed to conform to the expected type.
+            if pat.explicit_ty().is_some() && !unify_type(expected_ty, pat, errors) {
                 return false;
             }
 
@@ -1587,6 +1589,12 @@ fn _analyze_pattern_context_type_one<'nd, 'tcx>(
 
             if has_error {
                 return false;
+            } else if pat.explicit_ty().is_none() {
+                if let Some(ty) = pat.ty() {
+                    pat.assign_ty(tcx.union([ty, expected_ty]));
+                } else {
+                    pat.assign_ty(expected_ty);
+                }
             }
         }
         PatternKind::Var(_) | PatternKind::Wildcard => {
@@ -1725,29 +1733,20 @@ fn _analyze_pattern_bind_vars_one<'nd, 'tcx>(
             }
         }
         PatternKind::Struct(struct_pat) => {
-            // Struct type check
-            let struct_ty = if let Some(struct_ty) = pat.ty().and_then(|ty| ty.struct_ty()) {
-                struct_ty
-            } else {
-                return;
-            };
-
             // Fields check
             // All fields must be covered or omitted by a spread pattern.
             let pattern_fields = struct_pat.fields();
             for pat_field_or_spread in pattern_fields {
                 match pat_field_or_spread {
                     syntax::PatternFieldOrSpread::PatternField(field) => {
-                        if get_struct_field(struct_ty, field.name()).is_ok() {
-                            _analyze_pattern_bind_vars(
-                                tcx,
-                                field.pattern(),
-                                vars,
-                                functions,
-                                named_types,
-                                errors,
-                            );
-                        }
+                        _analyze_pattern_bind_vars(
+                            tcx,
+                            field.pattern(),
+                            vars,
+                            functions,
+                            named_types,
+                            errors,
+                        );
                     }
                     syntax::PatternFieldOrSpread::Spread(spread) => {
                         if let Some(spread_name) = spread.name() {

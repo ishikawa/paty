@@ -1693,6 +1693,16 @@ T2 { value: "three" } T1 { value: 4 }' '
   end
   foo((T1 { value: 1 }, T2 { value: "two" }))
   foo((T2 { value: "three" }, T1 { value: 4 }))'
+assert '1
+two' '
+  def foo(t: { value: int64 } | { value: string })
+    case t
+    when { value }
+      puts(value)
+    end
+  end
+  foo({ value: 1 })
+  foo({ value: "two" })'
 # or-pattern contains slightly different patterns.
 assert '1 2
 three 4
