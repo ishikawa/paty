@@ -35,5 +35,22 @@ assert() {
 }
 
 # todo
+# invoke function in case arm w/o foward declaration
+assert '4
+16' '
+  def foo(b: boolean)
+    case b
+    when true
+      square(2)
+    when false
+      square(4)
+    end
+  end
+  def square(n: int64)
+    n * n
+  end
+
+  puts(foo(true))
+  puts(foo(false))'
 
 echo OK

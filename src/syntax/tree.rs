@@ -311,7 +311,7 @@ impl fmt::Display for ExprKind<'_, '_> {
             } => {
                 writeln!(f, "case {}", head)?;
                 for arm in arms {
-                    writeln!(f, "when {:?}", arm.pattern())?;
+                    writeln!(f, "when {}", arm.pattern())?;
                     for stmt in arm.body() {
                         writeln!(f, "  {}", stmt)?;
                     }

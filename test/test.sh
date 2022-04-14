@@ -1754,6 +1754,26 @@ three 4' '
   end
   foo((1, "two"))
   foo(("three", 4))'
+# narrowing
+assert 'integer is 1000
+string is hello' '
+  def bar(n: int64)
+    puts("integer is", n)
+  end
+  def bar(s: string)
+    puts("string is", s)
+  end
+  def foo(v: int64 | string)
+    case v
+    when x: int64
+      bar(x)
+    when x: string
+      bar(x)
+    end
+  end
+
+  foo(1000)
+  foo("hello")'
 
 # examples
 assert 13 "$(cat examples/foo.paty)"
