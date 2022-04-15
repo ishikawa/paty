@@ -1774,6 +1774,28 @@ string is hello' '
 
   foo(1000)
   foo("hello")'
+# The return type of a function which can return multiple literal values.
+assert 'one
+zero' '
+  def to_int(b: boolean)
+    case b
+    when true
+      1
+    when false
+      0
+    end
+  end
+  def zero_or_one(n: 0 | 1)
+    case n
+    when 0
+      puts("zero")
+    when 1
+      puts("one")
+    end
+  end
+
+  true.to_int().zero_or_one()
+  false.to_int().zero_or_one()'
 
 # examples
 assert 13 "$(cat examples/foo.paty)"

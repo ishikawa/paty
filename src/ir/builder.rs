@@ -736,7 +736,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                             ret = self.build_stmt(stmt, tmp_vars, program, &mut branch_stmts);
                         }
                         if let Some(ret) = ret {
-                            let phi = Stmt::phi(t, ret);
+                            let phi = Stmt::phi(
+                                t,
+                                self.promote_to(ret, expr_ty, tmp_vars, &mut branch_stmts),
+                            );
                             branch_stmts.push(self.stmt_arena.alloc(phi));
                         }
 
@@ -755,7 +758,10 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         ret = self.build_stmt(stmt, tmp_vars, program, &mut branch_stmts);
                     }
                     if let Some(ret) = ret {
-                        let phi = Stmt::phi(t, ret);
+                        let phi = Stmt::phi(
+                            t,
+                            self.promote_to(ret, expr_ty, tmp_vars, &mut branch_stmts),
+                        );
                         branch_stmts.push(self.stmt_arena.alloc(phi));
                     }
 

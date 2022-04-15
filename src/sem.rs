@@ -1065,9 +1065,7 @@ fn analyze_expr<'nd, 'tcx>(
                 // one type. If the types of each arm contain literal types and they are not
                 // compatible, then try to widen them to its general type.
                 if let Some(ty1) = expr_ty {
-                    if let Some(widen_ty) = widen_type(tcx, ty1, arm_body_ty) {
-                        expr_ty = Some(widen_ty);
-                    }
+                    expr_ty = Some(tcx.union([ty1, arm_body_ty]));
                 }
 
                 if let Some(expected_ty) = expr_ty {
@@ -1085,9 +1083,7 @@ fn analyze_expr<'nd, 'tcx>(
 
                 // Type widening
                 if let Some(ty1) = expr_ty {
-                    if let Some(widen_ty) = widen_type(tcx, ty1, else_body_ty) {
-                        expr_ty = Some(widen_ty);
-                    }
+                    expr_ty = Some(tcx.union([ty1, else_body_ty]));
                 }
 
                 if let Some(expected_ty) = expr_ty {
@@ -1910,83 +1906,6 @@ fn analyze_call_sites_expr<'nd, 'tcx>(
         | syntax::ExprKind::Boolean(_)
         | syntax::ExprKind::String(_)
         | syntax::ExprKind::Var(_) => {}
-    }
-}
-
-/// Try to widen a given type `ty1` to `ty2`, returns the widen if it exists.
-fn widen_type<'tcx>(
-    tcx: TypeContext<'tcx>,
-    ty1: &'tcx Type<'tcx>,
-    ty2: &'tcx Type<'tcx>,
-) -> Option<&'tcx Type<'tcx>> {
-    // TODO: widen the type to an union type.
-    match (ty1, ty2) {
-        (Type::Int64, Type::LiteralInt64(_)) | (Type::LiteralInt64(_), Type::Int64) => {
-            Some(tcx.int64())
-        }
-        (Type::NativeInt, Type::LiteralInt64(_)) | (Type::LiteralInt64(_), Type::NativeInt) => {
-            Some(tcx.native_int())
-        }
-        (Type::Boolean, Type::LiteralBoolean(_)) | (Type::LiteralBoolean(_), Type::Boolean) => {
-            Some(tcx.boolean())
-        }
-        (Type::LiteralInt64(n0), Type::LiteralInt64(n1)) => {
-            if n0 != n1 {
-                Some(tcx.int64())
-            } else {
-                None
-            }
-        }
-        (Type::String, Type::LiteralString(_)) | (Type::LiteralString(_), Type::String) => {
-            Some(tcx.string())
-        }
-        (Type::LiteralString(s0), Type::LiteralString(s1)) => {
-            if s0 != s1 {
-                Some(tcx.string())
-            } else {
-                None
-            }
-        }
-        // Recursively widen types in compound types
-        (Type::Tuple(fs1), Type::Tuple(fs2)) => {
-            if fs1.len() != fs2.len() {
-                return None;
-            }
-
-            let value_types: Vec<_> = fs1
-                .iter()
-                .zip(fs2)
-                .map(|(ty1, ty2)| widen_type(tcx, ty1, ty2).unwrap_or(ty2))
-                .collect();
-            Some(tcx.tuple(value_types))
-        }
-        (Type::Struct(struct_ty1), Type::Struct(struct_ty2)) => {
-            if struct_ty1.name() != struct_ty2.name() {
-                return None;
-            }
-            if struct_ty1.fields().len() != struct_ty2.fields().len() {
-                return None;
-            }
-
-            let fields: Vec<_> = struct_ty1
-                .fields()
-                .iter()
-                .zip(struct_ty2.fields())
-                .map(|(f1, f2)| {
-                    assert!(f1.name() == f2.name());
-                    let ty = widen_type(tcx, f1.ty(), f2.ty()).unwrap_or_else(|| f1.ty());
-
-                    TypedField::new(f1.name().to_string(), ty)
-                })
-                .collect();
-
-            if let Some(struct_name) = struct_ty1.name() {
-                Some(tcx.struct_ty(struct_name.to_string(), fields))
-            } else {
-                Some(tcx.anon_struct_ty(fields))
-            }
-        }
-        _ => None,
     }
 }
 
