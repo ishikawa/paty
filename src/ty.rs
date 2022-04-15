@@ -90,10 +90,15 @@ impl<'tcx> TypeContext<'tcx> {
         // Finally, the array should contain the fewest number of types. Iterates given types and
         // adds a subsequent type if there is no type wider than that type.
         let member_types = flatten_union_ty(member_types);
-        let mut tys = vec![];
+        let mut tys: Vec<&Type<'_>> = vec![];
 
         'outer: for (i, t1) in member_types.iter().enumerate() {
             for t2 in member_types.iter().skip(i + 1) {
+                if t1.is_assignable_to(t2) {
+                    continue 'outer;
+                }
+            }
+            for t2 in tys.iter() {
                 if t1.is_assignable_to(t2) {
                     continue 'outer;
                 }
@@ -712,5 +717,26 @@ mod tests_types {
         let u0 = Type::Union(vec![&Type::Int64, &Type::String]);
         let u1 = Type::Union(vec![&Type::String, &Type::Int64]);
         assert_ne!(u0, u1); // NOTE: Should we treat these types are equal?
+    }
+
+    #[test]
+    fn tcx_union() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // reduce to a type
+        let ty = tcx.union([&Type::Int64]);
+        assert_eq!(ty, &Type::Int64);
+        let ty = tcx.union([&Type::Int64, &Type::Int64]);
+        assert_eq!(ty, &Type::Int64);
+        let ty = tcx.union([&Type::Int64, &Type::LiteralInt64(1)]);
+        assert_eq!(ty, &Type::Int64);
+
+        // union
+        let ty = tcx.union([&Type::LiteralInt64(1), &Type::LiteralInt64(2)]);
+        assert_eq!(
+            ty,
+            &Type::Union(vec![&Type::LiteralInt64(1), &Type::LiteralInt64(2)])
+        );
     }
 }
