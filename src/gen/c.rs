@@ -1,10 +1,9 @@
 //! C code generator
-use std::collections::HashSet;
-
-use super::ir::{
+use crate::ir::inst::{
     CallingConvention, Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar,
 };
-use crate::ty::{FunctionSignature, Type};
+use crate::ty::{expand_union_ty_array, FunctionSignature, Type};
+use std::collections::HashSet;
 
 #[derive(Debug)]
 pub struct Emitter {}
@@ -73,15 +72,15 @@ impl<'a, 'tcx> Emitter {
 
         // Emit C struct.
         // Note that C structure have to contain at least one member.
-        let emit_type = c_type(ty);
+        let c_type_str = c_type(ty);
 
-        if emitted_c_types.contains(&emit_type) {
+        if emitted_c_types.contains(&c_type_str) {
             return;
         }
 
         match ty {
             Type::Tuple(fs) => {
-                code.push_str(&emit_type);
+                code.push_str(&c_type_str);
                 code.push_str(" {\n");
 
                 for (i, fty) in fs.iter().enumerate() {
@@ -95,7 +94,7 @@ impl<'a, 'tcx> Emitter {
                 code.push_str("};\n\n");
             }
             Type::Struct(struct_ty) => {
-                code.push_str(&emit_type);
+                code.push_str(&c_type_str);
                 code.push_str(" {\n");
                 for f in struct_ty.fields() {
                     if !f.ty().is_zero_sized() {
@@ -104,6 +103,27 @@ impl<'a, 'tcx> Emitter {
                         code.push_str(&format!("{};\n", f.name()));
                     }
                 }
+                code.push_str("};\n\n");
+            }
+            Type::Union(member_types) => {
+                let member_types = expand_union_ty_array(member_types);
+                code.push_str(&c_type_str);
+                code.push_str(" {\n");
+
+                // tag filed
+                code.push_str(&c_type(&Type::Int64));
+                code.push(' ');
+                code.push_str("tag;\n");
+
+                // union
+                code.push_str("union {\n");
+                for (tag, mty) in member_types.iter().enumerate() {
+                    code.push_str(&c_type(mty));
+                    code.push(' ');
+                    code.push_str(&format!("_{};\n", tag));
+                }
+                code.push_str("} u;\n");
+
                 code.push_str("};\n\n");
             }
             Type::Int64
@@ -122,7 +142,7 @@ impl<'a, 'tcx> Emitter {
             Type::Undetermined => unreachable!("untyped code"),
         };
 
-        emitted_c_types.insert(emit_type);
+        emitted_c_types.insert(c_type_str);
     }
 
     fn emit_function_declaration(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
@@ -171,10 +191,16 @@ impl<'a, 'tcx> Emitter {
         // body
         code.push_str("{\n");
         for param in &fun.params {
-            // Emit code to ignore unused variable.
-            if let Parameter::TmpVar(t) = param {
-                if t.used() == 0 {
-                    code.push_str(&format!("(void){};\n", tmp_var(t)));
+            if !param.ty().is_zero_sized() {
+                // Emit code to ignore unused variable.
+                if let Parameter::TmpVar(t) = param {
+                    if t.used() == 0 {
+                        code.push_str(&format!("(void){};\n", tmp_var(t)));
+                    }
+                }
+                // TODO: Don't emit `(void)...` unless it is needed.
+                else if let Parameter::Var(var) = param {
+                    code.push_str(&format!("(void){};\n", var.name()));
                 }
             }
         }
@@ -188,7 +214,7 @@ impl<'a, 'tcx> Emitter {
     fn emit_stmt(&mut self, stmt: &Stmt<'a, 'tcx>, code: &mut String) {
         match stmt {
             Stmt::TmpVarDef(def) => {
-                if !def.pruned() && !def.init().ty().is_zero_sized() {
+                if !def.init().ty().is_zero_sized() {
                     // If a temporary variable is not referenced from anywhere,
                     // we don't emit an assignment statement.
                     if def.var().used() > 0 {
@@ -198,11 +224,9 @@ impl<'a, 'tcx> Emitter {
                         code.push_str(" = ");
                     }
 
-                    // Emit init statement if needed
-                    if def.var().used() > 0 || def.init().has_side_effect() {
-                        self.emit_expr(def.init(), code);
-                        code.push_str(";\n");
-                    }
+                    // Emit init statement
+                    self.emit_expr(def.init(), code);
+                    code.push_str(";\n");
                 }
             }
             Stmt::VarDef(def) => {
@@ -223,25 +247,23 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push_str(";\n");
             }
-            Stmt::Phi { var, value, pruned } => {
-                if !pruned.get() {
-                    if var.used() > 0 {
-                        code.push_str(&tmp_var(var));
-                        code.push_str(" = ");
-                    }
-                    self.emit_expr(value, code);
-                    code.push_str(";\n");
+            Stmt::Phi(phi) => {
+                if phi.var().used() > 0 {
+                    code.push_str(&tmp_var(phi.var()));
+                    code.push_str(" = ");
                 }
+                self.emit_expr(phi.value(), code);
+                code.push_str(";\n");
             }
-            Stmt::Cond { branches, var } => {
-                if var.used() > 0 {
-                    code.push_str(&c_type(var.ty()));
+            Stmt::Cond(cond) => {
+                if cond.var.used() > 0 {
+                    code.push_str(&c_type(cond.var.ty()));
                     code.push(' ');
-                    code.push_str(&tmp_var(var));
+                    code.push_str(&tmp_var(cond.var));
 
                     // Initialize with zero value.
                     code.push_str(" = ");
-                    code.push_str(zero_value(var.ty()));
+                    code.push_str(zero_value(cond.var.ty()));
 
                     code.push_str(";\n");
                 }
@@ -249,7 +271,7 @@ impl<'a, 'tcx> Emitter {
                 // Construct "if-else" statement from each branches.
                 // If a branch has only one branch and it has no condition,
                 // this loop finally generate a block statement.
-                for (i, branch) in branches.iter().enumerate() {
+                for (i, branch) in cond.branches.iter().enumerate() {
                     if i > 0 {
                         code.push_str("else ");
                     }
@@ -279,7 +301,9 @@ impl<'a, 'tcx> Emitter {
             }
             ExprKind::Not(operand) => {
                 code.push('!');
+                code.push('(');
                 self.emit_expr(operand, code);
+                code.push(')');
             }
             ExprKind::Add(lhs, rhs) => {
                 code.push('(');
@@ -362,27 +386,23 @@ impl<'a, 'tcx> Emitter {
                 code.push(')');
             }
             ExprKind::CondAndAssign { cond, var } => {
-                let mut emitted = false;
-
                 code.push('(');
-                if let Some(cond) = cond {
-                    self.emit_expr(cond, code);
-                    emitted = true;
-                }
-
-                if var.used() > 0 {
-                    if emitted {
+                // TODO: Optimization: replace CondAndAssign with Expr if used == 0
+                if var.used() == 0 {
+                    if let Some(cond) = cond {
+                        self.emit_expr(cond, code);
+                    } else {
+                        code.push_str("true");
+                    }
+                } else {
+                    if let Some(cond) = cond {
+                        self.emit_expr(cond, code);
                         code.push_str(" && ");
                     }
                     code.push('(');
                     code.push_str(&tmp_var(var));
                     code.push_str(" = true");
                     code.push(')');
-                    emitted = true;
-                }
-
-                if !emitted {
-                    code.push_str("true");
                 }
                 code.push(')');
             }
@@ -443,13 +463,12 @@ impl<'a, 'tcx> Emitter {
                                 Type::NativeInt => {
                                     code.push_str("%d");
                                 }
-                                Type::Tuple(_) | Type::Struct(_) => {
+                                Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => {
                                     unreachable!("compound value can't be printed: {:?}", value);
                                 }
-                                Type::Named(name) => {
-                                    unreachable!("untyped for the type named: {}", name)
+                                Type::Named(_) | Type::Undetermined => {
+                                    unreachable!("unexpected type: {:?}", value)
                                 }
-                                Type::Undetermined => unreachable!("untyped code"),
                             }
                         }
                         FormatSpec::Quoted(value) => match value.ty() {
@@ -481,7 +500,7 @@ impl<'a, 'tcx> Emitter {
                             self.emit_expr(value, code);
                         }
                         Type::Boolean | Type::LiteralBoolean(_) => {
-                            match immediate(value).kind() {
+                            match value.kind() {
                                 ExprKind::Bool(true) => code.push_str("\"true\""),
                                 ExprKind::Bool(false) => code.push_str("\"false\""),
                                 _ => {
@@ -493,7 +512,7 @@ impl<'a, 'tcx> Emitter {
                                 }
                             }
                         }
-                        Type::Tuple(_) | Type::Struct(_) => {
+                        Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => {
                             unreachable!("compound value can't be printed: {:?}", value);
                         }
                         Type::Named(name) => {
@@ -504,15 +523,32 @@ impl<'a, 'tcx> Emitter {
                 }
                 code.push(')');
             }
-            ExprKind::Int64(n) => {
-                match expr.ty() {
-                    Type::Int64 | Type::LiteralInt64(_) => {
-                        // Use standard macros for integer constant expression to expand
-                        // a value to the type int_least_N.
-                        code.push_str(&format!("INT64_C({})", *n))
+            &ExprKind::Int64(n) => {
+                // We have to use INT_MIN macro to represent the minimum value of
+                // 64 bit integers.
+                //
+                // There is no such thing as negative literal in C/C++: just the unary
+                // negative operator with a positive integer which produces a compile time
+                // evaluated constant.
+                //
+                // `9223372036854775808` is too big to fit into a 64 bit signed integral type,
+                // so the behavior of negating this and assigning to a signed 64 bit integral
+                // type is implementation defined.
+                match n {
+                    // prints INT_XXX macro directory
+                    i64::MIN => code.push_str("INT64_MIN"),
+                    i64::MAX => code.push_str("INT64_MAX"),
+                    _ => {
+                        match expr.ty() {
+                            Type::Int64 | Type::LiteralInt64(_) => {
+                                // Use standard macros for integer constant expression to expand
+                                // a value to the type int_least_N.
+                                code.push_str(&format!("INT64_C({})", n))
+                            }
+                            Type::NativeInt => code.push_str(&n.to_string()),
+                            _ => unreachable!("Unexpected integral type: {}", expr.ty()),
+                        }
                     }
-                    Type::NativeInt => code.push_str(&format!("{}", *n)),
-                    _ => unreachable!("Unexpected integral type: {}", expr.ty()),
                 }
             }
             ExprKind::Bool(b) => {
@@ -558,7 +594,7 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(&c_type(expr.ty()));
                 code.push(')');
 
-                // Initialize tuple struct with designated initializers.
+                // Initialize struct with designated initializers.
                 code.push('{');
 
                 let mut peekable = fs.iter().peekable();
@@ -586,25 +622,35 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".{}", name));
             }
+            ExprKind::UnionTag(operand) => {
+                self.emit_expr(operand, code);
+                code.push_str(".tag");
+            }
+            ExprKind::UnionMemberAccess { operand, tag } => {
+                self.emit_expr(operand, code);
+                code.push_str(&format!(".u._{}", tag));
+            }
+            ExprKind::UnionValue { value, tag } => {
+                // Specify struct type explicitly.
+                code.push('(');
+                code.push_str(&c_type(expr.ty()));
+                code.push(')');
+
+                // Initialize tagged union struct with designated initializers.
+                code.push('{');
+                code.push_str(&format!(".tag = {}, ", tag));
+                code.push_str(".u = {");
+                code.push_str(&format!("._{} = ", tag));
+                self.emit_expr(value, code);
+                code.push('}');
+                code.push('}');
+            }
             ExprKind::TmpVar(t) => {
-                if let Some(expr) = t.immediate() {
-                    self.emit_expr(expr, code);
-                } else {
-                    code.push_str(&tmp_var(t));
-                }
+                code.push_str(&tmp_var(t));
             }
             ExprKind::Var(var) => code.push_str(var.name()),
         }
     }
-}
-
-fn immediate<'a, 'tcx>(expr: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
-    if let ExprKind::TmpVar(t) = expr.kind() {
-        if let Some(expr) = t.immediate() {
-            return expr;
-        }
-    }
-    expr
 }
 
 fn tmp_var(t: &TmpVar) -> String {
@@ -617,7 +663,7 @@ fn c_type(ty: &Type) -> String {
         Type::Boolean | Type::LiteralBoolean(_) => "bool".to_string(),
         Type::String | Type::LiteralString(_) => "const char *".to_string(),
         Type::NativeInt => "int".to_string(),
-        Type::Tuple(_) | Type::Struct(_) => {
+        Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => {
             let mut buffer = String::new();
             encode_ty(ty, &mut buffer);
             format!("struct _{}", buffer)
@@ -638,7 +684,7 @@ fn zero_value(ty: &Type) -> &'static str {
         | Type::LiteralInt64(_)
         | Type::LiteralBoolean(_)
         | Type::LiteralString(_) => "0",
-        Type::Tuple(_) | Type::Struct(_) => "{0}",
+        Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => "{0}",
         Type::Named(named_ty) => zero_value(named_ty.expect_ty()),
         Type::Undetermined => unreachable!("untyped code"),
     }
@@ -669,6 +715,14 @@ fn escape_c_string(value: &str) -> String {
 ///
 /// Types that are represented as the same structure in the C language must
 /// return the same string.
+///
+/// ## 64 bits Integer type
+///
+/// ```ignore
+/// +-----+
+/// | "n" |
+/// +-----+
+/// ```
 ///
 /// ## Integer types
 ///
@@ -708,6 +762,14 @@ fn escape_c_string(value: &str) -> String {
 /// +-----+-------+
 /// ```
 ///
+/// ## Union type
+///
+/// ```ignore
+/// +-----+---------------------------+---------------+
+/// | "U" | digits (number of fields) | (field types) |
+/// +-----+---------------------------+---------------+
+/// ```
+///
 /// ## Other types (including literal types)
 ///
 /// NOTE: We don't care a type is literal type or not to make it compatible in
@@ -721,7 +783,7 @@ fn escape_c_string(value: &str) -> String {
 ///
 fn encode_ty(ty: &Type, buffer: &mut String) {
     match ty {
-        Type::Int64 | Type::LiteralInt64(_) => buffer.push_str("i64"),
+        Type::Int64 | Type::LiteralInt64(_) => buffer.push('n'),
         Type::Boolean | Type::LiteralBoolean(_) => buffer.push('b'),
         Type::String | Type::LiteralString(_) => buffer.push('s'),
         Type::NativeInt => buffer.push_str("ni"),
@@ -730,6 +792,15 @@ fn encode_ty(ty: &Type, buffer: &mut String) {
             buffer.push_str(&fs.len().to_string());
             for fty in fs {
                 encode_ty(fty, buffer);
+            }
+        }
+        Type::Union(member_types) => {
+            let member_types = expand_union_ty_array(member_types);
+
+            buffer.push('U');
+            buffer.push_str(&member_types.len().to_string());
+            for mty in member_types {
+                encode_ty(mty, buffer);
             }
         }
         Type::Struct(struct_ty) => {

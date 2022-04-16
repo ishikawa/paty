@@ -1,12 +1,12 @@
 //! Based on usefulness algorithm in Rust:
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/usefulness.rs
 //! - https://github.com/rust-lang/rust/blob/d331cb710f0/compiler/rustc_mir_build/src/thir/pattern/deconstruct_pat.rs
-use super::error::SemanticError;
+use super::error::{SemanticError, SemanticErrorKind};
 use crate::syntax::token::RangeEnd;
 use crate::syntax::{
-    CaseArm, Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
+    Pattern, PatternField, PatternFieldOrSpread, PatternKind, StructPattern, Typable,
 };
-use crate::ty::Type;
+use crate::ty::{expand_union_ty, expand_union_ty_array, Type};
 use std::iter;
 use std::{
     cell::Cell,
@@ -29,10 +29,8 @@ pub struct PatContext<'a, 'p, 'tcx> {
     /// Type of the current column under investigation.
     pub ty: &'tcx Type<'tcx>,
     /// Whether the current pattern is the whole pattern as found in a match arm, or if it's a
-    /// subpattern.
+    /// sub pattern.
     pub(super) is_top_level: bool,
-    /// Wether the current pattern is from a `non_exhaustive` enum.
-    pub(super) is_non_exhaustive: bool,
 }
 
 /// An inclusive interval, used for precise integer exhaustiveness checking.
@@ -125,7 +123,7 @@ impl IntRange {
         (*self.range.start(), *self.range.end())
     }
 
-    fn is_subrange(&self, other: &Self) -> bool {
+    fn is_sub_range(&self, other: &Self) -> bool {
         other.range.start() <= self.range.start() && self.range.end() <= other.range.end()
     }
 
@@ -171,7 +169,7 @@ impl IntRange {
         if self.intersection(other).is_some() {
             // Constructor splitting should ensure that all intersections we encounter are actually
             // inclusions.
-            assert!(self.is_subrange(other));
+            assert!(self.is_sub_range(other));
             true
         } else {
             false
@@ -202,7 +200,7 @@ enum IntBorder {
     AfterMax,
 }
 
-/// A range of integers that is partitioned into disjoint subranges. This does constructor
+/// A range of integers that is partitioned into disjoint sub ranges. This does constructor
 /// splitting for integer ranges as explained at the top of the file.
 ///
 /// This is fed multiple ranges, and returns an output that covers the input, but is split so that
@@ -321,8 +319,12 @@ pub(super) struct SplitWildcard {
 }
 
 impl<'tcx> SplitWildcard {
-    pub(super) fn new(pcx: PatContext) -> Self {
-        let all_ctors = match pcx.ty {
+    pub fn new(pcx: PatContext) -> Self {
+        Self::from_ty(pcx.ty)
+    }
+
+    fn from_ty(ty: &Type<'tcx>) -> Self {
+        let all_ctors = match ty {
             Type::Int64 => {
                 let ctor = Constructor::IntRange(IntRange::from_range(
                     i64::MIN,
@@ -363,9 +365,20 @@ impl<'tcx> SplitWildcard {
             }
             Type::LiteralString(s) => vec![Constructor::Str(s.to_string())],
             Type::Tuple(_) | Type::Struct(_) => vec![Constructor::Single],
+            Type::Union(member_types) => {
+                let member_types = expand_union_ty_array(member_types);
+                member_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| Constructor::Variant(VariantIdx(i)))
+                    .collect()
+            }
+            Type::Named(named_ty) => {
+                return Self::from_ty(named_ty.expect_ty());
+            }
             // This type is one for which we cannot list constructors, like `str` or `f64`.
-            Type::String | Type::Named(_) | Type::Undetermined => vec![Constructor::NonExhaustive],
-            Type::NativeInt => unreachable!("Native C types are not supported."),
+            Type::String => vec![Constructor::NonExhaustive],
+            Type::NativeInt | Type::Undetermined => unreachable!("type {} is not supported.", ty),
         };
 
         SplitWildcard {
@@ -438,17 +451,7 @@ impl<'tcx> SplitWildcard {
             // sometimes prefer reporting the list of constructors instead of just `_`.
             let report_when_all_missing = pcx.is_top_level && !IntRange::is_integral(pcx.ty);
             let ctor = if !self.matrix_ctors.is_empty() || report_when_all_missing {
-                if pcx.is_non_exhaustive {
-                    Constructor::Missing {
-                        nonexhaustive_enum_missing_real_variants: self
-                            .iter_missing(pcx)
-                            .any(|c| !(c.is_non_exhaustive() || c.is_unstable_variant(pcx))),
-                    }
-                } else {
-                    Constructor::Missing {
-                        nonexhaustive_enum_missing_real_variants: false,
-                    }
-                }
+                Constructor::Missing
             } else {
                 Constructor::Wildcard
             };
@@ -492,14 +495,14 @@ impl<'p, 'tcx> PatStack<'p, 'tcx> {
         self.pats.iter().copied()
     }
 
-    // Recursively expand the first pattern into its subpatterns. Only useful if the pattern is an
+    // Recursively expand the first pattern into its sub patterns. Only useful if the pattern is an
     // or-pattern. Panics if `self` is empty.
     fn expand_or_pat<'a>(&'a self) -> impl Iterator<Item = PatStack<'p, 'tcx>> + 'a {
         self.head().iter_fields().map(move |pat| {
-            let mut new_patstack = PatStack::from_pattern(pat);
+            let mut new_pat_stack = PatStack::from_pattern(pat);
 
-            new_patstack.pats.extend_from_slice(&self.pats[1..]);
-            new_patstack
+            new_pat_stack.pats.extend_from_slice(&self.pats[1..]);
+            new_pat_stack
         })
     }
 
@@ -620,6 +623,9 @@ impl<'p, 'tcx> fmt::Debug for PatStack<'p, 'tcx> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+pub struct VariantIdx(pub usize);
+
 /// A value can be decomposed into a constructor applied to some fields. This struct represents
 /// the constructor. See also `Fields`.
 ///
@@ -633,6 +639,8 @@ pub enum Constructor {
     /// The constructor for patterns that have a single constructor, like tuples, struct patterns
     /// and fixed-length arrays.
     Single,
+    /// Enum variants.
+    Variant(VariantIdx),
     /// Ranges of integer literal values (`2`, `2..=5` or `2..5`).
     IntRange(IntRange),
     /// String constant
@@ -643,9 +651,7 @@ pub enum Constructor {
     /// Stands for constructors that are not seen in the matrix, as explained in the documentation
     /// for [`SplitWildcard`]. The carried `bool` is used for the `non_exhaustive_omitted_patterns`
     /// lint.
-    Missing {
-        nonexhaustive_enum_missing_real_variants: bool,
-    },
+    Missing,
     /// Wildcard pattern.
     Wildcard,
     /// Or-pattern.
@@ -671,18 +677,6 @@ impl<'tcx> Constructor {
         }
     }
 
-    pub(super) fn is_non_exhaustive(&self) -> bool {
-        matches!(self, Self::NonExhaustive)
-    }
-
-    /// Checks if the `Constructor` is a variant and `TyCtxt::eval_stability` returns
-    /// `EvalResult::Deny { .. }`.
-    ///
-    /// This means that the variant has a stdlib unstable feature marking it.
-    pub fn is_unstable_variant(&self, _pcx: PatContext<'_, '_, 'tcx>) -> bool {
-        false
-    }
-
     /// The number of fields for this constructor. This must be kept in sync with
     /// `Fields::wildcards`.
     pub fn arity(&self, pcx: PatContext<'_, '_, 'tcx>) -> usize {
@@ -692,6 +686,8 @@ impl<'tcx> Constructor {
                 Type::Struct(struct_ty) => struct_ty.fields().len(),
                 _ => unreachable!("Unexpected type for `Single` constructor: {:?}", pcx.ty),
             },
+            // Union member always has an inner field.
+            Self::Variant(VariantIdx(_)) => 1,
             Self::Wildcard
             | Self::IntRange(_)
             | Self::Str(_)
@@ -711,8 +707,9 @@ impl<'tcx> Constructor {
             // Wildcards cover anything
             (_, Self::Wildcard) => true,
             // The missing ctors are not covered by anything in the matrix except wildcards.
-            (Self::Missing { .. } | Self::Wildcard, _) => false,
+            (Self::Missing | Self::Wildcard, _) => false,
             (Self::Single, Self::Single) => true,
+            (Self::Variant(self_id), Self::Variant(other_id)) => self_id == other_id,
             (Self::IntRange(self_range), Self::IntRange(other_range)) => {
                 self_range.is_covered_by(other_range)
             }
@@ -738,6 +735,9 @@ impl<'tcx> Constructor {
         match self {
             // If `self` is `Single`, `used_ctors` cannot contain anything else than `Single`s.
             Self::Single => !used_ctors.is_empty(),
+            Self::Variant(vid) => used_ctors
+                .iter()
+                .any(|c| matches!(c, Self::Variant(i) if i == vid)),
             Self::IntRange(range) => used_ctors
                 .iter()
                 .filter_map(|c| c.as_int_range())
@@ -756,7 +756,7 @@ impl<'tcx> Constructor {
 
     /// Some constructors (namely `Wildcard`, `IntRange` and `Slice`) actually stand for a set of actual
     /// constructors (like variants, integers or fixed-sized slices). When specializing for these
-    /// constructors, we want to be specialising for the actual underlying constructors.
+    /// constructors, we want to be specializing for the actual underlying constructors.
     /// Naively, we would simply return the list of constructors they correspond to. We instead are
     /// more clever: if there are constructors that we know will behave the same wrt the current
     /// matrix, we keep them grouped. For example, all slices of a sufficiently large length
@@ -767,7 +767,7 @@ impl<'tcx> Constructor {
     /// This function may discard some irrelevant constructors if this preserves behavior and
     /// diagnostics. Eg. for the `_` case, we ignore the constructors already present in the
     /// matrix, unless all of them are.
-    pub(super) fn split<'a>(
+    pub fn split<'a>(
         &self,
         pcx: PatContext<'_, '_, 'tcx>,
         ctors: impl Iterator<Item = &'a Constructor> + Clone,
@@ -797,7 +797,7 @@ impl<'tcx> Constructor {
 ///
 /// This is constructed for a constructor using [`Fields::wildcards()`]. The idea is that
 /// [`Fields::wildcards()`] constructs a list of fields where all entries are wildcards, and then
-/// given a pattern we fill some of the fields with its subpatterns.
+/// given a pattern we fill some of the fields with its sub patterns.
 /// In the following example `Fields::wildcards` returns `[_, _, _, _]`. Then in
 /// `extract_pattern_arguments` we fill some of the entries, and the result is
 /// `[Some(0), _, _, _]`.
@@ -832,6 +832,10 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
     }
     */
 
+    pub fn from_one(cx: &MatchCheckContext<'p, 'tcx>, field: DeconstructedPat<'p, 'tcx>) -> Self {
+        Self::from_iter(cx, once(field))
+    }
+
     pub fn from_iter(
         cx: &MatchCheckContext<'p, 'tcx>,
         fields: impl IntoIterator<Item = DeconstructedPat<'p, 'tcx>>,
@@ -844,11 +848,33 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
         Fields { fields }
     }
 
-    fn wildcards_from_tys(
+    fn wildcards_from_field_types(
         cx: &MatchCheckContext<'p, 'tcx>,
         tys: impl IntoIterator<Item = &'tcx Type<'tcx>>,
     ) -> Self {
         Fields::from_iter(cx, tys.into_iter().map(DeconstructedPat::wildcard))
+    }
+
+    fn wildcards_from_type(cx: &MatchCheckContext<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
+        match ty.bottom_ty() {
+            Type::Tuple(fs) => {
+                Fields::wildcards_from_field_types(cx, fs.iter().map(|ty| ty.bottom_ty()))
+            }
+            Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
+                cx,
+                struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
+            ),
+            Type::Int64
+            | Type::NativeInt
+            | Type::Boolean
+            | Type::String
+            | Type::LiteralInt64(_)
+            | Type::LiteralBoolean(_)
+            | Type::LiteralString(_) => Fields::wildcards_from_field_types(cx, iter::once(ty)),
+            Type::Union(_) | Type::Named(_) | Type::Undetermined => {
+                unreachable!("unhandled type for wildcards: {:?}", ty)
+            }
+        }
     }
 
     /// Creates a new list of wildcard fields for a given constructor. The result must have a
@@ -860,15 +886,33 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
     ) -> Self {
         match constructor {
             Constructor::Single => match ty.bottom_ty() {
-                Type::Tuple(fs) => Fields::wildcards_from_tys(cx, fs.iter().copied()),
-                Type::Struct(struct_ty) => Fields::wildcards_from_tys(
+                Type::Tuple(fs) => {
+                    Fields::wildcards_from_field_types(cx, fs.iter().map(|ty| ty.bottom_ty()))
+                }
+                Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
                     cx,
                     struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
                 ),
-                Type::String | Type::LiteralString(_) => {
-                    Fields::wildcards_from_tys(cx, iter::once(ty))
-                }
                 ty => unreachable!("Unexpected type for `Single` constructor: {:?}", ty),
+            },
+            Constructor::Variant(idx) => match ty.bottom_ty() {
+                Type::Union(member_types) => {
+                    let member_types = expand_union_ty_array(member_types);
+
+                    assert!(idx.0 < member_types.len());
+                    match member_types[idx.0] {
+                        Type::Tuple(fs) => Fields::wildcards_from_field_types(
+                            cx,
+                            fs.iter().map(|ty| ty.bottom_ty()),
+                        ),
+                        Type::Struct(struct_ty) => Fields::wildcards_from_field_types(
+                            cx,
+                            struct_ty.fields().iter().map(|f| f.ty().bottom_ty()),
+                        ),
+                        mty => Fields::wildcards_from_field_types(cx, iter::once(mty)),
+                    }
+                }
+                ty => unreachable!("Unexpected type for `Variant` constructor: {:?}", ty),
             },
             Constructor::IntRange(..)
             | Constructor::Str(..)
@@ -882,7 +926,7 @@ impl<'p, 'tcx> Fields<'p, 'tcx> {
     /// Returns the list of patterns.
     pub fn iter_patterns<'a>(
         &'a self,
-    ) -> impl Iterator<Item = &'p DeconstructedPat<'p, 'tcx>> + 'a {
+    ) -> impl ExactSizeIterator<Item = &'p DeconstructedPat<'p, 'tcx>> + 'a {
         self.fields.iter()
     }
 }
@@ -902,17 +946,41 @@ pub struct DeconstructedPat<'p, 'tcx> {
 }
 
 impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
-    pub(super) fn wildcard(ty: &'tcx Type<'tcx>) -> Self {
-        Self::new(Constructor::Wildcard, Fields::empty(), ty)
-    }
-
-    pub(super) fn new(ctor: Constructor, fields: Fields<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
+    pub fn new(ctor: Constructor, fields: Fields<'p, 'tcx>, ty: &'tcx Type<'tcx>) -> Self {
         DeconstructedPat {
             ctor,
             fields,
             ty: ty.bottom_ty(),
             reachable: Cell::new(false),
         }
+    }
+
+    pub fn from_i64(value: i64, ty: &'tcx Type<'tcx>) -> Self {
+        let ctor = Constructor::IntRange(IntRange::from_i64(value));
+        let fields = Fields::empty();
+        Self::new(ctor, fields, ty)
+    }
+
+    pub fn from_bool(b: bool, ty: &'tcx Type<'tcx>) -> Self {
+        let ctor = Constructor::IntRange(IntRange::from_bool(b));
+        let fields = Fields::empty();
+        Self::new(ctor, fields, ty)
+    }
+
+    pub fn from_range(lo: i64, hi: i64, ty: &'tcx Type<'tcx>, end: RangeEnd) -> Self {
+        let ctor = Constructor::IntRange(IntRange::from_range(lo, hi, ty, end));
+        let fields = Fields::empty();
+        Self::new(ctor, fields, ty)
+    }
+
+    pub fn from_string(value: String, ty: &'tcx Type<'tcx>) -> Self {
+        let ctor = Constructor::Str(value);
+        let fields = Fields::empty();
+        Self::new(ctor, fields, ty)
+    }
+
+    pub fn wildcard(ty: &'tcx Type<'tcx>) -> Self {
+        Self::new(Constructor::Wildcard, Fields::empty(), ty)
     }
 
     /// Construct a pattern that matches everything that starts with this constructor.
@@ -929,87 +997,273 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         DeconstructedPat::new(self.ctor.clone(), self.fields, self.ty)
     }
 
-    pub fn from_pat(cx: &MatchCheckContext<'p, 'tcx>, pat: &Pattern<'_, 'tcx>) -> Self {
+    pub fn from_pat(
+        cx: &MatchCheckContext<'p, 'tcx>,
+        pat: &Pattern<'_, 'tcx>,
+        context_ty: &'tcx Type<'tcx>,
+    ) -> Self {
+        // If the context type is an union type, each pattern should be one/some of
+        // member(s) of it.
+        match (pat.kind(), context_ty) {
+            (PatternKind::Var(_) | PatternKind::Wildcard, _) if pat.explicit_ty().is_some() => {
+                Self::_from_pat(cx, pat, context_ty)
+            }
+            (PatternKind::Or(_), _) => Self::_from_pat(cx, pat, context_ty),
+            (_, Type::Union(member_types)) => {
+                Self::_from_pat_to_union_variants(cx, member_types.iter().copied(), pat)
+            }
+            (_, _) => Self::_from_pat(cx, pat, context_ty),
+        }
+    }
+    fn _from_pat_to_union_variants(
+        cx: &MatchCheckContext<'p, 'tcx>,
+        member_types: impl IntoIterator<Item = &'tcx Type<'tcx>>,
+        pat: &Pattern<'_, 'tcx>,
+    ) -> Self {
         let pat_ty = pat.expect_ty().bottom_ty();
+        let member_types = expand_union_ty(member_types);
 
-        let ctor;
-        let fields;
-        match pat.kind() {
-            PatternKind::Var(_) | PatternKind::Wildcard => {
-                ctor = Constructor::Wildcard;
-                fields = Fields::empty();
-            }
-            PatternKind::Integer(value) => {
-                let int_range = IntRange::from_i64(*value);
+        let mut pats: Vec<_> = member_types
+            .iter()
+            .enumerate()
+            .filter_map(|(tag, member_ty)| {
+                let ctor = Constructor::Variant(VariantIdx(tag));
 
-                ctor = Constructor::IntRange(int_range);
-                fields = Fields::empty();
-            }
-            PatternKind::Boolean(b) => {
-                let int_range = IntRange::from_bool(*b);
+                // Create a constant field if the pattern type contains some of
+                // the members of the union type. Handle this first to check
+                // usefulness of range pattern properly.
+                if pat_ty.is_assignable_to(member_ty) {
+                    let de_pat = Self::_from_pat(cx, pat, pat_ty);
 
-                ctor = Constructor::IntRange(int_range);
-                fields = Fields::empty();
-            }
-            PatternKind::Range { lo, hi, end } => {
-                let int_range = IntRange::from_range(*lo, *hi, pat_ty, *end);
-
-                ctor = Constructor::IntRange(int_range);
-                fields = Fields::empty();
-            }
-            PatternKind::String(s) => {
-                ctor = Constructor::Str(s.clone());
-                fields = Fields::empty();
-            }
-            PatternKind::Tuple(sub_pats) => {
-                ctor = Constructor::Single;
-                let pats: Vec<_> = sub_pats
-                    .iter()
-                    .map(|pat| DeconstructedPat::from_pat(cx, pat))
-                    .collect();
-
-                fields = Fields::from_iter(cx, pats);
-            }
-            PatternKind::Struct(struct_pat) => {
-                ctor = Constructor::Single;
-
-                // Convert struct fields to deconstruct patterns.
-                // We must follow the order of fields in the type.
-                let struct_ty = if let Type::Struct(struct_ty) = pat_ty {
-                    struct_ty
-                } else {
-                    unreachable!("Pattern type {} must be struct type.", pat_ty);
-                };
-
-                let mut sub_pats = vec![];
-
-                for f in struct_ty.fields() {
-                    let sub_pat = if let Some(pat_field) = struct_pat.get_field(f.name()) {
-                        DeconstructedPat::from_pat(cx, pat_field.pattern())
+                    let fields = if matches!(de_pat.ctor(), Constructor::Single) {
+                        // Don't wrap with Constructor::Single when the type is union.
+                        // It will be inconsistent with Self::specialize()
+                        de_pat.fields
                     } else {
-                        // omitted fields are handled by wildcard
-                        DeconstructedPat::wildcard(f.ty())
+                        Fields::from_one(cx, de_pat)
                     };
 
-                    sub_pats.push(sub_pat);
+                    Some(DeconstructedPat::new(ctor, fields, pat_ty))
                 }
+                // If the pattern type contains all members of the union type,
+                // create the field as a wildcard
+                else if member_ty.is_assignable_to(pat_ty) {
+                    let fields = Fields::wildcards_from_type(cx, *member_ty);
+                    Some(DeconstructedPat::new(ctor, fields, pat_ty))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-                fields = Fields::from_iter(cx, sub_pats);
+        assert!(!pats.is_empty());
+        if pats.len() == 1 {
+            pats.remove(0)
+        } else {
+            let fields = Fields::from_iter(cx, pats);
+            DeconstructedPat::new(Constructor::Or, fields, pat_ty)
+        }
+    }
+    fn _from_pat(
+        cx: &MatchCheckContext<'p, 'tcx>,
+        pat: &Pattern<'_, 'tcx>,
+        context_ty: &'tcx Type<'tcx>,
+    ) -> Self {
+        let pat_ty = pat.expect_ty().bottom_ty();
+
+        match pat.kind() {
+            &PatternKind::Integer(value) => Self::from_i64(value, pat_ty),
+            &PatternKind::Boolean(value) => Self::from_bool(value, pat_ty),
+            PatternKind::String(value) => Self::from_string(value.clone(), pat_ty),
+            &PatternKind::Range { lo, hi, end } => Self::from_range(lo, hi, pat_ty, end),
+            PatternKind::Tuple(sub_pats) => {
+                let element_tys = context_ty
+                    .tuple_ty()
+                    .unwrap_or_else(|| unreachable!("expected tuple type: {}", pat_ty));
+                assert!(element_tys.len() == sub_pats.len());
+
+                let de_pats = sub_pats
+                    .iter()
+                    .zip(element_tys)
+                    .map(|(pat, context_ty)| DeconstructedPat::from_pat(cx, pat, context_ty));
+
+                let fields = Fields::from_iter(cx, de_pats);
+                DeconstructedPat::new(Constructor::Single, fields, pat_ty)
+            }
+            PatternKind::Struct(struct_pat) => {
+                // Convert struct fields to deconstruct patterns.
+                // We must follow the order of fields in the type.
+                let struct_ty = context_ty.struct_ty().unwrap_or_else(|| {
+                    unreachable!("Pattern type {} must be struct type.", pat_ty);
+                });
+
+                let de_pats = struct_ty.fields().iter().map(|f| {
+                    struct_pat
+                        .get_field(f.name())
+                        .map(|pat_field| {
+                            DeconstructedPat::from_pat(cx, pat_field.pattern(), f.ty())
+                        })
+                        // omitted fields are handled by wildcard
+                        .unwrap_or_else(|| DeconstructedPat::wildcard(f.ty()))
+                });
+
+                let fields = Fields::from_iter(cx, de_pats);
+                DeconstructedPat::new(Constructor::Single, fields, pat_ty)
+            }
+            PatternKind::Var(_) | PatternKind::Wildcard => {
+                // If the pattern has an explicit type annotation with a literal type, the pattern matches
+                // a corresponding literal value.
+                if let Some(explicit_ty) = pat.explicit_ty() {
+                    Self::_from_explicit_ty(cx, explicit_ty, context_ty)
+                } else {
+                    Self::wildcard(pat_ty)
+                }
             }
             PatternKind::Or(..) => {
-                ctor = Constructor::Or;
-                let pats = expand_or_pat(pat)
+                let de_pats = expand_or_pat(pat)
                     .into_iter()
-                    .map(|pat| DeconstructedPat::from_pat(cx, pat));
-                fields = Fields::from_iter(cx, pats);
+                    .map(|pat| DeconstructedPat::from_pat(cx, pat, context_ty));
+                let fields = Fields::from_iter(cx, de_pats);
+                DeconstructedPat::new(Constructor::Or, fields, pat_ty)
             }
         }
+    }
+    fn _from_explicit_ty(
+        cx: &MatchCheckContext<'p, 'tcx>,
+        explicit_ty: &'tcx Type<'tcx>,
+        context_ty: &'tcx Type<'tcx>,
+    ) -> Self {
+        let pat_ty = explicit_ty.bottom_ty();
 
-        DeconstructedPat::new(ctor, fields, pat_ty)
+        // If the pattern type is an union type, build an Or-pattern which contains
+        // all patterns from union members.
+        if let Type::Union(member_types) = pat_ty {
+            let mut pats = vec![];
+
+            for member_ty in expand_union_ty_array(member_types) {
+                let pat = Self::_from_explicit_ty(cx, member_ty, context_ty);
+
+                // If an union type includes a wildcard pattern, this pattern matches
+                // any value for its type.
+                if pat.ctor().is_wildcard() {
+                    return Self::wildcard(pat_ty);
+                }
+
+                pats.push(pat);
+            }
+
+            let fields = Fields::from_iter(cx, pats);
+            DeconstructedPat::new(Constructor::Or, fields, pat_ty)
+        }
+        // If the context type is an union type, each pattern should be one/some of
+        // member(s) of it.
+        else if let Type::Union(context_member_types) = context_ty {
+            let context_member_types = expand_union_ty_array(context_member_types);
+
+            let mut de_pats: Vec<_> = context_member_types
+                .iter()
+                .enumerate()
+                .filter_map(|(tag, context_member_ty)| {
+                    // Create a constant field if the pattern type contains some of
+                    // the members of the union type. Handle this first to check
+                    // usefulness of range pattern properly.
+                    let ctor = Constructor::Variant(VariantIdx(tag));
+
+                    if pat_ty.is_assignable_to(context_member_ty) {
+                        let de_pat = Self::_from_explicit_ty(cx, pat_ty, context_member_ty);
+
+                        if matches!(de_pat.ctor(), Constructor::Single) {
+                            // Don't wrap with Constructor::Single when the type is union.
+                            // It will be inconsistent with Self::specialize()
+                            Some(DeconstructedPat::new(
+                                ctor,
+                                de_pat.fields,
+                                context_member_ty,
+                            ))
+                        } else {
+                            Some(DeconstructedPat::new(
+                                ctor,
+                                Fields::from_one(cx, de_pat),
+                                context_member_ty,
+                            ))
+                        }
+                    }
+                    // If the pattern type contains all members of the union type,
+                    // create the field as a wildcard
+                    else if context_member_ty.is_assignable_to(pat_ty) {
+                        Some(DeconstructedPat::new(
+                            ctor,
+                            Fields::wildcards_from_type(cx, *context_member_ty),
+                            context_member_ty,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            assert!(!de_pats.is_empty());
+            if de_pats.len() == 1 {
+                de_pats.remove(0)
+            } else {
+                DeconstructedPat::new(Constructor::Or, Fields::from_iter(cx, de_pats), pat_ty)
+            }
+        }
+        // Otherwise, create a single pattern from the type.
+        else {
+            match pat_ty {
+                &Type::LiteralInt64(value) => Self::from_i64(value, pat_ty),
+                &Type::LiteralBoolean(value) => Self::from_bool(value, pat_ty),
+                Type::LiteralString(value) => Self::from_string(value.clone(), pat_ty),
+                Type::Tuple(fs) => {
+                    let context_fs = context_ty.tuple_ty().unwrap();
+                    assert!(fs.len() == context_fs.len());
+
+                    let pats: Vec<_> = fs
+                        .iter()
+                        .zip(context_fs)
+                        .map(|(ty, cty)| Self::_from_explicit_ty(cx, ty, cty))
+                        .collect();
+
+                    let fields = Fields::from_iter(cx, pats);
+                    DeconstructedPat::new(Constructor::Single, fields, pat_ty)
+                }
+                Type::Struct(struct_ty) => {
+                    let context_struct_ty = context_ty.struct_ty().unwrap();
+
+                    let pats: Vec<_> = struct_ty
+                        .fields()
+                        .iter()
+                        .zip(context_struct_ty.fields())
+                        .map(|(f, cf)| Self::_from_explicit_ty(cx, f.ty(), cf.ty()))
+                        .collect();
+
+                    let fields = Fields::from_iter(cx, pats);
+                    DeconstructedPat::new(Constructor::Single, fields, pat_ty)
+                }
+                Type::Int64 | Type::NativeInt | Type::Boolean | Type::String => {
+                    Self::wildcard(pat_ty)
+                }
+                Type::Named(_) | Type::Undetermined | Type::Union(_) => {
+                    unreachable!("bug: type {} shouldn't be handled here.", pat_ty)
+                }
+            }
+        }
     }
 
-    // Only used for error description
+    // Only used for error description.
+    //
+    // Note that certain wildcard patterns are automatically inserted by
+    // usefulness check, so users may not be able to distinguish them if they are
+    // output as `_`. Because of this, we'll assign explicit type for wildcard patterns.
     pub fn to_pat(&self, cx: &MatchCheckContext<'p, 'tcx>) -> &'p Pattern<'p, 'tcx> {
+        self._to_pat(cx, true)
+    }
+    pub fn _to_pat(
+        &self,
+        cx: &MatchCheckContext<'p, 'tcx>,
+        assign_explicit_ty: bool,
+    ) -> &'p Pattern<'p, 'tcx> {
         let kind = match &self.ctor {
             Constructor::Single => match self.ty() {
                 Type::Tuple(_) => {
@@ -1024,7 +1278,11 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                     let pat_fields: Vec<_> = fields
                         .iter()
                         .zip(struct_ty.fields())
-                        .map(|(pat, f)| PatternField::new(f.name().to_string(), pat.to_pat(cx)))
+                        .map(|(de_pat, f)| {
+                            // Explicit types in struct fields may be eye noisy.
+                            // e.g. `T { a: _: boolean, b: _: boolean }`
+                            PatternField::new(f.name().to_string(), de_pat._to_pat(cx, false))
+                        })
                         .map(PatternFieldOrSpread::PatternField)
                         .collect();
 
@@ -1036,6 +1294,13 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 }
                 _ => unreachable!("unexpected ctor for type {:?} {:?}", self.ctor, self.ty),
             },
+            Constructor::Variant(_) => {
+                return self
+                    .iter_fields()
+                    .map(|de_pat| de_pat.to_pat(cx))
+                    .next()
+                    .unwrap();
+            }
             Constructor::IntRange(range) => {
                 let pat = range.to_pat(self.ty());
                 return cx.tree_pattern_arena.alloc(pat);
@@ -1046,19 +1311,27 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
                 "trying to convert a `Missing` constructor into a `Pat`; this is probably a bug,
                 `Missing` should have been processed in `apply_constructors`"
             ),
-            Constructor::Or => unreachable!("can't convert to pattern: {:?}", self),
+            Constructor::Or => {
+                let pats: Vec<_> = self.iter_fields().map(|de_pat| de_pat.to_pat(cx)).collect();
+                PatternKind::Or(pats)
+            }
         };
 
         let pat = Pattern::new(kind);
+
+        if assign_explicit_ty && matches!(pat.kind(), PatternKind::Wildcard) {
+            pat.assign_explicit_ty(self.ty());
+        }
+
         pat.assign_ty(self.ty());
         cx.tree_pattern_arena.alloc(pat)
     }
 
-    pub(super) fn ctor(&self) -> &Constructor {
+    pub fn ctor(&self) -> &Constructor {
         &self.ctor
     }
 
-    pub(super) fn ty(&self) -> &'tcx Type<'tcx> {
+    pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.ty
     }
 
@@ -1089,7 +1362,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     }
 
     /// We keep track for each pattern if it was ever reachable during the analysis. This is used
-    /// with `unreachable_spans` to report unreachable subpatterns arising from or patterns.
+    /// with `unreachable_spans` to report unreachable sub patterns arising from or patterns.
     pub fn set_reachable(&self) {
         self.reachable.set(true)
     }
@@ -1098,7 +1371,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         self.reachable.get()
     }
 
-    /// Report the spans of subpatterns that were not reachable, if any.
+    /// Report the spans of sub patterns that were not reachable, if any.
     pub fn unreachable_sub_pats(
         &self,
         cx: &MatchCheckContext<'p, 'tcx>,
@@ -1113,7 +1386,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         cx: &MatchCheckContext<'p, 'tcx>,
         sub_pats: &mut Vec<&'p Pattern<'p, 'tcx>>,
     ) {
-        // We don't look at subpatterns if we already reported the whole pattern as unreachable.
+        // We don't look at sub patterns if we already reported the whole pattern as unreachable.
         if !self.is_reachable() {
             sub_pats.push(self.to_pat(cx));
         } else {
@@ -1127,6 +1400,32 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
 /// The arm of a match expression.
 #[derive(Debug, Clone, Copy)]
 pub struct MatchArm<'p, 'tcx> {
+    pat: &'p Pattern<'p, 'tcx>,
+    has_guard: bool,
+}
+
+impl<'p, 'tcx> MatchArm<'p, 'tcx> {
+    pub fn new(pat: &'p Pattern<'p, 'tcx>, has_guard: bool) -> Self {
+        Self { pat, has_guard }
+    }
+
+    pub fn pattern(&self) -> &'p Pattern<'p, 'tcx> {
+        self.pat
+    }
+
+    pub fn has_guard(&self) -> bool {
+        self.has_guard
+    }
+}
+
+impl<'p, 'tcx> From<&'p Pattern<'p, 'tcx>> for MatchArm<'p, 'tcx> {
+    fn from(pat: &'p Pattern<'p, 'tcx>) -> Self {
+        Self::new(pat, false)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DeconstructedMatchArm<'p, 'tcx> {
     /// The pattern must have been lowered through `check_match::MatchVisitor::lower_pattern`.
     pub pat: &'p DeconstructedPat<'p, 'tcx>,
     pub has_guard: bool,
@@ -1145,10 +1444,9 @@ pub enum Reachability<'p, 'tcx> {
 }
 
 /// The output of checking a match for exhaustiveness and arm reachability.
-
-pub struct UsefulnessReport<'p, 'tcx> {
+struct UsefulnessReport<'p, 'tcx> {
     /// For each arm of the input, whether that arm is reachable after the arms above it.
-    pub arm_usefulness: Vec<(MatchArm<'p, 'tcx>, Reachability<'p, 'tcx>)>,
+    arm_usefulness: Vec<(DeconstructedMatchArm<'p, 'tcx>, Reachability<'p, 'tcx>)>,
     /// If the match is exhaustive, this is empty. If not, this contains witnesses for the lack of
     /// exhaustiveness.
     pub non_exhaustiveness_witnesses: Vec<DeconstructedPat<'p, 'tcx>>,
@@ -1223,25 +1521,19 @@ impl<'p, 'tcx> Usefulness<'p, 'tcx> {
                 let new_witnesses = if let Constructor::Missing { .. } = ctor {
                     // We got the special `Missing` constructor, so each of the missing constructors
                     // gives a new pattern that is not caught by the match. We list those patterns.
-                    let new_patterns = if pcx.is_non_exhaustive {
-                        // Here we don't want the user to try to list all variants, we want them to add
-                        // a wildcard, so we only suggest that.
-                        vec![DeconstructedPat::wildcard(pcx.ty)]
-                    } else {
-                        let mut split_wildcard = SplitWildcard::new(pcx);
-                        split_wildcard.split(pcx, matrix.heads().map(DeconstructedPat::ctor));
+                    let mut split_wildcard = SplitWildcard::new(pcx);
+                    split_wildcard.split(pcx, matrix.heads().map(DeconstructedPat::ctor));
 
-                        // Construct for each missing constructor a "wild" version of this
-                        // constructor, that matches everything that can be built with
-                        // it. For example, if `ctor` is a `Constructor::Variant` for
-                        // `Option::Some`, we get the pattern `Some(_)`.
-                        split_wildcard
-                            .iter_missing(pcx)
-                            .map(|missing_ctor| {
-                                DeconstructedPat::wild_from_ctor(pcx, missing_ctor.clone())
-                            })
-                            .collect()
-                    };
+                    // Construct for each missing constructor a "wild" version of this
+                    // constructor, that matches everything that can be built with
+                    // it. For example, if `ctor` is a `Constructor::Variant` for
+                    // `Option::Some`, we get the pattern `Some(_)`.
+                    let new_patterns: Vec<_> = split_wildcard
+                        .iter_missing(pcx)
+                        .map(|missing_ctor| {
+                            DeconstructedPat::wild_from_ctor(pcx, missing_ctor.clone())
+                        })
+                        .collect();
 
                     witnesses
                         .into_iter()
@@ -1315,7 +1607,7 @@ pub struct Witness<'p, 'tcx>(Vec<DeconstructedPat<'p, 'tcx>>);
 impl<'p, 'tcx> Witness<'p, 'tcx> {
     /// Asserts that the witness contains a single pattern, and returns it.
     fn single_pattern(self) -> DeconstructedPat<'p, 'tcx> {
-        assert_eq!(self.0.len(), 1);
+        assert!(!self.0.is_empty());
         self.0.into_iter().next().unwrap()
     }
 
@@ -1398,7 +1690,6 @@ fn is_useful<'p, 'tcx>(
         cx,
         ty,
         is_top_level,
-        is_non_exhaustive: false,
     };
 
     // If the first pattern is an or-pattern, expand it.
@@ -1410,6 +1701,7 @@ fn is_useful<'p, 'tcx>(
         for v in v.expand_or_pat() {
             let usefulness = is_useful(cx, &matrix, &v, witness_preference, is_under_guard, false);
             ret.extend(usefulness);
+
             // If pattern has a guard don't add it to the matrix.
             if !is_under_guard {
                 // We push the already-seen patterns into the matrix in order to detect redundant
@@ -1428,15 +1720,19 @@ fn is_useful<'p, 'tcx>(
         for ctor in split_ctors {
             // We cache the result of `Fields::wildcards` because it is used a lot.
             let spec_matrix = start_matrix.specialize_constructor(pcx, &ctor);
-            let v = v.pop_head_constructor(cx, &ctor);
+            let vv = v.pop_head_constructor(cx, &ctor);
             let usefulness = is_useful(
                 cx,
                 &spec_matrix,
-                &v,
+                &vv,
                 witness_preference,
                 is_under_guard,
                 false,
             );
+            // eprintln!(
+            //     ">>> ctor = {:?}\n... v = {:?}\n... vv = {:?}\n... spec_matrix = {:?}\n... usefulness = {:?}",
+            //     &ctor, &v, &vv, &spec_matrix, &usefulness
+            // );
             let usefulness = usefulness.apply_constructor(pcx, start_matrix, &ctor);
             ret.extend(usefulness);
         }
@@ -1456,8 +1752,8 @@ fn is_useful<'p, 'tcx>(
 /// `check_match::MatchVisitor::lower_pattern`.
 fn compute_match_usefulness<'p, 'tcx>(
     cx: &MatchCheckContext<'p, 'tcx>,
-    arms: &[MatchArm<'p, 'tcx>],
-    src_ty: &'tcx Type<'tcx>,
+    arms: &[DeconstructedMatchArm<'p, 'tcx>],
+    head_ty: &'tcx Type<'tcx>,
 ) -> UsefulnessReport<'p, 'tcx> {
     let mut matrix = Matrix::empty();
     let arm_usefulness: Vec<_> = arms
@@ -1482,7 +1778,7 @@ fn compute_match_usefulness<'p, 'tcx>(
         })
         .collect();
 
-    let wild_pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(src_ty));
+    let wild_pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
     let v = PatStack::from_pattern(wild_pattern);
     let usefulness = is_useful(cx, &matrix, &v, ArmType::FakeExtraWildcard, false, true);
     let non_exhaustiveness_witnesses = match usefulness {
@@ -1495,9 +1791,9 @@ fn compute_match_usefulness<'p, 'tcx>(
     }
 }
 
-pub fn check_match<'tcx>(
+pub fn check_match<'p, 'tcx: 'p>(
     head_ty: &'tcx Type<'tcx>,
-    arms: &[CaseArm<'_, 'tcx>],
+    arms: impl IntoIterator<Item = MatchArm<'p, 'tcx>>,
     has_else: bool,
 ) -> Result<(), Vec<SemanticError<'tcx>>> {
     let pattern_arena = Arena::default();
@@ -1507,29 +1803,30 @@ pub fn check_match<'tcx>(
         tree_pattern_arena: &tree_pattern_arena,
     };
 
-    let mut arms2: Vec<_> = arms
-        .iter()
+    let mut match_arms: Vec<_> = arms
+        .into_iter()
         .map(|arm| {
-            let pattern: &_ = cx
-                .pattern_arena
-                .alloc(DeconstructedPat::from_pat(&cx, arm.pattern()));
+            let pattern =
+                cx.pattern_arena
+                    .alloc(DeconstructedPat::from_pat(&cx, arm.pattern(), head_ty));
 
-            MatchArm {
+            DeconstructedMatchArm {
                 pat: pattern,
-                has_guard: false,
+                has_guard: arm.has_guard(),
             }
         })
         .collect();
     // else
     if has_else {
-        let pattern: &_ = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
-        arms2.push(MatchArm {
+        let pattern = cx.pattern_arena.alloc(DeconstructedPat::wildcard(head_ty));
+
+        match_arms.push(DeconstructedMatchArm {
             pat: pattern,
             has_guard: false,
         })
     }
 
-    let report = compute_match_usefulness(&cx, &arms2, head_ty);
+    let report = compute_match_usefulness(&cx, &match_arms, head_ty);
 
     // Check if the match is exhaustive.
     let mut errors = vec![];
@@ -1541,45 +1838,58 @@ pub fn check_match<'tcx>(
                 unreachable_sub_patterns,
             } => {
                 for sub_pat in unreachable_sub_patterns {
-                    errors.push(SemanticError::UnreachablePattern {
-                        pattern: sub_pat.to_string(),
-                    });
+                    errors.push(SemanticError::from_kind(
+                        SemanticErrorKind::UnreachablePattern {
+                            pattern: sub_pat.to_string(),
+                        },
+                    ));
                 }
             }
             Reachability::Unreachable => {
                 if has_else && i == (report.arm_usefulness.len() - 1) {
                     // "else"
-                    errors.push(SemanticError::UnreachableElseClause);
+                    errors.push(SemanticError::from_kind(
+                        SemanticErrorKind::UnreachableElseClause,
+                    ));
                 } else {
                     let pat = arm.pat.to_pat(&cx);
 
-                    errors.push(SemanticError::UnreachablePattern {
-                        pattern: pat.kind().to_string(),
-                    });
+                    errors.push(SemanticError::from_kind(
+                        SemanticErrorKind::UnreachablePattern {
+                            pattern: pat.to_string(),
+                        },
+                    ));
                 }
             }
         }
-
+        /*
         if matches!(reachability, Reachability::Unreachable) {
             if has_else && i == (report.arm_usefulness.len() - 1) {
                 // "else"
-                errors.push(SemanticError::UnreachableElseClause);
+                errors.push(SemanticError::from_kind(
+                    SemanticErrorKind::UnreachableElseClause,
+                ));
             } else {
                 let pat = arm.pat.to_pat(&cx);
 
-                errors.push(SemanticError::UnreachablePattern {
-                    pattern: pat.to_string(),
-                });
+                errors.push(SemanticError::from_kind(
+                    SemanticErrorKind::UnreachablePattern {
+                        pattern: pat.to_string(),
+                    },
+                ));
             }
         }
+        */
     }
     // non exhaustiveness
-    for pat in report.non_exhaustiveness_witnesses {
-        let pat = pat.to_pat(&cx);
+    for de_pat in report.non_exhaustiveness_witnesses {
+        let pat = de_pat.to_pat(&cx);
 
-        errors.push(SemanticError::NonExhaustivePattern {
-            pattern: pat.kind().to_string(),
-        })
+        errors.push(SemanticError::from_kind(
+            SemanticErrorKind::NonExhaustivePattern {
+                pattern: pat.to_string(),
+            },
+        ));
     }
 
     if errors.is_empty() {
@@ -1589,7 +1899,7 @@ pub fn check_match<'tcx>(
     }
 }
 
-/// Recursively expand this pattern into its subpatterns. Only useful for or-patterns.
+/// Recursively expand this pattern into its sub patterns. Only useful for or-patterns.
 fn expand_or_pat<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>) -> Vec<&'p Pattern<'p, 'tcx>> {
     fn expand<'p, 'tcx>(pat: &'p Pattern<'p, 'tcx>, vec: &mut Vec<&'p Pattern<'p, 'tcx>>) {
         if let PatternKind::Or(pats) = pat.kind() {
@@ -1673,24 +1983,508 @@ mod tests_int_range {
 #[cfg(test)]
 mod tests_deconstructed_pat {
     use super::*;
+    use crate::ty::{TypeContext, TypedField};
+
+    /// Tests `ctor` is int range (`range`)
+    macro_rules! assert_int_range_ctor {
+        ($ctor:expr, $range:expr) => {
+            assert!(if let Constructor::IntRange(int_range) = $ctor {
+                assert_eq!(*int_range, $range);
+                true
+            } else {
+                false
+            });
+        };
+    }
+
+    /// Tests `ctor` is int range (`n`)
+    macro_rules! assert_int_ctor {
+        ($ctor:expr, $n:expr) => {
+            let n = $n;
+            assert_int_range_ctor!(
+                $ctor,
+                IntRange::from_range(n, n, &Type::Int64, RangeEnd::Included)
+            );
+        };
+    }
+
+    /// Tests `ctor` is str constructor.
+    macro_rules! assert_str_ctor {
+        ($ctor:expr, $s:expr) => {
+            assert!(if let Constructor::Str(s) = $ctor {
+                assert_eq!(s, $s);
+                true
+            } else {
+                false
+            });
+        };
+    }
+
+    /// Tests `ctor` is variant constructor.
+    macro_rules! assert_variant_ctor {
+        ($ctor:expr, $tag:expr) => {
+            assert!(if let Constructor::Variant(VariantIdx(idx)) = $ctor {
+                assert_eq!(*idx, $tag);
+                true
+            } else {
+                false
+            });
+        };
+    }
+
+    #[derive(Default)]
+    struct TestArena<'p, 'tcx> {
+        pattern_arena: Arena<DeconstructedPat<'p, 'tcx>>,
+        tree_pattern_arena: Arena<Pattern<'p, 'tcx>>,
+        type_arena: Arena<Type<'tcx>>,
+    }
 
     #[test]
-    fn from_pat() {
-        let pattern_arena = Arena::default();
-        let tree_pattern_arena = Arena::default();
+    fn int_range_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let head_ty = tcx.int64();
         let cx = MatchCheckContext {
-            pattern_arena: &pattern_arena,
-            tree_pattern_arena: &tree_pattern_arena,
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
         };
-        let kind = PatternKind::Range {
+        let pat = Pattern::new(PatternKind::Range {
             lo: 1,
             hi: 2,
             end: RangeEnd::Included,
-        };
-        let pat = Pattern::new(kind);
-        pat.assign_ty(&Type::Int64);
-        let dc_pat = DeconstructedPat::from_pat(&cx, &pat);
+        });
+        pat.assign_ty(tcx.int64());
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
 
-        assert_eq!(dc_pat.ty(), &Type::Int64);
+        assert_int_range_ctor!(
+            de_pat.ctor(),
+            IntRange::from_range(1, 2, tcx.int64(), RangeEnd::Included)
+        );
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+        assert_eq!(de_pat.ty(), tcx.int64());
+    }
+
+    #[test]
+    fn literal_int_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let head_ty = tcx.int64();
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+        let pat = Pattern::new(PatternKind::Integer(1));
+        pat.assign_ty(tcx.literal_int64(1));
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+
+        assert_int_ctor!(de_pat.ctor(), 1);
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+        assert_eq!(de_pat.ty(), tcx.literal_int64(1));
+    }
+
+    #[test]
+    fn literal_bool_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let head_ty = tcx.boolean();
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+        let pat = Pattern::new(PatternKind::Boolean(false));
+        pat.assign_ty(tcx.literal_boolean(false));
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+
+        assert_int_range_ctor!(
+            de_pat.ctor(),
+            IntRange::from_range(0, 0, tcx.boolean(), RangeEnd::Included)
+        );
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+        assert_eq!(de_pat.ty(), tcx.literal_boolean(false));
+    }
+
+    #[test]
+    fn literal_string_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let head_ty = tcx.string();
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        let pat_ty = tcx.literal_string("A".into());
+        let pat = Pattern::new(PatternKind::String("A".into()));
+        pat.assign_ty(pat_ty);
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+
+        assert_str_ctor!(de_pat.ctor(), "A");
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+        assert_eq!(de_pat.ty(), pat_ty);
+    }
+
+    #[test]
+    fn tuple_int_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let head_ty = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        let one = Pattern::new(PatternKind::Integer(1));
+        let two = Pattern::new(PatternKind::Integer(2));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&one, &two]));
+
+        one.assign_ty(tcx.literal_int64(1));
+        two.assign_ty(tcx.literal_int64(2));
+
+        let pat_ty = tcx.tuple(vec![one.expect_ty(), two.expect_ty()]);
+        pat.assign_ty(pat_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+        assert!(matches!(de_pat.ctor(), Constructor::Single));
+        assert_eq!(de_pat.ty(), pat_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert_int_ctor!(fields[0].ctor(), 1);
+        assert_int_ctor!(fields[1].ctor(), 2);
+    }
+
+    #[test]
+    fn struct_int_str_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+        let struct_ty = tcx.struct_ty(
+            "T".into(),
+            vec![
+                TypedField::new("x".into(), tcx.int64()),
+                TypedField::new("y".into(), tcx.string()),
+            ],
+        );
+        let head_ty = struct_ty;
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern
+        let field1 = Pattern::new(PatternKind::Integer(3));
+        let field2 = Pattern::new(PatternKind::String("three".into()));
+        let pat = Pattern::new(PatternKind::Struct(StructPattern::from_name_and_fields(
+            "T".into(),
+            [
+                PatternField::new("x".into(), &field1),
+                PatternField::new("y".into(), &field2),
+            ],
+        )));
+
+        field1.assign_ty(tcx.literal_int64(3));
+        field2.assign_ty(tcx.literal_string("three".into()));
+
+        let pat_ty = struct_ty;
+
+        pat.assign_ty(pat_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+        assert!(matches!(de_pat.ctor(), Constructor::Single));
+        assert_eq!(de_pat.ty(), pat_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert_int_ctor!(fields[0].ctor(), 3);
+        assert_str_ctor!(fields[1].ctor(), "three");
+    }
+
+    #[test]
+    fn var_pat() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: int64
+        let head_ty = tcx.int64();
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = x
+        let pat = Pattern::new(PatternKind::Var("x".into()));
+        let pat_ty = tcx.int64();
+
+        pat.assign_ty(pat_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+        assert!(matches!(de_pat.ctor(), Constructor::Wildcard));
+        assert_eq!(de_pat.ty(), pat_ty);
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+    }
+
+    #[test]
+    fn head_tuple_int_int_pat_tuple_var_var() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: (int64, int64)
+        let tuple_ty = tcx.tuple(vec![tcx.int64(), tcx.string()]);
+        let head_ty = tuple_ty;
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = (x, y)
+        let field1 = Pattern::new(PatternKind::Var("x".into()));
+        let field2 = Pattern::new(PatternKind::Var("y".into()));
+        let pat = Pattern::new(PatternKind::Tuple(vec![&field1, &field2]));
+
+        field1.assign_ty(tcx.int64());
+        field2.assign_ty(tcx.string());
+
+        let pat_ty = tcx.tuple(vec![field1.expect_ty(), field2.expect_ty()]);
+        pat.assign_ty(pat_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+        assert!(matches!(de_pat.ctor(), Constructor::Single));
+        assert_eq!(de_pat.ty(), pat_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert!(matches!(fields[0].ctor(), Constructor::Wildcard));
+        assert_eq!(fields[0].fields.iter_patterns().len(), 0);
+
+        assert!(matches!(fields[1].ctor(), Constructor::Wildcard));
+        assert_eq!(fields[1].fields.iter_patterns().len(), 0);
+    }
+
+    #[test]
+    fn head_tuple_int_int_pat_var() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: (int64, int64)
+        let tuple_ty = tcx.tuple(vec![tcx.int64(), tcx.string()]);
+        let head_ty = tuple_ty;
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = x
+        let pat = Pattern::new(PatternKind::Var("x".into()));
+        pat.assign_ty(tuple_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+        assert!(matches!(de_pat.ctor(), Constructor::Wildcard));
+        assert_eq!(de_pat.ty(), tuple_ty);
+        assert_eq!(de_pat.fields.iter_patterns().len(), 0);
+    }
+
+    #[test]
+    fn head_tuple_struct_int_struct_str_pat_tuple_var_var() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // struct T1 { x: int64 }
+        // struct T2 { x: string }
+        // head: (T1, T2)
+        let struct_t1_ty =
+            tcx.struct_ty("T1".into(), vec![TypedField::new("x".into(), tcx.int64())]);
+        let struct_t2_ty =
+            tcx.struct_ty("T2".into(), vec![TypedField::new("x".into(), tcx.string())]);
+        let tuple_ty = tcx.tuple(vec![struct_t1_ty, struct_t2_ty]);
+        let head_ty = tuple_ty;
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = (x, y)
+        let var_x = Pattern::new(PatternKind::Var("x".into()));
+        let var_y = Pattern::new(PatternKind::Var("y".into()));
+        var_x.assign_ty(struct_t1_ty);
+        var_y.assign_ty(struct_t2_ty);
+
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
+        pat.assign_ty(tuple_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+        assert!(matches!(de_pat.ctor(), Constructor::Single));
+        assert_eq!(de_pat.ty(), tuple_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert!(matches!(fields[0].ctor(), Constructor::Wildcard));
+        assert_eq!(fields[0].fields.iter_patterns().len(), 0);
+
+        assert!(matches!(fields[1].ctor(), Constructor::Wildcard));
+        assert_eq!(fields[1].fields.iter_patterns().len(), 0);
+    }
+
+    #[test]
+    fn head_union_one_two_pat_or_one_two() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: 1 | 2
+        let head_ty = tcx.union([tcx.literal_int64(1), tcx.literal_int64(2)]);
+
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = 1 | 2
+        let one = Pattern::new(PatternKind::Integer(1));
+        let two = Pattern::new(PatternKind::Integer(2));
+        one.assign_ty(tcx.literal_int64(1));
+        two.assign_ty(tcx.literal_int64(2));
+
+        let pat = Pattern::new(PatternKind::Or(vec![&one, &two]));
+        pat.assign_ty(head_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+        assert!(matches!(de_pat.ctor(), Constructor::Or));
+        assert_eq!(de_pat.ty(), head_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert_variant_ctor!(fields[0].ctor(), 0);
+        assert_variant_ctor!(fields[1].ctor(), 1);
+
+        // sub-pattern = 1
+        let fields0: Vec<_> = fields[0].fields.iter_patterns().collect();
+        assert_eq!(fields0.len(), 1);
+        assert_int_ctor!(fields0[0].ctor(), 1);
+
+        // sub-pattern = 2
+        let fields1: Vec<_> = fields[1].fields.iter_patterns().collect();
+        assert_eq!(fields1.len(), 1);
+        assert_int_ctor!(fields1[0].ctor(), 2);
+    }
+
+    #[test]
+    fn head_union_tuple_int_int_tuple_str_str_pat_tuple_var_var() {
+        let arena = TestArena::default();
+        let tcx = TypeContext::new(&arena.type_arena);
+
+        // head: (int64, int64) | (string, string)
+        let tuple1_ty = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let tuple2_ty = tcx.tuple(vec![tcx.string(), tcx.string()]);
+        let head_ty = tcx.union([tuple1_ty, tuple2_ty]);
+
+        let cx = MatchCheckContext {
+            pattern_arena: &arena.pattern_arena,
+            tree_pattern_arena: &arena.tree_pattern_arena,
+        };
+
+        // pattern = (x, y)
+        let var_x = Pattern::new(PatternKind::Var("x".into()));
+        let var_y = Pattern::new(PatternKind::Var("y".into()));
+        var_x.assign_ty(tcx.union([tcx.int64(), tcx.string()]));
+        var_y.assign_ty(tcx.union([tcx.string(), tcx.int64()]));
+
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
+        let pat_ty = tcx.tuple(vec![var_x.expect_ty(), var_y.expect_ty()]);
+        pat.assign_ty(pat_ty);
+
+        let de_pat = DeconstructedPat::from_pat(&cx, &pat, head_ty);
+        assert!(matches!(de_pat.ctor(), Constructor::Or));
+        assert_eq!(de_pat.ty(), pat_ty);
+
+        let fields: Vec<_> = de_pat.fields.iter_patterns().collect();
+        assert_eq!(fields.len(), 2);
+
+        assert_variant_ctor!(fields[0].ctor(), 0);
+        assert_variant_ctor!(fields[1].ctor(), 1);
+
+        // sub-pattern = x
+        let fields0: Vec<_> = fields[0].fields.iter_patterns().collect();
+        assert_eq!(fields0.len(), 2);
+        assert!(matches!(fields0[0].ctor(), Constructor::Wildcard));
+        assert!(matches!(fields0[1].ctor(), Constructor::Wildcard));
+
+        // sub-pattern = y
+        let fields1: Vec<_> = fields[1].fields.iter_patterns().collect();
+        assert_eq!(fields1.len(), 2);
+        assert!(matches!(fields1[0].ctor(), Constructor::Wildcard));
+        assert!(matches!(fields1[1].ctor(), Constructor::Wildcard));
+    }
+}
+
+#[cfg(test)]
+mod tests_check_match {
+    use crate::ty::TypeContext;
+
+    use super::*;
+
+    #[test]
+    fn check_match_union_tuple_pat_explicit_ty() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // type T1 = (int64, string)
+        // type T2 = (string, int64)
+        let tuple_ty1 = tcx.tuple(vec![tcx.int64(), tcx.string()]);
+        let tuple_ty2 = tcx.tuple(vec![tcx.string(), tcx.int64()]);
+        let named_ty1 = tcx.named("T1".into(), tuple_ty1);
+        let named_ty2 = tcx.named("T2".into(), tuple_ty2);
+
+        // head: T1 | T2
+        let head_ty = tcx.union([named_ty1, named_ty2]);
+
+        // pattern = (x: int64, y: string)
+        let pat1_x = Pattern::new(PatternKind::Var("x".into()));
+        let pat1_y = Pattern::new(PatternKind::Var("y".into()));
+        let pat1 = Pattern::new(PatternKind::Tuple(vec![&pat1_x, &pat1_y]));
+        pat1_x.assign_explicit_ty(tcx.int64());
+        pat1_y.assign_explicit_ty(tcx.string());
+
+        pat1.assign_ty(tuple_ty1);
+        pat1_x.assign_ty(tcx.int64());
+        pat1_y.assign_ty(tcx.string());
+
+        // pattern = (x: string, y: int64)
+        let pat2_x = Pattern::new(PatternKind::Var("x".into()));
+        let pat2_y = Pattern::new(PatternKind::Var("y".into()));
+        let pat2 = Pattern::new(PatternKind::Tuple(vec![&pat1_x, &pat1_y]));
+        pat2_x.assign_explicit_ty(tcx.string());
+        pat2_y.assign_explicit_ty(tcx.int64());
+
+        pat2.assign_ty(tuple_ty2);
+        pat2_x.assign_ty(tcx.string());
+        pat2_y.assign_ty(tcx.int64());
+
+        assert!(check_match(head_ty, [(&pat1).into(), (&pat2).into()], false).is_ok());
+    }
+
+    #[test]
+    fn check_match_union_tuple_pat_vars() {
+        let type_arena = Arena::new();
+        let tcx = TypeContext::new(&type_arena);
+
+        // head: (int64, int64) | (string, string)
+        let tuple1_ty = tcx.tuple(vec![tcx.int64(), tcx.int64()]);
+        let tuple2_ty = tcx.tuple(vec![tcx.string(), tcx.string()]);
+        let head_ty = tcx.union([tuple1_ty, tuple2_ty]);
+
+        // pattern = (x, y)
+        let var_x = Pattern::new(PatternKind::Var("x".into()));
+        let var_y = Pattern::new(PatternKind::Var("y".into()));
+        var_x.assign_ty(tcx.union([tcx.int64(), tcx.string()]));
+        var_y.assign_ty(tcx.union([tcx.string(), tcx.int64()]));
+
+        let pat = Pattern::new(PatternKind::Tuple(vec![&var_x, &var_y]));
+        let pat_ty = tcx.tuple(vec![var_x.expect_ty(), var_y.expect_ty()]);
+        pat.assign_ty(pat_ty);
+
+        assert!(check_match(head_ty, [(&pat).into()], false).is_ok());
     }
 }

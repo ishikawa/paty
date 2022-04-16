@@ -1,6 +1,7 @@
 use crate::syntax::{RangeEnd, Token, TokenKind};
 use crate::ty::{FunctionSignature, NamedTy, StructTy, Type, TypeContext, TypedField};
-use std::cell::Cell;
+use itertools::Itertools;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::iter::Peekable;
 use std::slice;
@@ -74,6 +75,15 @@ pub enum TopLevel<'nd, 'tcx> {
     Stmt(Stmt<'nd, 'tcx>),
 }
 
+impl fmt::Display for TopLevel<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TopLevel::Declaration(decl) => decl.fmt(f),
+            TopLevel::Stmt(stmt) => stmt.fmt(f),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Declaration<'nd, 'tcx> {
     kind: DeclarationKind<'nd, 'tcx>,
@@ -90,6 +100,16 @@ impl<'nd, 'tcx> Declaration<'nd, 'tcx> {
 
     pub fn kind(&self) -> &DeclarationKind<'nd, 'tcx> {
         &self.kind
+    }
+}
+
+impl fmt::Display for Declaration<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            DeclarationKind::Function(fun) => fun.fmt(f),
+            DeclarationKind::Struct(decl) => decl.fmt(f),
+            DeclarationKind::TypeAlias(decl) => decl.fmt(f),
+        }
     }
 }
 
@@ -291,7 +311,7 @@ impl fmt::Display for ExprKind<'_, '_> {
             } => {
                 writeln!(f, "case {}", head)?;
                 for arm in arms {
-                    writeln!(f, "when {:?}", arm.pattern())?;
+                    writeln!(f, "when {}", arm.pattern())?;
                     for stmt in arm.body() {
                         writeln!(f, "  {}", stmt)?;
                     }
@@ -323,8 +343,9 @@ impl fmt::Display for ExprKind<'_, '_> {
 pub struct CallExpr<'nd, 'tcx> {
     name: String,
     args: Vec<&'nd Expr<'nd, 'tcx>>,
-    /// Resolved overloaded function.
-    function: Cell<Option<&'nd Function<'nd, 'tcx>>>,
+
+    /// Resolved overloaded function signature.
+    signature: RefCell<Option<FunctionSignature<'tcx>>>,
 }
 
 impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
@@ -332,7 +353,7 @@ impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
         Self {
             name,
             args,
-            function: Cell::new(None),
+            signature: RefCell::new(None),
         }
     }
 
@@ -344,12 +365,12 @@ impl<'nd, 'tcx> CallExpr<'nd, 'tcx> {
         &self.args
     }
 
-    pub fn function(&self) -> Option<&'nd Function<'nd, 'tcx>> {
-        self.function.get()
+    pub fn function_signature(&self) -> Option<FunctionSignature<'tcx>> {
+        self.signature.borrow().clone()
     }
 
-    pub fn assign_function(&self, fun: &'nd Function<'nd, 'tcx>) {
-        self.function.set(Some(fun));
+    pub fn assign_function_signature(&self, fun: FunctionSignature<'tcx>) {
+        self.signature.borrow_mut().replace(fun);
     }
 }
 
@@ -403,6 +424,25 @@ pub struct Function<'nd, 'tcx> {
     /// The return type of this function which is specified by the return
     /// type annotation or is inferred from the last expression of the function body.
     retty: Cell<Option<&'tcx Type<'tcx>>>,
+}
+
+impl fmt::Display for Function<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "def {}", self.name)?;
+        write!(f, "(")?;
+        let mut it = self.params.iter().peekable();
+        while let Some(p) = it.next() {
+            write!(f, "{}", p)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")?;
+        if let Some(retty) = self.retty() {
+            write!(f, ": {}", retty)?;
+        }
+        Ok(())
+    }
 }
 
 impl<'nd, 'tcx> Function<'nd, 'tcx> {
@@ -467,7 +507,7 @@ impl<'nd, 'tcx> Parameter<'nd, 'tcx> {
 
     pub fn ty(&self) -> &'tcx Type<'tcx> {
         self.pattern
-            .ty()
+            .explicit_ty()
             .expect("function parameter type must be explicit")
     }
 }
@@ -479,6 +519,12 @@ impl<'nd, 'tcx> Node for Parameter<'nd, 'tcx> {
 
     fn data_mut(&mut self) -> &mut NodeData {
         &mut self.data
+    }
+}
+
+impl fmt::Display for Parameter<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.pattern().fmt(f)
     }
 }
 
@@ -515,6 +561,20 @@ impl<'tcx> StructDeclaration<'tcx> {
     }
 }
 
+impl fmt::Display for StructDeclaration<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "struct {} {{", self.name)?;
+        let mut it = self.fields().iter().peekable();
+        while let Some(field) = it.next() {
+            write!(f, "{}", field)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, "}}")
+    }
+}
+
 #[derive(Debug)]
 pub struct StructFieldDef<'tcx> {
     name: String,
@@ -547,6 +607,12 @@ impl<'tcx> Node for StructFieldDef<'tcx> {
 
     fn data_mut(&mut self) -> &mut NodeData {
         &mut self.data
+    }
+}
+
+impl fmt::Display for StructFieldDef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.ty)
     }
 }
 
@@ -664,8 +730,8 @@ impl<'nd, 'tcx> Node for CaseArm<'nd, 'tcx> {
 #[derive(Debug)]
 pub struct Pattern<'nd, 'tcx> {
     kind: PatternKind<'nd, 'tcx>,
-    // The type of expression is determined in later phase.
     ty: Cell<Option<&'tcx Type<'tcx>>>,
+    explicit_ty: Cell<Option<&'tcx Type<'tcx>>>,
     data: NodeData,
 }
 
@@ -674,12 +740,29 @@ impl<'nd, 'tcx> Pattern<'nd, 'tcx> {
         Self {
             kind,
             ty: Cell::new(None),
+            explicit_ty: Cell::new(None),
             data: NodeData::new(),
         }
     }
 
     pub fn kind(&self) -> &PatternKind<'nd, 'tcx> {
         &self.kind
+    }
+
+    /// Users can annotate the type of a pattern explicitly like below:
+    ///
+    /// ```ignore
+    /// x: int64
+    /// (x: int64) | (x: string)
+    /// ```
+    /// So some patterns have its type before type inference. You can
+    /// check whether a pattern has been annotated explicitly or not by
+    /// `Pattern.explicit_ty()` method.
+    pub fn explicit_ty(&self) -> Option<&'tcx Type<'tcx>> {
+        self.explicit_ty.get()
+    }
+    pub fn assign_explicit_ty(&self, ty: &'tcx Type<'tcx>) {
+        self.explicit_ty.set(Some(ty));
     }
 }
 
@@ -705,7 +788,72 @@ impl<'tcx> Typable<'tcx> for Pattern<'_, 'tcx> {
 
 impl fmt::Display for Pattern<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.kind.fmt(f)
+        match self.kind() {
+            &PatternKind::Integer(n) => {
+                write!(f, "{}", n)?;
+            }
+            &PatternKind::Boolean(b) => {
+                write!(f, "{}", b)?;
+            }
+            PatternKind::String(s) => {
+                write!(f, "\"{}\"", s.escape_default().collect::<String>())?;
+            }
+            PatternKind::Range { lo, hi, end } => {
+                if *lo == i64::MIN {
+                    write!(f, "int64::MIN")?;
+                } else {
+                    write!(f, "{}", lo)?;
+                }
+
+                write!(f, "{}", end)?;
+
+                if *hi == i64::MAX {
+                    write!(f, "int64::MAX")?;
+                } else {
+                    write!(f, "{}", hi)?;
+                }
+            }
+            PatternKind::Tuple(patterns) => {
+                let mut it = patterns.iter().peekable();
+                write!(f, "(")?;
+                while let Some(sub_pat) = it.next() {
+                    write!(f, "{}", sub_pat)?;
+                    if it.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")?;
+            }
+            PatternKind::Struct(struct_pat) => {
+                struct_pat.fmt(f)?;
+            }
+            PatternKind::Or(patterns) => {
+                let mut it = patterns.iter().peekable();
+
+                while let Some(sub_pat) = it.next() {
+                    write!(f, "{}", sub_pat)?;
+                    if it.peek().is_some() {
+                        write!(f, " | ")?;
+                    }
+                }
+            }
+            PatternKind::Var(name) => {
+                write!(f, "{}", name)?;
+            }
+            PatternKind::Wildcard => {
+                write!(f, "_")?;
+            }
+        }
+
+        // We'd like to print diagnostics with the explicit type
+        // for var/wildcard patterns.
+        if matches!(self.kind(), PatternKind::Wildcard | PatternKind::Var(_)) {
+            if let Some(explicit_ty) = self.explicit_ty() {
+                write!(f, ": {}", explicit_ty)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -720,56 +868,6 @@ pub enum PatternKind<'nd, 'tcx> {
     Var(String),
     Or(Vec<&'nd Pattern<'nd, 'tcx>>),
     Wildcard,
-}
-
-impl fmt::Display for PatternKind<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PatternKind::Integer(n) => write!(f, "{}", n),
-            PatternKind::Boolean(b) => write!(f, "{}", b),
-            PatternKind::String(s) => write!(f, "\"{}\"", s.escape_default().collect::<String>()),
-            PatternKind::Range { lo, hi, end } => {
-                if *lo == i64::MIN {
-                    write!(f, "int64::MIN")?;
-                } else {
-                    write!(f, "{}", lo)?;
-                }
-
-                write!(f, "{}", end)?;
-
-                if *hi == i64::MAX {
-                    write!(f, "int64::MAX")
-                } else {
-                    write!(f, "{}", hi)
-                }
-            }
-            PatternKind::Tuple(patterns) => {
-                let mut it = patterns.iter().peekable();
-                write!(f, "(")?;
-                while let Some(sub_pat) = it.next() {
-                    write!(f, "{}", sub_pat.kind())?;
-                    if it.peek().is_some() {
-                        write!(f, ", ")?;
-                    }
-                }
-                write!(f, ")")
-            }
-            PatternKind::Struct(struct_pat) => struct_pat.fmt(f),
-            PatternKind::Var(name) => write!(f, "{}", name),
-            PatternKind::Or(patterns) => {
-                let mut it = patterns.iter().peekable();
-
-                while let Some(sub_pat) = it.next() {
-                    write!(f, "{}", sub_pat.kind())?;
-                    if it.peek().is_some() {
-                        write!(f, " | ")?;
-                    }
-                }
-                Ok(())
-            }
-            PatternKind::Wildcard => write!(f, "_"),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -841,12 +939,26 @@ impl<'nd, 'tcx> StructPattern<'nd, 'tcx> {
         Self { name, fields }
     }
 
+    // convenient constructors
+    pub fn from_name_and_fields<T>(name: String, fields: T) -> Self
+    where
+        T: IntoIterator<Item = PatternField<'nd, 'tcx>>,
+    {
+        Self::new(
+            Some(name),
+            fields
+                .into_iter()
+                .map(PatternFieldOrSpread::PatternField)
+                .collect(),
+        )
+    }
+
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
 
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = &PatternFieldOrSpread<'nd, 'tcx>> {
-        self.fields.iter()
+    pub fn fields(&self) -> &[PatternFieldOrSpread<'nd, 'tcx>] {
+        self.fields.as_slice()
     }
 
     pub fn get_field(&self, name: &str) -> Option<&PatternField<'nd, 'tcx>> {
@@ -867,7 +979,7 @@ impl fmt::Display for StructPattern<'_, '_> {
             write!(f, "{} ", name)?;
         }
 
-        let mut it = self.fields().peekable();
+        let mut it = self.fields().iter().peekable();
         let empty = it.peek().is_none();
         write!(f, "{{")?;
         if !empty {
@@ -906,14 +1018,9 @@ impl<'tcx> SpreadPattern<'tcx> {
     }
 
     pub fn expect_struct_ty(&self) -> &StructTy<'tcx> {
-        if let Type::Struct(struct_ty) = self.expect_ty() {
-            struct_ty
-        } else {
-            unreachable!(
-                "spread pattern type must be anonymous struct: {}",
-                self.expect_ty()
-            );
-        }
+        self.expect_ty().struct_ty().unwrap_or_else(|| {
+            unreachable!("spread type must be anonymous struct: {}", self.expect_ty())
+        })
     }
 }
 
@@ -980,7 +1087,7 @@ impl<'nd, 'tcx> PatternField<'nd, 'tcx> {
 impl fmt::Display for PatternField<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: ", self.name())?;
-        write!(f, "{}", self.pattern().kind())
+        write!(f, "{}", self.pattern())
     }
 }
 
@@ -1094,7 +1201,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             // A type annotation can follow a pattern.
             let ty = if self.match_token(it, TokenKind::Operator(':')) {
                 it.next();
-                Some(self.type_specifier(it)?)
+                Some(self.type_annotation(it)?)
             } else {
                 None
             };
@@ -1105,7 +1212,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 it.next();
 
                 if let Some(ty) = ty {
-                    pattern.assign_ty(ty);
+                    pattern.assign_explicit_ty(ty);
                 }
 
                 let rhs = self.expr(it)?;
@@ -1114,7 +1221,15 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 r#let.data_mut().append_comments_from_node(expr);
                 r#let
             } else if ty.is_some() {
-                todo!("variable definition without rhs.");
+                // variable definition without rhs.
+                return if let Some(token) = it.peek() {
+                    Err(ParseError::UnexpectedToken {
+                        expected: "=".into(),
+                        actual: token,
+                    })
+                } else {
+                    Err(ParseError::PrematureEnd)
+                };
             } else {
                 Stmt::new(StmtKind::Expr(expr))
             };
@@ -1147,7 +1262,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         // return type annotation (optional)
         let retty = if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
-            let retty = self.type_specifier(it)?;
+            let retty = self.type_annotation(it)?;
             Some(retty)
         } else {
             None
@@ -1176,9 +1291,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
     ) -> Result<Parameter<'nd, 'tcx>, ParseError<'t>> {
         let pat = self.pattern(it)?;
 
-        if pat.ty().is_none() {
-            // Int64 for omitted type
-            pat.assign_ty(self.tcx.int64());
+        // Parameter type must be specified explicitly and
+        // `int64` for omitted.
+        if pat.explicit_ty().is_none() {
+            pat.assign_explicit_ty(self.tcx.int64());
         }
 
         let mut param = Parameter::new(pat);
@@ -1239,7 +1355,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         self.expect_token(it, TokenKind::Operator(':'))?;
 
-        let ty = self.type_specifier(it)?;
+        let ty = self.type_annotation(it)?;
 
         let mut field = StructFieldDef::new(&name, ty);
         field.data_mut().append_comments_from_token(name_token);
@@ -1352,14 +1468,40 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 // field
                 self.expect_token(it, TokenKind::Operator(':'))?;
 
-                let ty = self.type_specifier(it)?;
+                let ty = self.type_annotation(it)?;
                 Ok(TypedField::new(name, ty))
             }
             _ => Err(ParseError::NotParsed),
         }
     }
 
-    fn type_specifier(
+    fn type_annotation(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<&'tcx Type<'tcx>, ParseError<'t>> {
+        let mut types = Vec::with_capacity(0);
+
+        loop {
+            types.push(self._type_annotation(it)?);
+            if self.match_token(it, TokenKind::Operator('|')) {
+                it.next();
+            } else {
+                break;
+            }
+        }
+
+        match types.len() {
+            0 => Err(ParseError::NotParsed),
+            1 => Ok(types[0]),
+            _ => {
+                // To use tcx.union(...), requires all named type must be resolved.
+                // So we use Type::Union constructor directly here.
+                let union_ty = Type::Union(types.into_iter().unique().collect());
+                Ok(self.tcx.type_arena.alloc(union_ty))
+            }
+        }
+    }
+    fn _type_annotation(
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<&'tcx Type<'tcx>, ParseError<'t>> {
@@ -1384,7 +1526,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
                 let mut value_types = vec![];
 
                 while !self.match_token(it, TokenKind::Operator(')')) {
-                    let ty = self.type_specifier(it)?;
+                    let ty = self.type_annotation(it)?;
                     value_types.push(ty);
 
                     // trailing comma allowed, if the number of values is `1`,
@@ -1410,7 +1552,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
             TokenKind::Identifier(name) => {
                 it.next();
 
-                let ty = Type::Named(NamedTy::new(name));
+                let ty = Type::Named(NamedTy::new(name.into()));
                 self.tcx.type_arena.alloc(ty)
             }
             TokenKind::Integer(n) => {
@@ -1461,7 +1603,7 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
         self.expect_token(it, TokenKind::Operator('='))?;
 
-        let ty = self.type_specifier(it)?;
+        let ty = self.type_annotation(it)?;
 
         let ty_alias = TypeAlias { name, ty };
         let mut decl = Declaration::new(DeclarationKind::TypeAlias(ty_alias));
@@ -1482,6 +1624,33 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
 
     // pattern
     fn pattern(
+        &self,
+        it: &mut TokenIterator<'t>,
+    ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
+        let pat = self._pattern(it)?;
+
+        // Or-pattern?
+        let mut sub_pats = vec![pat];
+
+        while let Some(t) = it.peek() {
+            if let TokenKind::Operator('|') = t.kind() {
+                it.next();
+                sub_pats.push(self._pattern(it)?);
+            } else {
+                break;
+            }
+        }
+
+        if sub_pats.len() > 1 {
+            let kind = PatternKind::Or(sub_pats);
+            let or_pat = self.pat_arena.alloc(Pattern::new(kind));
+
+            Ok(or_pat)
+        } else {
+            Ok(pat)
+        }
+    }
+    fn _pattern(
         &self,
         it: &mut TokenIterator<'t>,
     ) -> Result<&'nd Pattern<'nd, 'tcx>, ParseError<'t>> {
@@ -1611,29 +1780,10 @@ impl<'t, 'nd, 'tcx> Parser<'nd, 'tcx> {
         // Type annotated pattern
         if self.match_token(it, TokenKind::Operator(':')) {
             it.next();
-            pat.assign_ty(self.type_specifier(it)?);
+            pat.assign_explicit_ty(self.type_annotation(it)?);
         }
 
-        // Or-pattern?
-        let mut sub_pats = vec![pat];
-
-        while let Some(t) = it.peek() {
-            if let TokenKind::Operator('|') = t.kind() {
-                it.next();
-                sub_pats.push(self.pattern(it)?);
-            } else {
-                break;
-            }
-        }
-
-        if sub_pats.len() > 1 {
-            let kind = PatternKind::Or(sub_pats);
-            let or_pat = self.pat_arena.alloc(Pattern::new(kind));
-
-            Ok(or_pat)
-        } else {
-            Ok(pat)
-        }
+        Ok(pat)
     }
 
     fn expr_to_pattern(

@@ -1,4 +1,6 @@
 use paty::gen;
+use paty::ir;
+use paty::ir::optimizer;
 use paty::sem;
 use paty::syntax;
 use paty::ty::TypeContext;
@@ -7,6 +9,8 @@ use std::fs;
 use std::io;
 use std::io::Read;
 use typed_arena::Arena;
+
+const MAX_OPTIMIZATION_REPEAT: usize = 8;
 
 fn main() {
     // Read input: use STDIN if no positional argument to point to the file.
@@ -48,7 +52,7 @@ fn main() {
         }
         Ok(body) => body,
     };
-    //println!("ast = {:?}", body);
+    //eprintln!("Syntax tree = {:#?}", body);
 
     if let Err(errors) = sem::analyze(tcx, &body) {
         assert!(!errors.is_empty());
@@ -59,15 +63,58 @@ fn main() {
 
         std::process::exit(exitcode::DATAERR);
     }
-    //eprintln!("ast = {:?}", body);
+    //eprintln!("--- Syntax tree (not optimized)\n{:?}", &body);
 
     {
         let ir_expr_arena = Arena::new();
+        let ir_stmt_arena = Arena::new();
         let tmp_var_arena = Arena::new();
 
-        let mut builder = gen::ir::Builder::new(tcx, &ir_expr_arena, &tmp_var_arena);
-        let program = builder.build(&body);
-        //eprintln!("---\n{}", program);
+        let builder =
+            ir::builder::Builder::new(tcx, &ir_expr_arena, &ir_stmt_arena, &tmp_var_arena);
+        let mut program = builder.build(&body);
+
+        // post process
+        let optimizer = optimizer::Optimizer::new(tcx, &ir_expr_arena, &ir_stmt_arena);
+
+        // Repeat (up to 5 times) the process of replacing the temporary variables
+        // until there is no change in the optimized code.
+        for i in 0..MAX_OPTIMIZATION_REPEAT {
+            let mut changed = false;
+            let pass = optimizer::MarkTmpVarUsed::default();
+            optimizer
+                .run_function_pass(&pass, &mut program)
+                .then(|| changed = true);
+            //eprintln!("--- (optimizing:{})\n{}", i, program);
+
+            let pass = optimizer::UpdateTmpVarValue::default();
+            optimizer
+                .run_function_pass(&pass, &mut program)
+                .then(|| changed = true);
+            let pass = optimizer::EliminateDeadStmts::default();
+            optimizer
+                .run_function_pass(&pass, &mut program)
+                .then(|| changed = true);
+            let pass = optimizer::ReplaceRedundantTmpVars::default();
+            optimizer
+                .run_function_pass(&pass, &mut program)
+                .then(|| changed = true);
+            if !changed {
+                break;
+            }
+
+            // reset used count if next loop
+            if i + 1 < MAX_OPTIMIZATION_REPEAT {
+                let pass = optimizer::ResetTmpVarUsed::default();
+                optimizer
+                    .run_function_pass(&pass, &mut program)
+                    .then(|| changed = true);
+            }
+        }
+
+        let pass = optimizer::ConcatAdjacentPrintf::default();
+        optimizer.run_function_pass(&pass, &mut program);
+        //eprintln!("--- (optimized)\n{}", program);
 
         let mut emitter = gen::c::Emitter::new();
         let code = emitter.emit(&program);
