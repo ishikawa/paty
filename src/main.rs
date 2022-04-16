@@ -1,20 +1,55 @@
+use clap::Parser;
 use paty::gen;
 use paty::ir;
 use paty::ir::optimizer;
 use paty::sem;
 use paty::syntax;
 use paty::ty::TypeContext;
-use std::env;
 use std::fs;
 use std::io;
 use std::io::Read;
+use std::str::FromStr;
 use typed_arena::Arena;
 
 const MAX_OPTIMIZATION_REPEAT: usize = 8;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, clap::ArgEnum)]
+enum Backend {
+    /// C language backend
+    C,
+    /// WebAssembly backend
+    Wasm,
+}
+
+impl FromStr for Backend {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "c" => Ok(Backend::C),
+            "wasm" => Ok(Backend::Wasm),
+            _ => Err(format!("Unrecognized input: {}", s)),
+        }
+    }
+}
+
+#[derive(clap::Parser, Debug)]
+#[clap(version)]
+struct Args {
+    /// Choose a backend for generating code. (c, wasm)
+    #[clap(long, default_value = "c")]
+    backend: Backend,
+
+    /// Source code file to read.
+    #[clap(required = false)]
+    file: Option<String>,
+}
+
 fn main() {
+    let args = Args::parse();
+
     // Read input: use STDIN if no positional argument to point to the file.
-    let src = if let Some(filename) = env::args().nth(1) {
+    let src = if let Some(filename) = args.file {
         fs::read_to_string(filename).expect("Read source code")
     } else {
         let mut src = String::new();
@@ -116,10 +151,14 @@ fn main() {
         optimizer.run_function_pass(&pass, &mut program);
         //eprintln!("--- (optimized)\n{}", program);
 
-        let mut emitter = gen::c::Emitter::new();
-        let code = emitter.emit(&program);
+        match args.backend {
+            Backend::C => {
+                let mut emitter = gen::c::Emitter::new();
+                let code = emitter.emit(&program);
 
-        //eprintln!("-----\n{}-----", code);
-        println!("{}", code);
+                println!("{}", code);
+            }
+            Backend::Wasm => todo!(),
+        }
     }
 }
