@@ -535,7 +535,7 @@ impl<'a, 'tcx> Emitter {
                 // so the behavior of negating this and assigning to a signed 64 bit integral
                 // type is implementation defined.
                 match n {
-                    // prints INT_XXX macro directory
+                    // prints INT_XXX macro directly
                     i64::MIN => code.push_str("INT64_MIN"),
                     i64::MAX => code.push_str("INT64_MAX"),
                     _ => {
