@@ -209,7 +209,12 @@ fn main() {
 
                 println!("{}", code);
             }
-            Target::Wasm(_) => todo!(),
+            Target::Wasm(options) => {
+                let mut emitter = gen::wasm::Emitter::new(options);
+                let code = emitter.emit(&program);
+
+                println!("{}", code);
+            }
         }
     }
 }

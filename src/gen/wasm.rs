@@ -1,4 +1,7 @@
 //! WebAssembly backend which emits WAT (WebAssembly Text Format).
+mod builder;
+
+use crate::ir::inst::Program;
 
 /// WebAssembly has 32-bit and 64-bit architecture variants,
 /// called wasm32 and wasm64. wasm32 has an ILP32 data model,
@@ -21,5 +24,18 @@ pub struct EmitterOptions {
 
 #[derive(Debug)]
 pub struct Emitter {
-    options: EmitterOptions,
+    //options: EmitterOptions,
+}
+
+impl Emitter {
+    pub fn new(_options: EmitterOptions) -> Self {
+        Self {}
+    }
+
+    pub fn emit<'a, 'tcx>(&mut self, _program: &'a Program<'a, 'tcx>) -> String {
+        let module = builder::Module::new();
+        let mut wat = builder::WatBuilder::new();
+
+        wat.emit(&module)
+    }
 }
