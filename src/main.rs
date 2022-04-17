@@ -13,32 +13,83 @@ use typed_arena::Arena;
 
 const MAX_OPTIMIZATION_REPEAT: usize = 8;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, clap::ArgEnum)]
-enum Backend {
-    /// C language backend
+const TARGET_OPTIONS: [(&'static str, Target); 6] = [
+    ("c", Target::C),
+    (
+        "wasm",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits32,
+            wasi: false,
+        }),
+    ),
+    (
+        "wasm32",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits32,
+            wasi: false,
+        }),
+    ),
+    (
+        "wasm64",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits64,
+            wasi: false,
+        }),
+    ),
+    (
+        "wasm32-wasi",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits32,
+            wasi: true,
+        }),
+    ),
+    (
+        "wasm64-wasi",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits64,
+            wasi: true,
+        }),
+    ),
+];
+
+const TARGET_OPTION_POSSIBLE_VALUES: [&'static str; TARGET_OPTIONS.len()] = [
+    TARGET_OPTIONS[0].0,
+    TARGET_OPTIONS[1].0,
+    TARGET_OPTIONS[2].0,
+    TARGET_OPTIONS[3].0,
+    TARGET_OPTIONS[4].0,
+    TARGET_OPTIONS[5].0,
+];
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Target {
+    /// C language
     C,
-    /// WebAssembly backend
-    Wasm,
+    /// WebAssembly
+    Wasm(gen::wasm::EmitterOptions),
 }
 
-impl FromStr for Backend {
+impl FromStr for Target {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "c" => Ok(Backend::C),
-            "wasm" => Ok(Backend::Wasm),
-            _ => Err(format!("Unrecognized input: {}", s)),
-        }
+        TARGET_OPTIONS
+            .iter()
+            .find(|(name, _)| *name == s)
+            .map(|(_, target)| target.clone())
+            .ok_or_else(|| format!("Unrecognized input: {}", s))
     }
 }
 
 #[derive(clap::Parser, Debug)]
 #[clap(version)]
 struct Args {
-    /// Choose a backend for generating code. (c, wasm)
-    #[clap(long, default_value = "c")]
-    backend: Backend,
+    /// Choose a compile target for emitting code.
+    #[clap(
+        long,
+        default_value = TARGET_OPTION_POSSIBLE_VALUES[0],
+        possible_values=TARGET_OPTION_POSSIBLE_VALUES)]
+    target: Target,
 
     /// Source code file to read.
     #[clap(required = false)]
@@ -151,14 +202,14 @@ fn main() {
         optimizer.run_function_pass(&pass, &mut program);
         //eprintln!("--- (optimized)\n{}", program);
 
-        match args.backend {
-            Backend::C => {
+        match args.target {
+            Target::C => {
                 let mut emitter = gen::c::Emitter::new();
                 let code = emitter.emit(&program);
 
                 println!("{}", code);
             }
-            Backend::Wasm => todo!(),
+            Target::Wasm(_) => todo!(),
         }
     }
 }
