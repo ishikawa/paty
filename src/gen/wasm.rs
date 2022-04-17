@@ -33,7 +33,7 @@ impl Emitter {
     }
 
     pub fn emit<'a, 'tcx>(&mut self, _program: &'a Program<'a, 'tcx>) -> String {
-        let module = builder::Module::new();
+        let module = builder::Module::new(Some("demo.wat".into()));
         let mut wat = builder::WatBuilder::new();
 
         wat.emit(&module)

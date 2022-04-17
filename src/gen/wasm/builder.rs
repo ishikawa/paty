@@ -6,11 +6,17 @@
 ///
 /// https://webassembly.github.io/spec/core/syntax/modules.html
 #[derive(Debug)]
-pub struct Module {}
+pub struct Module {
+    name: Option<String>,
+}
 
 impl Module {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(name: Option<String>) -> Self {
+        Self { name }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 }
 
@@ -43,9 +49,16 @@ impl WatBuilder {
 }
 
 impl Visitor for WatBuilder {
-    fn visit_module(&mut self, _module: &Module) {
+    fn visit_module(&mut self, module: &Module) {
         self.buffer.push('(');
         self.buffer.push_str("module");
+
+        if let Some(name) = module.name() {
+            self.buffer.push(' ');
+            self.buffer.push('$');
+            self.buffer.push_str(name);
+        }
+
         self.buffer.push(')');
     }
 }
