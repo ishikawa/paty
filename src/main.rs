@@ -13,7 +13,7 @@ use typed_arena::Arena;
 
 const MAX_OPTIMIZATION_REPEAT: usize = 8;
 
-const TARGET_OPTIONS: [(&'static str, Target); 6] = [
+const TARGET_NAME_TO_VARIANTS: [(&str, Target); 6] = [
     ("c", Target::C),
     (
         "wasm",
@@ -52,13 +52,13 @@ const TARGET_OPTIONS: [(&'static str, Target); 6] = [
     ),
 ];
 
-const TARGET_OPTION_POSSIBLE_VALUES: [&'static str; TARGET_OPTIONS.len()] = [
-    TARGET_OPTIONS[0].0,
-    TARGET_OPTIONS[1].0,
-    TARGET_OPTIONS[2].0,
-    TARGET_OPTIONS[3].0,
-    TARGET_OPTIONS[4].0,
-    TARGET_OPTIONS[5].0,
+const TARGET_OPTION_POSSIBLE_VALUES: [&str; TARGET_NAME_TO_VARIANTS.len()] = [
+    TARGET_NAME_TO_VARIANTS[0].0,
+    TARGET_NAME_TO_VARIANTS[1].0,
+    TARGET_NAME_TO_VARIANTS[2].0,
+    TARGET_NAME_TO_VARIANTS[3].0,
+    TARGET_NAME_TO_VARIANTS[4].0,
+    TARGET_NAME_TO_VARIANTS[5].0,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -73,7 +73,7 @@ impl FromStr for Target {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        TARGET_OPTIONS
+        TARGET_NAME_TO_VARIANTS
             .iter()
             .find(|(name, _)| *name == s)
             .map(|(_, target)| target.clone())
