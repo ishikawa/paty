@@ -1,9 +1,7 @@
 //! WebAssembly backend which emits WAT (WebAssembly Text Format).
-mod builder;
+pub mod builder;
 
-use self::builder::{
-    FunctionParam, FunctionSignature, Import, ImportDesc, Module, Type, WatBuilder,
-};
+use self::builder::{Entity, FunctionSignature, Import, ImportDesc, Module, Type, WatBuilder};
 use crate::ir::inst::Program;
 
 /// WebAssembly has 32-bit and 64-bit architecture variants,
@@ -41,12 +39,11 @@ impl Emitter {
         if self.options.wasi {
             // fd_write(fd: fd, iovs: ciovec_array) -> Result<size, errno>
             let fun_fd_write = FunctionSignature::new(
-                Some("fd_write".into()),
                 vec![
-                    FunctionParam::new(Some("fd".into()), Type::I32),
-                    FunctionParam::new(Some("iovs".into()), Type::I32),
-                    FunctionParam::new(Some("iovs_len".into()), Type::I32),
-                    FunctionParam::new(Some("nwritten".into()), Type::I32),
+                    Entity::named("fd".into(), Type::I32),
+                    Entity::named("iovs".into(), Type::I32),
+                    Entity::named("iovs_len".into(), Type::I32),
+                    Entity::named("nwritten".into(), Type::I32),
                 ],
                 vec![Type::I32],
             );
@@ -54,13 +51,13 @@ impl Emitter {
             imports.push(Import::new(
                 "wasi_snapshot_preview1".into(),
                 "fd_write".into(),
-                ImportDesc::Function(fun_fd_write),
+                ImportDesc::Function(Entity::named("fd_write".into(), fun_fd_write)),
             ));
         }
 
-        let module = Module::new(Some("demo.wat".into()), imports);
+        let module = Module::new(imports);
         let mut wat = WatBuilder::new();
 
-        wat.emit(&module)
+        wat.emit(&Entity::named("demo.wat".into(), module))
     }
 }
