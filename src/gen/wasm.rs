@@ -1,7 +1,9 @@
 //! WebAssembly backend which emits WAT (WebAssembly Text Format).
 pub mod builder;
 
-use self::builder::{Entity, FunctionSignature, Import, ImportDesc, Module, Type, WatBuilder};
+use self::builder::{
+    Entity, FunctionSignature, Import, ImportDesc, Memory, Module, Type, WatBuilder,
+};
 use crate::ir::inst::Program;
 
 /// WebAssembly has 32-bit and 64-bit architecture variants,
@@ -55,7 +57,8 @@ impl Emitter {
             ));
         }
 
-        let module = Module::new(imports);
+        let memory = Memory::default();
+        let module = Module::new(imports, Some(Entity::new(memory)));
         let mut wat = WatBuilder::new();
 
         wat.emit(&Entity::named("demo.wat".into(), module))

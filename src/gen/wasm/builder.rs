@@ -57,15 +57,20 @@ impl<T: fmt::Debug> fmt::Debug for Entity<T> {
 #[derive(Debug)]
 pub struct Module {
     imports: Vec<Import>,
+    memory: Option<Entity<Memory>>,
 }
 
 impl Module {
-    pub fn new(imports: Vec<Import>) -> Self {
-        Self { imports }
+    pub fn new(imports: Vec<Import>, memory: Option<Entity<Memory>>) -> Self {
+        Self { imports, memory }
     }
 
     pub fn imports(&self) -> impl ExactSizeIterator<Item = &Import> {
         self.imports.iter()
+    }
+
+    pub fn memory(&self) -> Option<&Entity<Memory>> {
+        self.memory.as_ref()
     }
 }
 
@@ -256,14 +261,26 @@ pub trait Visitor {
 
     fn enter_import(&mut self, import: &Import);
     fn exit_import(&mut self, import: &Import);
+
+    fn enter_memory(&mut self, memory: &Entity<Memory>);
+    fn exit_memory(&mut self, memory: &Entity<Memory>);
 }
 
 fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
     visitor.enter_module(module);
+
+    // imports
     for import in module.get().imports() {
         visitor.enter_import(import);
         visitor.exit_import(import);
     }
+
+    // memory
+    if let Some(memory) = module.get().memory() {
+        visitor.enter_memory(memory);
+        visitor.exit_memory(memory);
+    }
+
     visitor.exit_module(module);
 }
 
@@ -304,6 +321,14 @@ impl WatBuilder {
             Type::F32 => "f32",
             Type::F64 => "f64",
         });
+    }
+    fn emit_limits(&mut self, limits: &Limits) {
+        self.buffer.push_str(&limits.min().to_string());
+
+        if let Some(max) = limits.max() {
+            self.buffer.push(' ');
+            self.buffer.push_str(&max.to_string());
+        }
     }
     fn emit_import_desc_function(&mut self, fun: &Entity<FunctionSignature>) {
         self.buffer.push('(');
@@ -368,6 +393,22 @@ impl Visitor for WatBuilder {
         }
     }
     fn exit_import(&mut self, _import: &Import) {
+        self.buffer.push(')');
+    }
+
+    fn enter_memory(&mut self, memory: &Entity<Memory>) {
+        self.buffer.push('(');
+        self.buffer.push_str("memory");
+
+        self.buffer.push(' ');
+        if let Some(name) = memory.id() {
+            self.buffer.push(' ');
+            self.emit_id(name);
+        }
+
+        self.emit_limits(memory.get().limits());
+    }
+    fn exit_memory(&mut self, _memory: &Entity<Memory>) {
         self.buffer.push(')');
     }
 }
