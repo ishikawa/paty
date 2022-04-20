@@ -50,6 +50,71 @@ impl<T: fmt::Debug> fmt::Debug for Entity<T> {
     }
 }
 
+/// Strings denote sequences of bytes that can represent both textual and
+/// binary data. They are enclosed in quotation marks and may contain any
+/// character other than ASCII control characters, quotation marks (`"`),
+/// or backslash (`\`), except when expressed with an escape sequence.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StringData {
+    String(String),
+    Bytes(Box<[u8]>),
+}
+
+const HEX_CHARS: [char; 16] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+];
+
+impl StringData {
+    /// Writes a escaped string contents into buffer or streams.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use paty::gen::wasm::builder::StringData;
+    /// let mut buffer = String::new();
+    ///
+    /// // string
+    /// let string = StringData::String("\"hello\"\n".to_string());
+    /// assert!(string.write_escape(&mut buffer).is_ok());
+    /// assert_eq!(&buffer, "\\\"hello\\\"\\n");
+    ///
+    /// buffer.clear();
+    /// let string = StringData::String("こんにちは".to_string());
+    /// assert!(string.write_escape(&mut buffer).is_ok());
+    /// assert_eq!(&buffer, "\\u{3053}\\u{3093}\\u{306b}\\u{3061}\\u{306f}");
+    ///
+    /// // bytes
+    /// buffer.clear();
+    /// let string = StringData::Bytes(Box::new([0, 1, 0xFF]));
+    /// assert!(string.write_escape(&mut buffer).is_ok());
+    /// assert_eq!(&buffer, "\\00\\01\\ff");
+    /// ```
+    pub fn write_escape<F: fmt::Write>(&self, f: &mut F) -> fmt::Result {
+        match self {
+            Self::String(s) => self.write_escape_string(f, s),
+            Self::Bytes(b) => self.write_escape_bytes(f, b),
+        }
+    }
+
+    fn write_escape_string<F: fmt::Write>(&self, f: &mut F, s: &str) -> fmt::Result {
+        for c in s.escape_default() {
+            f.write_char(c)?;
+        }
+        Ok(())
+    }
+
+    fn write_escape_bytes<F: fmt::Write>(&self, f: &mut F, bytes: &[u8]) -> fmt::Result {
+        for &b in bytes {
+            f.write_char('\\')?;
+            let i = usize::try_from(b >> 4).unwrap();
+            f.write_char(HEX_CHARS[i])?;
+            let i = usize::try_from(0x0f & b).unwrap();
+            f.write_char(HEX_CHARS[i])?;
+        }
+        Ok(())
+    }
+}
+
 /// WebAssembly programs are organized into modules,
 /// which are the unit of deployment, loading, and compilation.
 ///
