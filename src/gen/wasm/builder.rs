@@ -58,6 +58,7 @@ impl Default for MemoryUse {
 ///
 /// Some constructs in WAT can be referenced by an identifier. This
 /// struct wraps a construct with a referenced identifier.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Entity<T> {
     id: Option<String>,
     value: T,
@@ -497,6 +498,20 @@ impl Function {
         Self::with_signature(FunctionSignature::new(params, results))
     }
 
+    /// Creates a new function with the specified signature.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use paty::gen::wasm::builder::{Function, Entity, Type, Instruction, FunctionSignature};
+    /// let signature = FunctionSignature::new(vec![Entity::named("x".into(), Type::I32)], vec![Type::I32]);
+    /// let fun = Function::with_signature(signature);
+    ///
+    /// assert_eq!(fun.signature().params().len(), 1);
+    /// assert_eq!(fun.signature().params().next(), Some(&Entity::named("x".into(), Type::I32)));
+    /// assert_eq!(fun.signature().results().len(), 1);
+    /// assert_eq!(fun.signature().results().next(), Some(&Type::I32));
+    /// ```
     pub fn with_signature(signature: FunctionSignature) -> Self {
         Self {
             signature,
