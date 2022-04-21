@@ -2,8 +2,8 @@
 pub mod builder;
 
 use self::builder::{
-    DataSegment, Entity, FunctionSignature, Import, ImportDesc, Instruction, Memory, Module,
-    StringData, Type, WatBuilder,
+    DataSegment, Entity, Export, ExportDesc, FunctionSignature, Import, ImportDesc, Index,
+    Instruction, Memory, Module, StringData, Type, WatBuilder,
 };
 use crate::ir::inst::Program;
 
@@ -38,6 +38,7 @@ impl Emitter {
 
     pub fn emit<'a, 'tcx>(&mut self, _program: &'a Program<'a, 'tcx>) -> String {
         let mut imports = vec![];
+        let mut exports = vec![];
         let mut data_segments = vec![];
 
         // -- imports
@@ -60,6 +61,12 @@ impl Emitter {
             ));
         }
 
+        // -- exports
+        exports.push(Export::new(
+            "memory".into(),
+            ExportDesc::Memory(Index::Index(0)),
+        ));
+
         // -- data segments
         data_segments.push(Entity::new(DataSegment::new(
             vec![Instruction::I32Const(8)],
@@ -67,7 +74,7 @@ impl Emitter {
         )));
 
         let memory = Memory::default();
-        let module = Module::new(imports, Some(Entity::new(memory)), data_segments);
+        let module = Module::new(imports, exports, Some(Entity::new(memory)), data_segments);
         let mut wat = WatBuilder::new();
 
         wat.emit(&Entity::named("demo.wat".into(), module))

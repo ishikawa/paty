@@ -173,6 +173,7 @@ impl StringData {
 #[derive(Debug)]
 pub struct Module {
     imports: Vec<Import>,
+    exports: Vec<Export>,
     memory: Option<Entity<Memory>>,
     data_segments: Vec<Entity<DataSegment>>,
 }
@@ -180,11 +181,13 @@ pub struct Module {
 impl Module {
     pub fn new(
         imports: Vec<Import>,
+        exports: Vec<Export>,
         memory: Option<Entity<Memory>>,
         data_segments: Vec<Entity<DataSegment>>,
     ) -> Self {
         Self {
             imports,
+            exports,
             memory,
             data_segments,
         }
@@ -192,6 +195,10 @@ impl Module {
 
     pub fn imports(&self) -> impl ExactSizeIterator<Item = &Import> {
         self.imports.iter()
+    }
+
+    pub fn exports(&self) -> impl ExactSizeIterator<Item = &Export> {
+        self.exports.iter()
     }
 
     pub fn memory(&self) -> Option<&Entity<Memory>> {
@@ -237,6 +244,37 @@ impl Import {
 #[derive(Debug)]
 pub enum ImportDesc {
     Function(Entity<FunctionSignature>),
+}
+
+/// The `exports` component of a module defines a set of exports that become
+/// accessible to the host environment once the module has been instantiated.
+#[derive(Debug)]
+pub struct Export {
+    /// Each export is labeled by a unique name.
+    name: String,
+    /// Exportable definitions are functions, tables, memories, and globals,
+    /// which are referenced through a respective descriptor.
+    desc: ExportDesc,
+}
+
+impl Export {
+    pub fn new(name: String, desc: ExportDesc) -> Self {
+        Self { name, desc }
+    }
+
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    pub fn desc(&self) -> &ExportDesc {
+        &self.desc
+    }
+}
+
+#[derive(Debug)]
+pub enum ExportDesc {
+    Function(Index),
+    Memory(Index),
 }
 
 /// Memory types classify linear memories and their size range.
@@ -437,6 +475,9 @@ pub trait Visitor {
     fn enter_import(&mut self, import: &Import);
     fn exit_import(&mut self, import: &Import);
 
+    fn enter_export(&mut self, export: &Export);
+    fn exit_export(&mut self, export: &Export);
+
     fn enter_memory(&mut self, memory: &Entity<Memory>);
     fn exit_memory(&mut self, memory: &Entity<Memory>);
 
@@ -451,6 +492,12 @@ fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
     for import in module.get().imports() {
         visitor.enter_import(import);
         visitor.exit_import(import);
+    }
+
+    // exports
+    for export in module.get().exports() {
+        visitor.enter_export(export);
+        visitor.exit_export(export);
     }
 
     // memory
@@ -604,6 +651,33 @@ impl Visitor for WatBuilder {
         }
     }
     fn exit_import(&mut self, _import: &Import) {
+        self.buffer.push(')');
+    }
+
+    fn enter_export(&mut self, export: &Export) {
+        self.buffer.push('(');
+        self.buffer.push_str("export");
+
+        self.buffer.push(' ');
+        self.emit_str(export.name());
+        self.buffer.push(' ');
+
+        self.buffer.push('(');
+        match export.desc() {
+            ExportDesc::Function(idx) => {
+                self.buffer.push_str("func");
+                self.buffer.push(' ');
+                self.emit_index(idx);
+            }
+            ExportDesc::Memory(idx) => {
+                self.buffer.push_str("memory");
+                self.buffer.push(' ');
+                self.emit_index(idx);
+            }
+        }
+        self.buffer.push(')');
+    }
+    fn exit_export(&mut self, _export: &Export) {
         self.buffer.push(')');
     }
 
