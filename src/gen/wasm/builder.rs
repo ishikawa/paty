@@ -176,6 +176,7 @@ pub struct Module {
     exports: Vec<Export>,
     memory: Option<Entity<Memory>>,
     data_segments: Vec<Entity<DataSegment>>,
+    functions: Vec<Entity<Function>>,
 }
 
 impl Default for Module {
@@ -191,10 +192,11 @@ impl Module {
 
     pub fn with_memory(memory: Entity<Memory>) -> Self {
         Self {
+            memory: Some(memory),
             imports: vec![],
             exports: vec![],
-            memory: Some(memory),
             data_segments: vec![],
+            functions: vec![],
         }
     }
 
@@ -210,6 +212,9 @@ impl Module {
     pub fn data_segments(&self) -> impl ExactSizeIterator<Item = &Entity<DataSegment>> {
         self.data_segments.iter()
     }
+    pub fn functions(&self) -> impl ExactSizeIterator<Item = &Entity<Function>> {
+        self.functions.iter()
+    }
 
     pub fn push_import(&mut self, import: Import) {
         self.imports.push(import);
@@ -219,6 +224,9 @@ impl Module {
     }
     pub fn push_data_segment(&mut self, data_segment: Entity<DataSegment>) {
         self.data_segments.push(data_segment);
+    }
+    pub fn push_function(&mut self, function: Entity<Function>) {
+        self.functions.push(function);
     }
 }
 
@@ -548,6 +556,9 @@ pub trait Visitor {
 
     fn enter_data_segment(&mut self, data_segment: &Entity<DataSegment>);
     fn exit_data_segment(&mut self, data_segment: &Entity<DataSegment>);
+
+    fn enter_function(&mut self, function: &Entity<Function>);
+    fn exit_function(&mut self, function: &Entity<Function>);
 }
 
 fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
@@ -575,6 +586,12 @@ fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
     for data_segment in module.get().data_segments() {
         visitor.enter_data_segment(data_segment);
         visitor.exit_data_segment(data_segment);
+    }
+
+    // functions
+    for function in module.get().functions() {
+        visitor.enter_function(function);
+        visitor.exit_function(function);
     }
 
     visitor.exit_module(module);
@@ -637,17 +654,8 @@ impl WatBuilder {
             self.buffer.push_str(&max.to_string());
         }
     }
-    fn emit_import_desc_function(&mut self, fun: &Entity<FunctionSignature>) {
-        self.buffer.push('(');
-        self.buffer.push_str("func");
-
-        if let Some(name) = fun.id() {
-            self.buffer.push(' ');
-            self.emit_id(name);
-        }
-        self.buffer.push(' ');
-
-        for param in fun.get().params() {
+    fn emit_function_signature(&mut self, signature: &FunctionSignature) {
+        for param in signature.params() {
             self.buffer.push('(');
             self.buffer.push_str("param");
             self.buffer.push(' ');
@@ -659,14 +667,24 @@ impl WatBuilder {
             self.buffer.push(')');
         }
 
-        for ty in fun.get().results() {
+        for ty in signature.results() {
             self.buffer.push('(');
             self.buffer.push_str("result");
             self.buffer.push(' ');
             self.emit_type(ty);
             self.buffer.push(')');
         }
+    }
+    fn emit_import_desc_function(&mut self, fun: &Entity<FunctionSignature>) {
+        self.buffer.push('(');
+        self.buffer.push_str("func");
 
+        if let Some(name) = fun.id() {
+            self.buffer.push(' ');
+            self.emit_id(name);
+        }
+        self.buffer.push(' ');
+        self.emit_function_signature(fun.get());
         self.buffer.push(')');
     }
     fn emit_inst(&mut self, inst: &Instruction) {
@@ -797,6 +815,41 @@ impl Visitor for WatBuilder {
         }
     }
     fn exit_data_segment(&mut self, _data_segment: &Entity<DataSegment>) {
+        self.buffer.push(')');
+    }
+
+    fn enter_function(&mut self, fun: &Entity<Function>) {
+        self.buffer.push('(');
+        self.buffer.push_str("func");
+
+        // id
+        if let Some(name) = fun.id() {
+            self.buffer.push(' ');
+            self.emit_id(name);
+        }
+
+        self.buffer.push(' ');
+        self.emit_function_signature(fun.get().signature());
+
+        // locals
+        for local in fun.get().locals() {
+            self.buffer.push('(');
+            self.buffer.push_str("local");
+            if let Some(name) = local.id() {
+                self.buffer.push(' ');
+                self.emit_id(name);
+            }
+            self.buffer.push(' ');
+            self.emit_type(local.get());
+            self.buffer.push(')');
+        }
+
+        // instructions
+        for inst in fun.get().instructions() {
+            self.emit_inst(inst);
+        }
+    }
+    fn exit_function(&mut self, _function: &Entity<Function>) {
         self.buffer.push(')');
     }
 }
