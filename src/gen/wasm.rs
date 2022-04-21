@@ -2,7 +2,8 @@
 pub mod builder;
 
 use self::builder::{
-    Entity, FunctionSignature, Import, ImportDesc, Memory, Module, Type, WatBuilder,
+    DataSegment, Entity, FunctionSignature, Import, ImportDesc, Instruction, Memory, Module,
+    StringData, Type, WatBuilder,
 };
 use crate::ir::inst::Program;
 
@@ -37,7 +38,9 @@ impl Emitter {
 
     pub fn emit<'a, 'tcx>(&mut self, _program: &'a Program<'a, 'tcx>) -> String {
         let mut imports = vec![];
+        let mut data_segments = vec![];
 
+        // -- imports
         if self.options.wasi {
             // fd_write(fd: fd, iovs: ciovec_array) -> Result<size, errno>
             let fun_fd_write = FunctionSignature::new(
@@ -57,8 +60,14 @@ impl Emitter {
             ));
         }
 
+        // -- data segments
+        data_segments.push(Entity::new(DataSegment::new(
+            vec![Instruction::I32Const(8)],
+            vec![StringData::String("hello world\n".to_string())],
+        )));
+
         let memory = Memory::default();
-        let module = Module::new(imports, Some(Entity::new(memory)));
+        let module = Module::new(imports, Some(Entity::new(memory)), data_segments);
         let mut wat = WatBuilder::new();
 
         wat.emit(&Entity::named("demo.wat".into(), module))

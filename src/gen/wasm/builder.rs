@@ -3,6 +3,57 @@
 
 use std::fmt;
 
+/// Various entities in WebAssembly are classified by types.
+/// Types are checked during validation, instantiation, and
+/// possibly execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Type {
+    // Number Types
+    // The types  and  classify 32 and 64 bit integers, respectively.
+    // Integers are not inherently signed or unsigned, their interpretation is
+    // determined by individual operations.
+    I32,
+    #[allow(dead_code)]
+    I64,
+    // The types  and  classify 32 and 64 bit floating-point data, respectively.
+    // They correspond to the respective binary floating-point representations,
+    // also known as single and double precision, as defined by
+    // the IEEE 754-2019 standard
+    #[allow(dead_code)]
+    F32,
+    #[allow(dead_code)]
+    F64,
+}
+
+/// Indices can be given either in raw numeric form or as symbolic identifiers
+/// when bound by a respective construct. Such identifiers are looked up in
+/// the suitable space of the identifier context _I_.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Index {
+    Index(u32),
+    Id(String),
+}
+
+// -- Use
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MemoryUse(Index);
+
+impl MemoryUse {
+    pub fn new(index: Index) -> Self {
+        Self(index)
+    }
+
+    pub fn index(&self) -> &Index {
+        &self.0
+    }
+}
+
+impl Default for MemoryUse {
+    fn default() -> Self {
+        Self(Index::Index(0))
+    }
+}
+
 /// Wraps a construct with a referenced identifier.
 ///
 /// Some constructs in WAT can be referenced by an identifier. This
@@ -123,11 +174,20 @@ impl StringData {
 pub struct Module {
     imports: Vec<Import>,
     memory: Option<Entity<Memory>>,
+    data_segments: Vec<Entity<DataSegment>>,
 }
 
 impl Module {
-    pub fn new(imports: Vec<Import>, memory: Option<Entity<Memory>>) -> Self {
-        Self { imports, memory }
+    pub fn new(
+        imports: Vec<Import>,
+        memory: Option<Entity<Memory>>,
+        data_segments: Vec<Entity<DataSegment>>,
+    ) -> Self {
+        Self {
+            imports,
+            memory,
+            data_segments,
+        }
     }
 
     pub fn imports(&self) -> impl ExactSizeIterator<Item = &Import> {
@@ -136,6 +196,10 @@ impl Module {
 
     pub fn memory(&self) -> Option<&Entity<Memory>> {
         self.memory.as_ref()
+    }
+
+    pub fn data_segments(&self) -> impl ExactSizeIterator<Item = &Entity<DataSegment>> {
+        self.data_segments.iter()
     }
 }
 
@@ -298,26 +362,72 @@ impl FunctionSignature {
     }
 }
 
-/// Various entities in WebAssembly are classified by types.
-/// Types are checked during validation, instantiation, and
-/// possibly execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Type {
-    // Number Types
-    // The types  and  classify 32 and 64 bit integers, respectively.
-    // Integers are not inherently signed or unsigned, their interpretation is
-    // determined by individual operations.
-    I32,
-    #[allow(dead_code)]
-    I64,
-    // The types  and  classify 32 and 64 bit floating-point data, respectively.
-    // They correspond to the respective binary floating-point representations,
-    // also known as single and double precision, as defined by
-    // the IEEE 754-2019 standard
-    #[allow(dead_code)]
-    F32,
-    #[allow(dead_code)]
-    F64,
+/// Data segments allow for an optional memory index to identify the memory
+/// to initialize. The data is written as a string, which may be split up into
+/// a possibly empty sequence of individual string literals.
+#[derive(Debug)]
+pub struct DataSegment {
+    memory: MemoryUse,
+    offset: Vec<Instruction>,
+    data: Vec<StringData>,
+}
+
+impl DataSegment {
+    /// Creates a new data segment without memory use, defaulting to `0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use paty::gen::wasm::builder::{DataSegment, Index, Instruction, StringData, MemoryUse};
+    ///
+    /// let segment = DataSegment::new(
+    ///     vec![Instruction::I32Const(8)],
+    ///     vec![StringData::String("hello".to_string())]);
+    ///
+    /// assert_eq!(segment.memory(), &MemoryUse::new(Index::Index(0)));
+    /// let mut offset = segment.offset();
+    /// assert_eq!(offset.len(), 1);
+    /// assert!(matches!(offset.next(), Some(Instruction::I32Const(8))));
+    /// ```
+    pub fn new(offset: Vec<Instruction>, data: Vec<StringData>) -> Self {
+        Self::with_memory(MemoryUse::default(), offset, data)
+    }
+
+    pub fn with_memory(memory: MemoryUse, offset: Vec<Instruction>, data: Vec<StringData>) -> Self {
+        Self {
+            memory,
+            offset,
+            data,
+        }
+    }
+
+    pub fn memory(&self) -> &MemoryUse {
+        &self.memory
+    }
+    pub fn offset(&self) -> impl ExactSizeIterator<Item = &Instruction> {
+        self.offset.iter()
+    }
+    pub fn data(&self) -> impl ExactSizeIterator<Item = &StringData> {
+        self.data.iter()
+    }
+}
+
+/// WebAssembly code consists of sequences of instructions. Its computational model is
+/// based on a stack machine in that instructions manipulate values on an implicit
+/// operand stack, consuming (popping) argument values and producing or
+/// returning (pushing) result values.
+///
+/// In addition to dynamic operands from the stack, some instructions also have static
+/// immediate arguments, typically indices or type annotations, which are part of
+/// the instruction itself.
+///
+/// Some instructions are structured in that they bracket nested sequences of instructions.
+#[derive(Debug)]
+pub enum Instruction {
+    /// `i32.const {inn}`
+    I32Const(u32),
+    /// `i64.const {inn}`
+    I64Const(u64),
 }
 
 pub trait Visitor {
@@ -329,6 +439,9 @@ pub trait Visitor {
 
     fn enter_memory(&mut self, memory: &Entity<Memory>);
     fn exit_memory(&mut self, memory: &Entity<Memory>);
+
+    fn enter_data_segment(&mut self, data_segment: &Entity<DataSegment>);
+    fn exit_data_segment(&mut self, data_segment: &Entity<DataSegment>);
 }
 
 fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
@@ -344,6 +457,12 @@ fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
     if let Some(memory) = module.get().memory() {
         visitor.enter_memory(memory);
         visitor.exit_memory(memory);
+    }
+
+    // data segments
+    for data_segment in module.get().data_segments() {
+        visitor.enter_data_segment(data_segment);
+        visitor.exit_data_segment(data_segment);
     }
 
     visitor.exit_module(module);
@@ -368,6 +487,12 @@ impl WatBuilder {
         std::mem::take(&mut self.buffer)
     }
 
+    fn emit_index(&mut self, index: &Index) {
+        match index {
+            &Index::Index(i) => self.buffer.push_str(&i.to_string()),
+            Index::Id(id) => self.emit_id(id),
+        }
+    }
     fn emit_id(&mut self, id: &str) {
         self.buffer.push('$');
         self.buffer.push_str(id);
@@ -377,6 +502,11 @@ impl WatBuilder {
         for c in s.escape_default() {
             self.buffer.push(c);
         }
+        self.buffer.push('"');
+    }
+    fn emit_string_data(&mut self, s: &StringData) {
+        self.buffer.push('"');
+        s.write_escape(&mut self.buffer).expect("unreachable");
         self.buffer.push('"');
     }
     fn emit_type(&mut self, ty: &Type) {
@@ -427,6 +557,22 @@ impl WatBuilder {
 
         self.buffer.push(')');
     }
+    fn emit_inst(&mut self, inst: &Instruction) {
+        self.buffer.push('(');
+        match inst {
+            Instruction::I32Const(n) => {
+                self.buffer.push_str("i32.const");
+                self.buffer.push(' ');
+                self.buffer.push_str(&n.to_string());
+            }
+            Instruction::I64Const(n) => {
+                self.buffer.push_str("i64.const");
+                self.buffer.push(' ');
+                self.buffer.push_str(&n.to_string());
+            }
+        }
+        self.buffer.push(')');
+    }
 }
 
 impl Visitor for WatBuilder {
@@ -474,6 +620,44 @@ impl Visitor for WatBuilder {
         self.emit_limits(memory.get().limits());
     }
     fn exit_memory(&mut self, _memory: &Entity<Memory>) {
+        self.buffer.push(')');
+    }
+
+    fn enter_data_segment(&mut self, data_segment: &Entity<DataSegment>) {
+        self.buffer.push('(');
+        self.buffer.push_str("data");
+
+        // id
+        if let Some(name) = data_segment.id() {
+            self.buffer.push(' ');
+            self.emit_id(name);
+        }
+
+        // memuse
+        self.buffer.push(' ');
+        self.buffer.push('(');
+        self.buffer.push_str("memory");
+        self.buffer.push(' ');
+        self.emit_index(data_segment.get().memory().index());
+        self.buffer.push(')');
+
+        // offset
+        self.buffer.push(' ');
+        self.buffer.push('(');
+        self.buffer.push_str("offset");
+        self.buffer.push(' ');
+        for inst in data_segment.get().offset() {
+            self.emit_inst(inst);
+        }
+        self.buffer.push(')');
+
+        // data
+        for s in data_segment.get().data() {
+            self.buffer.push(' ');
+            self.emit_string_data(s);
+        }
+    }
+    fn exit_data_segment(&mut self, _data_segment: &Entity<DataSegment>) {
         self.buffer.push(')');
     }
 }
