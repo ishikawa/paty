@@ -178,35 +178,47 @@ pub struct Module {
     data_segments: Vec<Entity<DataSegment>>,
 }
 
+impl Default for Module {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Module {
-    pub fn new(
-        imports: Vec<Import>,
-        exports: Vec<Export>,
-        memory: Option<Entity<Memory>>,
-        data_segments: Vec<Entity<DataSegment>>,
-    ) -> Self {
+    pub fn new() -> Self {
+        Self::with_memory(Entity::new(Memory::default()))
+    }
+
+    pub fn with_memory(memory: Entity<Memory>) -> Self {
         Self {
-            imports,
-            exports,
-            memory,
-            data_segments,
+            imports: vec![],
+            exports: vec![],
+            memory: Some(memory),
+            data_segments: vec![],
         }
     }
 
     pub fn imports(&self) -> impl ExactSizeIterator<Item = &Import> {
         self.imports.iter()
     }
-
     pub fn exports(&self) -> impl ExactSizeIterator<Item = &Export> {
         self.exports.iter()
     }
-
     pub fn memory(&self) -> Option<&Entity<Memory>> {
         self.memory.as_ref()
     }
-
     pub fn data_segments(&self) -> impl ExactSizeIterator<Item = &Entity<DataSegment>> {
         self.data_segments.iter()
+    }
+
+    pub fn push_import(&mut self, import: Import) {
+        self.imports.push(import);
+    }
+    pub fn push_export(&mut self, export: Export) {
+        self.exports.push(export);
+    }
+    pub fn push_data_segment(&mut self, data_segment: Entity<DataSegment>) {
+        self.data_segments.push(data_segment);
     }
 }
 
@@ -447,6 +459,59 @@ impl DataSegment {
     }
     pub fn data(&self) -> impl ExactSizeIterator<Item = &StringData> {
         self.data.iter()
+    }
+}
+
+/// Function definitions can bind a symbolic function identifier, and local identifiers
+/// for its parameters and locals.
+///
+/// # Examples
+///
+/// ```
+/// # use paty::gen::wasm::builder::{Function, Entity, Type, Instruction};
+/// let mut fun = Function::new(vec![Entity::named("x".into(), Type::I32)], vec![Type::I32]);
+///
+/// assert_eq!(fun.signature().params().len(), 1);
+/// assert_eq!(fun.signature().results().len(), 1);
+///
+/// fun.push_local(Entity::named("a".into(), Type::I32));
+/// assert_eq!(fun.locals().len(), 1);
+/// ```
+#[derive(Debug)]
+pub struct Function {
+    signature: FunctionSignature,
+    locals: Vec<Entity<Type>>,
+    instructions: Vec<Instruction>,
+}
+
+impl Function {
+    pub fn new(params: Vec<Entity<Type>>, results: Vec<Type>) -> Self {
+        Self::with_signature(FunctionSignature::new(params, results))
+    }
+
+    pub fn with_signature(signature: FunctionSignature) -> Self {
+        Self {
+            signature,
+            locals: Vec::with_capacity(0),
+            instructions: vec![],
+        }
+    }
+
+    pub fn signature(&self) -> &FunctionSignature {
+        &self.signature
+    }
+    pub fn locals(&self) -> impl ExactSizeIterator<Item = &Entity<Type>> {
+        self.locals.iter()
+    }
+    pub fn instructions(&self) -> impl ExactSizeIterator<Item = &Instruction> {
+        self.instructions.iter()
+    }
+
+    pub fn push_local(&mut self, local: Entity<Type>) {
+        self.locals.push(local);
+    }
+    pub fn push_instruction(&mut self, inst: Instruction) {
+        self.instructions.push(inst);
     }
 }
 

@@ -3,7 +3,7 @@ pub mod builder;
 
 use self::builder::{
     DataSegment, Entity, Export, ExportDesc, FunctionSignature, Import, ImportDesc, Index,
-    Instruction, Memory, Module, StringData, Type, WatBuilder,
+    Instruction, Module, StringData, Type, WatBuilder,
 };
 use crate::ir::inst::Program;
 
@@ -37,9 +37,7 @@ impl Emitter {
     }
 
     pub fn emit<'a, 'tcx>(&mut self, _program: &'a Program<'a, 'tcx>) -> String {
-        let mut imports = vec![];
-        let mut exports = vec![];
-        let mut data_segments = vec![];
+        let mut module = Module::new();
 
         // -- imports
         if self.options.wasi {
@@ -54,7 +52,7 @@ impl Emitter {
                 vec![Type::I32],
             );
 
-            imports.push(Import::new(
+            module.push_import(Import::new(
                 "wasi_snapshot_preview1".into(),
                 "fd_write".into(),
                 ImportDesc::Function(Entity::named("fd_write".into(), fun_fd_write)),
@@ -62,19 +60,17 @@ impl Emitter {
         }
 
         // -- exports
-        exports.push(Export::new(
+        module.push_export(Export::new(
             "memory".into(),
             ExportDesc::Memory(Index::Index(0)),
         ));
 
         // -- data segments
-        data_segments.push(Entity::new(DataSegment::new(
+        module.push_data_segment(Entity::new(DataSegment::new(
             vec![Instruction::I32Const(8)],
             vec![StringData::String("hello world\n".to_string())],
         )));
 
-        let memory = Memory::default();
-        let module = Module::new(imports, exports, Some(Entity::new(memory)), data_segments);
         let mut wat = WatBuilder::new();
 
         wat.emit(&Entity::named("demo.wat".into(), module))
