@@ -468,7 +468,7 @@ fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
     visitor.exit_module(module);
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct WatBuilder {
     buffer: String,
 }
