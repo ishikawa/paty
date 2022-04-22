@@ -2,8 +2,8 @@
 pub mod builder;
 
 use self::builder::{
-    DataSegment, Entity, Export, ExportDesc, FunctionSignature, Import, ImportDesc, Index,
-    Instruction, Module, StringData, Type, WatBuilder,
+    DataSegment, Entity, Export, ExportDesc, Function, FunctionSignature, Import, ImportDesc,
+    Index, Instruction, MemArg, Module, StringData, Type, WatBuilder,
 };
 use crate::ir::inst::Program;
 
@@ -71,8 +71,40 @@ impl Emitter {
             vec![StringData::String("hello world\n".to_string())],
         )));
 
-        let mut wat = WatBuilder::new();
+        // -- functions
+        {
+            let mut main_fun = Function::new();
 
+            // (i32.store (i32.const 0) (i32.const 8))  ;; iov.iov_base - This is a pointer to the start of the 'hello world\n' string
+            main_fun.push_instruction(Instruction::I32Const(0));
+            main_fun.push_instruction(Instruction::I32Const(8));
+            main_fun.push_instruction(Instruction::I32Store(MemArg::default()));
+
+            // (i32.store (i32.const 4) (i32.const 12))  ;; iov.iov_len - The length of the 'hello world\n' string
+            main_fun.push_instruction(Instruction::I32Const(4));
+            main_fun.push_instruction(Instruction::I32Const(12));
+            main_fun.push_instruction(Instruction::I32Store(MemArg::default()));
+
+            // (call $fd_write
+            //     (i32.const 1) ;; file_descriptor - 1 for stdout
+            //     (i32.const 0) ;; *iovs - The pointer to the iov array, which is stored at memory location 0
+            //     (i32.const 1) ;; iovs_len - We're printing 1 string stored in an iov - so one.
+            //     (i32.const 20) ;; nwritten - A place in memory to store the number of bytes written
+            // )
+            main_fun.push_instruction(Instruction::I32Const(1));
+            main_fun.push_instruction(Instruction::I32Const(0));
+            main_fun.push_instruction(Instruction::I32Const(1));
+            main_fun.push_instruction(Instruction::I32Const(24));
+            main_fun.push_instruction(Instruction::Call(Index::Id("fd_write".into())));
+
+            // drop ;; Discard the number of bytes written from the top of the stack
+            main_fun.push_instruction(Instruction::Drop);
+
+            module.push_function(Entity::named("main".into(), main_fun));
+        }
+
+        // -- build
+        let mut wat = WatBuilder::new();
         wat.emit(&Entity::named("demo.wat".into(), module))
     }
 }

@@ -478,10 +478,10 @@ impl DataSegment {
 ///
 /// ```
 /// # use paty::gen::wasm::builder::{Function, Entity, Type, Instruction};
-/// let mut fun = Function::new(vec![Entity::named("x".into(), Type::I32)], vec![Type::I32]);
+/// let mut fun = Function::new();
 ///
-/// assert_eq!(fun.signature().params().len(), 1);
-/// assert_eq!(fun.signature().results().len(), 1);
+/// assert_eq!(fun.signature().params().len(), 0);
+/// assert_eq!(fun.signature().results().len(), 0);
 ///
 /// fun.push_local(Entity::named("a".into(), Type::I32));
 /// assert_eq!(fun.locals().len(), 1);
@@ -493,9 +493,18 @@ pub struct Function {
     instructions: Vec<Instruction>,
 }
 
+impl Default for Function {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Function {
-    pub fn new(params: Vec<Entity<Type>>, results: Vec<Type>) -> Self {
-        Self::with_signature(FunctionSignature::new(params, results))
+    pub fn new() -> Self {
+        Self::with_signature(FunctionSignature::new(
+            Vec::with_capacity(0),
+            Vec::with_capacity(0),
+        ))
     }
 
     /// Creates a new function with the specified signature.
@@ -554,6 +563,33 @@ pub enum Instruction {
     I32Const(u32),
     /// `i64.const {inn}`
     I64Const(u64),
+    /// `i32.store [offset=N] [align=M]`
+    I32Store(MemArg),
+    /// `i64.store [offset=N] [align=M]`
+    I64Store(MemArg),
+    /// `call x:funcidx`
+    Call(Index),
+    /// `drop`
+    Drop,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+pub struct MemArg {
+    offset: Option<u32>,
+    align: Option<u32>,
+}
+
+impl MemArg {
+    pub fn new(offset: Option<u32>, align: Option<u32>) -> Self {
+        Self { offset, align }
+    }
+
+    pub fn offset(&self) -> Option<u32> {
+        self.offset
+    }
+    pub fn align(&self) -> Option<u32> {
+        self.align
+    }
 }
 
 pub trait Visitor {
@@ -633,15 +669,20 @@ impl WatBuilder {
 
     fn emit_index(&mut self, index: &Index) {
         match index {
-            &Index::Index(i) => self.buffer.push_str(&i.to_string()),
+            &Index::Index(i) => {
+                self.buffer.push(' ');
+                self.buffer.push_str(&i.to_string());
+            }
             Index::Id(id) => self.emit_id(id),
         }
     }
     fn emit_id(&mut self, id: &str) {
+        self.buffer.push(' ');
         self.buffer.push('$');
         self.buffer.push_str(id);
     }
     fn emit_str(&mut self, s: &str) {
+        self.buffer.push(' ');
         self.buffer.push('"');
         for c in s.escape_default() {
             self.buffer.push(c);
@@ -649,11 +690,13 @@ impl WatBuilder {
         self.buffer.push('"');
     }
     fn emit_string_data(&mut self, s: &StringData) {
+        self.buffer.push(' ');
         self.buffer.push('"');
         s.write_escape(&mut self.buffer).expect("unreachable");
         self.buffer.push('"');
     }
     fn emit_type(&mut self, ty: &Type) {
+        self.buffer.push(' ');
         self.buffer.push_str(match ty {
             Type::I32 => "i32",
             Type::I64 => "i64",
@@ -662,6 +705,7 @@ impl WatBuilder {
         });
     }
     fn emit_limits(&mut self, limits: &Limits) {
+        self.buffer.push(' ');
         self.buffer.push_str(&limits.min().to_string());
 
         if let Some(max) = limits.max() {
@@ -670,13 +714,12 @@ impl WatBuilder {
         }
     }
     fn emit_function_signature(&mut self, signature: &FunctionSignature) {
+        self.buffer.push(' ');
         for param in signature.params() {
             self.buffer.push('(');
             self.buffer.push_str("param");
-            self.buffer.push(' ');
             if let Some(name) = param.id() {
                 self.emit_id(name);
-                self.buffer.push(' ');
             }
             self.emit_type(param.get());
             self.buffer.push(')');
@@ -685,7 +728,6 @@ impl WatBuilder {
         for ty in signature.results() {
             self.buffer.push('(');
             self.buffer.push_str("result");
-            self.buffer.push(' ');
             self.emit_type(ty);
             self.buffer.push(')');
         }
@@ -695,12 +737,22 @@ impl WatBuilder {
         self.buffer.push_str("func");
 
         if let Some(name) = fun.id() {
-            self.buffer.push(' ');
             self.emit_id(name);
         }
-        self.buffer.push(' ');
         self.emit_function_signature(fun.get());
         self.buffer.push(')');
+    }
+    fn emit_mem_arg(&mut self, mem: &MemArg) {
+        if let Some(offset) = mem.offset() {
+            self.buffer.push(' ');
+            self.buffer.push_str("offset=");
+            self.buffer.push_str(&offset.to_string());
+        }
+        if let Some(align) = mem.align() {
+            self.buffer.push(' ');
+            self.buffer.push_str("align=");
+            self.buffer.push_str(&align.to_string());
+        }
     }
     fn emit_inst(&mut self, inst: &Instruction) {
         self.buffer.push('(');
@@ -715,6 +767,21 @@ impl WatBuilder {
                 self.buffer.push(' ');
                 self.buffer.push_str(&n.to_string());
             }
+            Instruction::I32Store(mem) => {
+                self.buffer.push_str("i32.store");
+                self.emit_mem_arg(mem);
+            }
+            Instruction::I64Store(mem) => {
+                self.buffer.push_str("i64.store");
+                self.emit_mem_arg(mem);
+            }
+            Instruction::Call(index) => {
+                self.buffer.push_str("call");
+                self.emit_index(index);
+            }
+            Instruction::Drop => {
+                self.buffer.push_str("drop");
+            }
         }
         self.buffer.push(')');
     }
@@ -726,7 +793,6 @@ impl Visitor for WatBuilder {
         self.buffer.push_str("module");
 
         if let Some(name) = module.id() {
-            self.buffer.push(' ');
             self.emit_id(name);
         }
     }
@@ -738,9 +804,7 @@ impl Visitor for WatBuilder {
         self.buffer.push('(');
         self.buffer.push_str("import");
 
-        self.buffer.push(' ');
         self.emit_str(import.module());
-        self.buffer.push(' ');
         self.emit_str(import.name());
         self.buffer.push(' ');
 
@@ -756,7 +820,6 @@ impl Visitor for WatBuilder {
         self.buffer.push('(');
         self.buffer.push_str("export");
 
-        self.buffer.push(' ');
         self.emit_str(export.name());
         self.buffer.push(' ');
 
@@ -764,12 +827,10 @@ impl Visitor for WatBuilder {
         match export.desc() {
             ExportDesc::Function(idx) => {
                 self.buffer.push_str("func");
-                self.buffer.push(' ');
                 self.emit_index(idx);
             }
             ExportDesc::Memory(idx) => {
                 self.buffer.push_str("memory");
-                self.buffer.push(' ');
                 self.emit_index(idx);
             }
         }
@@ -783,9 +844,7 @@ impl Visitor for WatBuilder {
         self.buffer.push('(');
         self.buffer.push_str("memory");
 
-        self.buffer.push(' ');
         if let Some(name) = memory.id() {
-            self.buffer.push(' ');
             self.emit_id(name);
         }
 
@@ -801,7 +860,6 @@ impl Visitor for WatBuilder {
 
         // id
         if let Some(name) = data_segment.id() {
-            self.buffer.push(' ');
             self.emit_id(name);
         }
 
@@ -809,7 +867,6 @@ impl Visitor for WatBuilder {
         self.buffer.push(' ');
         self.buffer.push('(');
         self.buffer.push_str("memory");
-        self.buffer.push(' ');
         self.emit_index(data_segment.get().memory().index());
         self.buffer.push(')');
 
@@ -825,7 +882,6 @@ impl Visitor for WatBuilder {
 
         // data
         for s in data_segment.get().data() {
-            self.buffer.push(' ');
             self.emit_string_data(s);
         }
     }
@@ -839,11 +895,9 @@ impl Visitor for WatBuilder {
 
         // id
         if let Some(name) = fun.id() {
-            self.buffer.push(' ');
             self.emit_id(name);
         }
 
-        self.buffer.push(' ');
         self.emit_function_signature(fun.get().signature());
 
         // locals
@@ -851,10 +905,8 @@ impl Visitor for WatBuilder {
             self.buffer.push('(');
             self.buffer.push_str("local");
             if let Some(name) = local.id() {
-                self.buffer.push(' ');
                 self.emit_id(name);
             }
-            self.buffer.push(' ');
             self.emit_type(local.get());
             self.buffer.push(')');
         }
