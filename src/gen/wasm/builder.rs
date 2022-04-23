@@ -440,13 +440,15 @@ impl DataSegment {
     /// # use paty::gen::wasm::builder::{DataSegment, Index, Instruction, StringData, MemoryUse};
     ///
     /// let segment = DataSegment::new(
-    ///     vec![Instruction::I32Const(8)],
+    ///     vec![Instruction::i32_const(8)],
     ///     vec![StringData::String("hello".to_string())]);
     ///
     /// assert_eq!(segment.memory(), &MemoryUse::new(Index::Index(0)));
     /// let mut offset = segment.offset();
     /// assert_eq!(offset.len(), 1);
-    /// assert!(matches!(offset.next(), Some(Instruction::I32Const(8))));
+    /// let next_inst = offset.next();
+    /// assert!(next_inst.is_some());
+    /// assert_eq!(next_inst.unwrap(), &Instruction::i32_const(8));
     /// ```
     pub fn new(offset: Vec<Instruction>, data: Vec<StringData>) -> Self {
         Self::with_memory(MemoryUse::default(), offset, data)
@@ -557,7 +559,7 @@ impl Function {
 /// the instruction itself.
 ///
 /// Some instructions are structured in that they bracket nested sequences of instructions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instruction {
     kind: InstructionKind,
     operands: Vec<Instruction>,
@@ -597,7 +599,7 @@ impl Instruction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstructionKind {
     /// `i32.const {inn}`
     I32Const(u32),
