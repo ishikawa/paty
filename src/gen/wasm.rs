@@ -69,6 +69,8 @@ impl<'a, 'tcx> Emitter {
             ));
         }
 
+        self.define_prelude(&mut module);
+
         // -- exports
         module.push_export(Export::new(
             "memory".into(),
@@ -83,6 +85,31 @@ impl<'a, 'tcx> Emitter {
         // -- build
         let mut wat = WatBuilder::new();
         wat.emit(&Entity::named("demo.wat".into(), module))
+    }
+
+    /// The prelude; a standard module; is defined by default.
+    fn define_prelude(&mut self, module: &mut Module) {
+        self.define_prelude_fd_write_all(module);
+    }
+    fn define_prelude_fd_write_all(&mut self, module: &mut Module) {
+        let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
+            vec![
+                Entity::named("fd".into(), wasm::Type::I32),
+                Entity::named("iovs".into(), wasm::Type::I32),
+                Entity::named("nwritten".into(), wasm::Type::I32),
+            ],
+            vec![wasm::Type::I32],
+        ));
+
+        wasm_fun.push_instruction(Instruction::local_get("fd".into()));
+        wasm_fun.push_instruction(Instruction::local_get("iovs".into()));
+        // iovs_len - We're printing 1 string stored in an iov - so one.
+        wasm_fun.push_instruction(Instruction::i32_const(1));
+        wasm_fun.push_instruction(Instruction::local_get("nwritten".into()));
+        // fd_write(...)
+        wasm_fun.push_instruction(Instruction::call("fd_write".into(), vec![]));
+
+        module.push_function(Entity::named("@fd_write_all".into(), wasm_fun));
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, module: &mut Module) {
@@ -173,18 +200,12 @@ impl<'a, 'tcx> Emitter {
                         }
                     }
 
-                    // iovs_len - We're printing 1 string stored in an iov - so one.
-                    wasm_fun.push_instruction(Instruction::i32_const(1));
-
                     // nwritten - A place in memory to store the number of bytes written
                     // TODO: FIXME: set proper location.
                     wasm_fun.push_instruction(Instruction::i32_const(1024));
 
                     // call WASI `fd_write` function.
-                    wasm_fun.push_instruction(Instruction::call(
-                        wasm::Index::Id("fd_write".into()),
-                        vec![],
-                    ));
+                    wasm_fun.push_instruction(Instruction::call("@fd_write_all".into(), vec![]));
                     wasm_fun.push_instruction(Instruction::drop());
                 }
             }

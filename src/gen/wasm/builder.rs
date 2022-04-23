@@ -591,8 +591,17 @@ impl Instruction {
     pub fn i64_store(operands: Vec<Instruction>) -> Self {
         Self::new(InstructionKind::I64Store(MemArg::default()), operands)
     }
-    pub fn call(index: Index, operands: Vec<Instruction>) -> Self {
-        Self::new(InstructionKind::Call(index), operands)
+    pub fn local_get(name: String) -> Self {
+        Self::new(InstructionKind::LocalGet(Index::Id(name)), vec![])
+    }
+    pub fn local_set(name: String) -> Self {
+        Self::new(InstructionKind::LocalSet(Index::Id(name)), vec![])
+    }
+    pub fn local_tee(name: String) -> Self {
+        Self::new(InstructionKind::LocalTee(Index::Id(name)), vec![])
+    }
+    pub fn call(name: String, operands: Vec<Instruction>) -> Self {
+        Self::new(InstructionKind::Call(Index::Id(name)), operands)
     }
     pub fn drop() -> Self {
         Self::new(InstructionKind::Drop, vec![])
@@ -609,6 +618,12 @@ pub enum InstructionKind {
     I32Store(MemArg),
     /// `i64.store [offset=N] [align=M]`
     I64Store(MemArg),
+    /// `local.get localidx`
+    LocalGet(Index),
+    /// `local.set localidx`
+    LocalSet(Index),
+    /// `local.tee localidx`
+    LocalTee(Index),
     /// `call x:funcidx`
     Call(Index),
     /// `drop`
@@ -816,6 +831,18 @@ impl WatBuilder {
             InstructionKind::I64Store(mem) => {
                 self.buffer.push_str("i64.store");
                 self.emit_mem_arg(mem);
+            }
+            InstructionKind::LocalGet(index) => {
+                self.buffer.push_str("local.get");
+                self.emit_index(index);
+            }
+            InstructionKind::LocalSet(index) => {
+                self.buffer.push_str("local.set");
+                self.emit_index(index);
+            }
+            InstructionKind::LocalTee(index) => {
+                self.buffer.push_str("local.tee");
+                self.emit_index(index);
             }
             InstructionKind::Call(index) => {
                 self.buffer.push_str("call");
