@@ -227,7 +227,7 @@ impl<'a, 'tcx> Emitter {
         const CIOVEC_LEN: usize = 8;
         let mut ciovec: [u8; CIOVEC_LEN] = [0; CIOVEC_LEN];
         // `buf` - The address of the constant string.
-        let str_base = self.cp + u32::try_from(CIOVEC_LEN).unwrap();
+        let str_base = self.cp + CIOVEC_LEN.align(4);
         // `buf_len` - The length of the buffer to be written.
         let str_len = u32::try_from(s.len()).unwrap();
 
@@ -244,9 +244,43 @@ impl<'a, 'tcx> Emitter {
         );
         module.push_data_segment(Entity::new(data_segment));
 
-        self.cp += str_base + str_len;
+        self.cp = (str_base + str_len).align(4);
 
         // The pointer to the iov array
         wasm_fun.push_instruction(data_loc);
+    }
+}
+
+trait Address {
+    /// Increase an integer operand to a next address aligned to
+    /// to the `alignment`.
+    fn align(self, alignment: u32) -> u32;
+}
+
+impl Address for u32 {
+    #[inline]
+    fn align(self, alignment: u32) -> u32 {
+        // https://stackoverflow.com/a/45213645/14957276
+        ((self + (alignment - 1)) / alignment) * alignment
+    }
+}
+
+impl Address for usize {
+    #[inline]
+    fn align(self, alignment: u32) -> u32 {
+        u32::try_from(self).unwrap().align(alignment)
+    }
+}
+
+#[cfg(test)]
+mod tests_utils {
+    use super::*;
+
+    #[test]
+    fn address_align() {
+        assert_eq!(0_u32.align(4), 0);
+        assert_eq!(1_u32.align(4), 4);
+        assert_eq!(4_u32.align(4), 4);
+        assert_eq!(29_u32.align(4), 32);
     }
 }

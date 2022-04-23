@@ -34,7 +34,6 @@ assert() {
 }
 
 # Hello, World!
-# assert "Hello, World!
-# " 'puts("Hello, World!")'
+assert "Hello, World!" 'puts("Hello, World!")'
 
 echo OK
