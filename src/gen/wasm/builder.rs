@@ -177,6 +177,7 @@ pub struct Module {
     exports: Vec<Export>,
     memory: Option<Entity<Memory>>,
     data_segments: Vec<Entity<DataSegment>>,
+    globals: Vec<Entity<Global>>,
     functions: Vec<Entity<Function>>,
 }
 
@@ -197,6 +198,7 @@ impl Module {
             imports: vec![],
             exports: vec![],
             data_segments: vec![],
+            globals: vec![],
             functions: vec![],
         }
     }
@@ -213,6 +215,9 @@ impl Module {
     pub fn data_segments(&self) -> impl ExactSizeIterator<Item = &Entity<DataSegment>> {
         self.data_segments.iter()
     }
+    pub fn globals(&self) -> impl ExactSizeIterator<Item = &Entity<Global>> {
+        self.globals.iter()
+    }
     pub fn functions(&self) -> impl ExactSizeIterator<Item = &Entity<Function>> {
         self.functions.iter()
     }
@@ -225,6 +230,9 @@ impl Module {
     }
     pub fn push_data_segment(&mut self, data_segment: Entity<DataSegment>) {
         self.data_segments.push(data_segment);
+    }
+    pub fn push_global(&mut self, global: Entity<Global>) {
+        self.globals.push(global);
     }
     pub fn push_function(&mut self, function: Entity<Function>) {
         self.functions.push(function);
@@ -473,6 +481,35 @@ impl DataSegment {
     }
 }
 
+/// The _globals_ component of a module defines a vector of global variables (or
+/// globals for short):
+///
+/// Each global stores a single value of the given global type. Its type also specifies
+/// whether a global is immutable or mutable. Moreover, each global is initialized with
+/// an value given by a constant initializer expression.
+#[derive(Debug, Clone)]
+pub struct Global {
+    mutable: bool,
+    ty: Type,
+    init: Vec<Instruction>,
+}
+
+impl Global {
+    pub fn new(mutable: bool, ty: Type, init: Vec<Instruction>) -> Self {
+        Self { mutable, ty, init }
+    }
+
+    pub fn is_mutable(&self) -> bool {
+        self.mutable
+    }
+    pub fn ty(&self) -> &Type {
+        &self.ty
+    }
+    pub fn initializer(&self) -> impl ExactSizeIterator<Item = &Instruction> {
+        self.init.iter()
+    }
+}
+
 /// Function definitions can bind a symbolic function identifier, and local identifiers
 /// for its parameters and locals.
 ///
@@ -600,6 +637,12 @@ impl Instruction {
     pub fn local_tee(name: String) -> Self {
         Self::new(InstructionKind::LocalTee(Index::Id(name)), vec![])
     }
+    pub fn global_get(name: String) -> Self {
+        Self::new(InstructionKind::GlobalGet(Index::Id(name)), vec![])
+    }
+    pub fn global_set(name: String) -> Self {
+        Self::new(InstructionKind::GlobalSet(Index::Id(name)), vec![])
+    }
     pub fn call(name: String, operands: Vec<Instruction>) -> Self {
         Self::new(InstructionKind::Call(Index::Id(name)), operands)
     }
@@ -618,13 +661,17 @@ pub enum InstructionKind {
     I32Store(MemArg),
     /// `i64.store [offset=N] [align=M]`
     I64Store(MemArg),
-    /// `local.get localidx`
+    /// `local.get idx`
     LocalGet(Index),
-    /// `local.set localidx`
+    /// `local.set idx`
     LocalSet(Index),
-    /// `local.tee localidx`
+    /// `local.tee idx`
     LocalTee(Index),
-    /// `call x:funcidx`
+    /// `global.get idx`
+    GlobalGet(Index),
+    /// `global.set idx`
+    GlobalSet(Index),
+    /// `call x:idx`
     Call(Index),
     /// `drop`
     Drop,
@@ -665,6 +712,9 @@ pub trait Visitor {
     fn enter_data_segment(&mut self, data_segment: &Entity<DataSegment>);
     fn exit_data_segment(&mut self, data_segment: &Entity<DataSegment>);
 
+    fn enter_global(&mut self, global: &Entity<Global>);
+    fn exit_global(&mut self, global: &Entity<Global>);
+
     fn enter_function(&mut self, function: &Entity<Function>);
     fn exit_function(&mut self, function: &Entity<Function>);
 }
@@ -672,31 +722,31 @@ pub trait Visitor {
 fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
     visitor.enter_module(module);
 
-    // imports
     for import in module.get().imports() {
         visitor.enter_import(import);
         visitor.exit_import(import);
     }
 
-    // exports
     for export in module.get().exports() {
         visitor.enter_export(export);
         visitor.exit_export(export);
     }
 
-    // memory
     if let Some(memory) = module.get().memory() {
         visitor.enter_memory(memory);
         visitor.exit_memory(memory);
     }
 
-    // data segments
     for data_segment in module.get().data_segments() {
         visitor.enter_data_segment(data_segment);
         visitor.exit_data_segment(data_segment);
     }
 
-    // functions
+    for global in module.get().globals() {
+        visitor.enter_global(global);
+        visitor.exit_global(global);
+    }
+
     for function in module.get().functions() {
         visitor.enter_function(function);
         visitor.exit_function(function);
@@ -842,6 +892,14 @@ impl WatBuilder {
             }
             InstructionKind::LocalTee(index) => {
                 self.buffer.push_str("local.tee");
+                self.emit_index(index);
+            }
+            InstructionKind::GlobalGet(index) => {
+                self.buffer.push_str("global.get");
+                self.emit_index(index);
+            }
+            InstructionKind::GlobalSet(index) => {
+                self.buffer.push_str("global.set");
                 self.emit_index(index);
             }
             InstructionKind::Call(index) => {
@@ -990,6 +1048,35 @@ impl Visitor for WatBuilder {
         }
     }
     fn exit_function(&mut self, _function: &Entity<Function>) {
+        self.buffer.push(')');
+    }
+
+    fn enter_global(&mut self, global: &Entity<Global>) {
+        self.buffer.push('(');
+        self.buffer.push_str("global");
+
+        // id
+        if let Some(name) = global.id() {
+            self.emit_id(name);
+        }
+
+        // typ
+        if global.get().is_mutable() {
+            self.buffer.push(' ');
+            self.buffer.push('(');
+            self.buffer.push_str("mut");
+            self.emit_type(global.get().ty());
+            self.buffer.push(')');
+        } else {
+            self.emit_type(global.get().ty());
+        }
+
+        self.buffer.push(' ');
+        for inst in global.get().initializer() {
+            self.emit_inst(inst);
+        }
+    }
+    fn exit_global(&mut self, _global: &Entity<Global>) {
         self.buffer.push(')');
     }
 }

@@ -28,7 +28,11 @@ pub struct EmitterOptions {
     pub wasi: bool,
 }
 
+/// The base address of the constant pool in WASM memory.
 const CONSTANT_POOL_BASE: u32 = 8;
+
+/// The name of a global variable which points to the current frame pointer.
+const FP: &str = "fp";
 
 #[derive(Debug)]
 pub struct Emitter {
@@ -82,6 +86,18 @@ impl<'a, 'tcx> Emitter {
             self.emit_function(fun, &mut module);
         }
 
+        // Now, the CP (constant pool address) points to the base address of
+        // program stack. Write it to the FP global.
+        module.push_global(Entity::named(
+            FP.into(),
+            wasm::Global::new(
+                // mutable
+                true,
+                wasm::Type::I32,
+                vec![Instruction::i32_const(self.cp)],
+            ),
+        ));
+
         // -- build
         let mut wat = WatBuilder::new();
         wat.emit(&Entity::named("demo.wat".into(), module))
@@ -91,6 +107,11 @@ impl<'a, 'tcx> Emitter {
     fn define_prelude(&mut self, module: &mut Module) {
         self.define_prelude_fd_write_all(module);
     }
+    /// Defines `fd_write_all` function.
+    ///
+    /// ```ignore
+    /// fd_write_all($fd: i32, io_vs: i32, n_written) error
+    /// ```
     fn define_prelude_fd_write_all(&mut self, module: &mut Module) {
         let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
             vec![
