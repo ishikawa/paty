@@ -718,11 +718,11 @@ impl Instruction {
     pub fn local_get(name: String) -> Self {
         Self::new(InstructionKind::LocalGet(Index::Id(name)), vec![])
     }
-    pub fn local_set(name: String) -> Self {
-        Self::new(InstructionKind::LocalSet(Index::Id(name)), vec![])
+    pub fn local_set(name: String, value: Instruction) -> Self {
+        Self::new(InstructionKind::LocalSet(Index::Id(name)), vec![value])
     }
-    pub fn local_tee(name: String) -> Self {
-        Self::new(InstructionKind::LocalTee(Index::Id(name)), vec![])
+    pub fn local_tee(name: String, value: Instruction) -> Self {
+        Self::new(InstructionKind::LocalTee(Index::Id(name)), vec![value])
     }
     pub fn global_get(name: String) -> Self {
         Self::new(InstructionKind::GlobalGet(Index::Id(name)), vec![])
@@ -735,6 +735,11 @@ impl Instruction {
     }
     pub fn drop() -> Self {
         Self::new(InstructionKind::Drop, vec![])
+    }
+
+    // ext: bulk-memory
+    pub fn memory_copy(n: Instruction, src: Instruction, dst: Instruction) -> Self {
+        Self::new(InstructionKind::MemoryCopy, vec![n, src, dst])
     }
 }
 
@@ -790,6 +795,9 @@ pub enum InstructionKind {
     Call(Index),
     // parametric instructions
     Drop,
+
+    // Ext: bulk-memory
+    MemoryCopy,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -1004,6 +1012,9 @@ impl WatBuilder {
             InstructionKind::I64Load(mem) => {
                 self.buffer.push_str("i64.load");
                 self.emit_mem_arg(mem);
+            }
+            InstructionKind::MemoryCopy => {
+                self.buffer.push_str("memory.copy");
             }
             InstructionKind::LocalGet(index) => {
                 self.buffer.push_str("local.get");

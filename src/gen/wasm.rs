@@ -1,7 +1,7 @@
 //! WebAssembly backend which emits WAT (WebAssembly Text Format).
 pub mod builder;
 
-use self::builder as wasm;
+use self::builder::{self as wasm, MemArg};
 use self::builder::{
     Entity, Export, ExportDesc, Import, ImportDesc, Instruction, Module, WatBuilder,
 };
@@ -94,7 +94,7 @@ impl<'a, 'tcx> Emitter {
         let stack_base_address =
             wasm::Global::new(true, wasm::Type::I32, vec![Instruction::i32_const(self.cp)]);
         module.push_global(Entity::named(BP.into(), stack_base_address.clone()));
-        module.push_global(Entity::named(SP.into(), stack_base_address.clone()));
+        module.push_global(Entity::named(SP.into(), stack_base_address));
 
         // -- build
         let mut wat = WatBuilder::new();
@@ -111,31 +111,41 @@ impl<'a, 'tcx> Emitter {
     /// fd_write_all($fd: i32, io_vs: i32, n_written) error
     /// ```
     fn define_prelude_fd_write_all(&mut self, module: &mut Module) {
-        // param names
-        let local_fd = "fd";
-        let local_io_vs = "io_vs";
-        let local_n_written = "n_written";
+        // locals
+        let param_fd = "fd";
+        let param_io_vs = "io_vs";
+        let param_n_written = "n_written";
+        let local_io_vs = "tmp_io_vs";
 
         let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
             vec![
-                Entity::named(local_fd.into(), wasm::Type::I32),
-                Entity::named(local_io_vs.into(), wasm::Type::I32),
-                Entity::named(local_n_written.into(), wasm::Type::I32),
+                Entity::named(param_fd.into(), wasm::Type::I32),
+                Entity::named(param_io_vs.into(), wasm::Type::I32),
+                Entity::named(param_n_written.into(), wasm::Type::I32),
             ],
             vec![wasm::Type::I32],
         ));
+        wasm_fun.push_local(Entity::named(local_io_vs.into(), wasm::Type::I32));
 
         self.emit_function_prologue(&mut wasm_fun);
+
+        // copy io_vs array to the stack.
+        wasm_fun.push_instruction(Instruction::i64_store(
+            Instruction::local_tee(local_io_vs.into(), Instruction::global_get(SP.into())),
+            Instruction::i64_load(Instruction::local_get(param_io_vs.into())),
+        ));
+
+        self.emit_advance_sp(8, &mut wasm_fun);
 
         // call fd_write()
         wasm_fun.push_instruction(Instruction::call(
             "fd_write".into(),
             vec![
-                Instruction::local_get(local_fd.into()),
+                Instruction::local_get(param_fd.into()),
                 Instruction::local_get(local_io_vs.into()),
                 // io_vs_len - We're printing 1 string stored in an iov - so one.
                 Instruction::i32_const(1),
-                Instruction::local_get(local_n_written.into()),
+                Instruction::local_get(param_n_written.into()),
             ],
         ));
 
@@ -206,13 +216,7 @@ impl<'a, 'tcx> Emitter {
             Instruction::global_get(SP.into()),
         ));
         // Advances SP
-        wasm_fun.push_instruction(Instruction::global_set(
-            SP.into(),
-            Instruction::i32_add(
-                Instruction::global_get(SP.into()),
-                Instruction::i32_const(4),
-            ),
-        ));
+        self.emit_advance_sp(4, wasm_fun);
     }
     fn emit_function_epilogue(&mut self, wasm_fun: &mut wasm::Function) {
         // Restore the caller's FP
@@ -340,6 +344,16 @@ impl<'a, 'tcx> Emitter {
 
         // The pointer to the iov array
         wasm_fun.push_instruction(data_loc);
+    }
+
+    fn emit_advance_sp(&mut self, n: u32, wasm_fun: &mut wasm::Function) {
+        wasm_fun.push_instruction(Instruction::global_set(
+            SP.into(),
+            Instruction::i32_add(
+                Instruction::global_get(SP.into()),
+                Instruction::i32_const(n),
+            ),
+        ));
     }
 }
 
