@@ -3,7 +3,7 @@ pub mod builder;
 
 use self::builder::{
     DataSegment, Entity, Export, ExportDesc, Function, FunctionSignature, Import, ImportDesc,
-    Index, Instruction, MemArg, Module, StringData, Type, WatBuilder,
+    Index, Instruction, Module, StringData, Type, WatBuilder,
 };
 use crate::ir::inst::Program;
 
@@ -67,7 +67,7 @@ impl Emitter {
 
         // -- data segments
         module.push_data_segment(Entity::new(DataSegment::new(
-            vec![Instruction::I32Const(8)],
+            vec![Instruction::i32_const(8)],
             vec![StringData::String("hello world\n".to_string())],
         )));
 
@@ -76,14 +76,16 @@ impl Emitter {
             let mut main_fun = Function::new();
 
             // (i32.store (i32.const 0) (i32.const 8))  ;; iov.iov_base - This is a pointer to the start of the 'hello world\n' string
-            main_fun.push_instruction(Instruction::I32Const(0));
-            main_fun.push_instruction(Instruction::I32Const(8));
-            main_fun.push_instruction(Instruction::I32Store(MemArg::default()));
+            main_fun.push_instruction(Instruction::i32_store(vec![
+                Instruction::i32_const(0),
+                Instruction::i32_const(8),
+            ]));
 
             // (i32.store (i32.const 4) (i32.const 12))  ;; iov.iov_len - The length of the 'hello world\n' string
-            main_fun.push_instruction(Instruction::I32Const(4));
-            main_fun.push_instruction(Instruction::I32Const(12));
-            main_fun.push_instruction(Instruction::I32Store(MemArg::default()));
+            main_fun.push_instruction(Instruction::i32_store(vec![
+                Instruction::i32_const(4),
+                Instruction::i32_const(12),
+            ]));
 
             // (call $fd_write
             //     (i32.const 1) ;; file_descriptor - 1 for stdout
@@ -91,14 +93,18 @@ impl Emitter {
             //     (i32.const 1) ;; iovs_len - We're printing 1 string stored in an iov - so one.
             //     (i32.const 20) ;; nwritten - A place in memory to store the number of bytes written
             // )
-            main_fun.push_instruction(Instruction::I32Const(1));
-            main_fun.push_instruction(Instruction::I32Const(0));
-            main_fun.push_instruction(Instruction::I32Const(1));
-            main_fun.push_instruction(Instruction::I32Const(24));
-            main_fun.push_instruction(Instruction::Call(Index::Id("fd_write".into())));
+            main_fun.push_instruction(Instruction::call(
+                Index::Id("fd_write".into()),
+                vec![
+                    Instruction::i32_const(1),
+                    Instruction::i32_const(0),
+                    Instruction::i32_const(1),
+                    Instruction::i32_const(20),
+                ],
+            ));
 
             // drop ;; Discard the number of bytes written from the top of the stack
-            main_fun.push_instruction(Instruction::Drop);
+            main_fun.push_instruction(Instruction::drop());
 
             module.push_function(Entity::named("main".into(), main_fun));
         }

@@ -558,7 +558,47 @@ impl Function {
 ///
 /// Some instructions are structured in that they bracket nested sequences of instructions.
 #[derive(Debug)]
-pub enum Instruction {
+pub struct Instruction {
+    kind: InstructionKind,
+    operands: Vec<Instruction>,
+}
+
+impl Instruction {
+    pub fn new(kind: InstructionKind, operands: Vec<Instruction>) -> Self {
+        Self { kind, operands }
+    }
+
+    pub fn kind(&self) -> &InstructionKind {
+        &self.kind
+    }
+    pub fn operands(&self) -> impl ExactSizeIterator<Item = &Instruction> {
+        self.operands.iter()
+    }
+}
+
+impl Instruction {
+    pub fn i32_const(n: u32) -> Self {
+        Self::new(InstructionKind::I32Const(n), vec![])
+    }
+    pub fn i64_const(n: u64) -> Self {
+        Self::new(InstructionKind::I64Const(n), vec![])
+    }
+    pub fn i32_store(operands: Vec<Instruction>) -> Self {
+        Self::new(InstructionKind::I32Store(MemArg::default()), operands)
+    }
+    pub fn i64_store(operands: Vec<Instruction>) -> Self {
+        Self::new(InstructionKind::I64Store(MemArg::default()), operands)
+    }
+    pub fn call(index: Index, operands: Vec<Instruction>) -> Self {
+        Self::new(InstructionKind::Call(index), operands)
+    }
+    pub fn drop() -> Self {
+        Self::new(InstructionKind::Drop, vec![])
+    }
+}
+
+#[derive(Debug)]
+pub enum InstructionKind {
     /// `i32.const {inn}`
     I32Const(u32),
     /// `i64.const {inn}`
@@ -756,33 +796,37 @@ impl WatBuilder {
     }
     fn emit_inst(&mut self, inst: &Instruction) {
         self.buffer.push('(');
-        match inst {
-            Instruction::I32Const(n) => {
+        match inst.kind() {
+            InstructionKind::I32Const(n) => {
                 self.buffer.push_str("i32.const");
                 self.buffer.push(' ');
                 self.buffer.push_str(&n.to_string());
             }
-            Instruction::I64Const(n) => {
+            InstructionKind::I64Const(n) => {
                 self.buffer.push_str("i64.const");
                 self.buffer.push(' ');
                 self.buffer.push_str(&n.to_string());
             }
-            Instruction::I32Store(mem) => {
+            InstructionKind::I32Store(mem) => {
                 self.buffer.push_str("i32.store");
                 self.emit_mem_arg(mem);
             }
-            Instruction::I64Store(mem) => {
+            InstructionKind::I64Store(mem) => {
                 self.buffer.push_str("i64.store");
                 self.emit_mem_arg(mem);
             }
-            Instruction::Call(index) => {
+            InstructionKind::Call(index) => {
                 self.buffer.push_str("call");
                 self.emit_index(index);
             }
-            Instruction::Drop => {
+            InstructionKind::Drop => {
                 self.buffer.push_str("drop");
             }
         }
+        for operand in inst.operands() {
+            self.emit_inst(operand);
+        }
+
         self.buffer.push(')');
     }
 }
