@@ -91,6 +91,10 @@ struct Args {
         possible_values=TARGET_OPTION_POSSIBLE_VALUES)]
     target: Target,
 
+    /// Emit IR code to standard error.
+    #[clap(long)]
+    emit_ir: bool,
+
     /// Source code file to read.
     #[clap(required = false)]
     file: Option<String>,
@@ -200,7 +204,10 @@ fn main() {
 
         let pass = optimizer::ConcatAdjacentPrintf::default();
         optimizer.run_function_pass(&pass, &mut program);
-        //eprintln!("--- (optimized)\n{}", program);
+
+        if args.emit_ir {
+            eprintln!("--- (optimized IR)\n{}", program);
+        }
 
         match args.target {
             Target::C => {

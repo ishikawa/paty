@@ -557,7 +557,7 @@ impl Function {
 /// the instruction itself.
 ///
 /// Some instructions are structured in that they bracket nested sequences of instructions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Instruction {
     kind: InstructionKind,
     operands: Vec<Instruction>,
@@ -597,7 +597,7 @@ impl Instruction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InstructionKind {
     /// `i32.const {inn}`
     I32Const(u32),
