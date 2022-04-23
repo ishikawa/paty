@@ -31,8 +31,11 @@ pub struct EmitterOptions {
 /// The base address of the constant pool in WASM memory.
 const CONSTANT_POOL_BASE: u32 = 8;
 
-/// The name of a global variable which points to the current frame pointer.
-const FP: &str = "fp";
+/// The name of a global variable which points to the current stack pointer.
+const SP: &str = "sp";
+
+/// The name of a global variable which points to the current base pointer.
+const BP: &str = "bp";
 
 #[derive(Debug)]
 pub struct Emitter {
@@ -87,16 +90,11 @@ impl<'a, 'tcx> Emitter {
         }
 
         // Now, the CP (constant pool address) points to the base address of
-        // program stack. Write it to the FP global.
-        module.push_global(Entity::named(
-            FP.into(),
-            wasm::Global::new(
-                // mutable
-                true,
-                wasm::Type::I32,
-                vec![Instruction::i32_const(self.cp)],
-            ),
-        ));
+        // program stack. Write it to the BP and SP global.
+        let stack_base_address =
+            wasm::Global::new(true, wasm::Type::I32, vec![Instruction::i32_const(self.cp)]);
+        module.push_global(Entity::named(BP.into(), stack_base_address.clone()));
+        module.push_global(Entity::named(SP.into(), stack_base_address.clone()));
 
         // -- build
         let mut wat = WatBuilder::new();
@@ -113,22 +111,35 @@ impl<'a, 'tcx> Emitter {
     /// fd_write_all($fd: i32, io_vs: i32, n_written) error
     /// ```
     fn define_prelude_fd_write_all(&mut self, module: &mut Module) {
+        // param names
+        let local_fd = "fd";
+        let local_io_vs = "io_vs";
+        let local_n_written = "n_written";
+
         let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
             vec![
-                Entity::named("fd".into(), wasm::Type::I32),
-                Entity::named("iovs".into(), wasm::Type::I32),
-                Entity::named("nwritten".into(), wasm::Type::I32),
+                Entity::named(local_fd.into(), wasm::Type::I32),
+                Entity::named(local_io_vs.into(), wasm::Type::I32),
+                Entity::named(local_n_written.into(), wasm::Type::I32),
             ],
             vec![wasm::Type::I32],
         ));
 
-        wasm_fun.push_instruction(Instruction::local_get("fd".into()));
-        wasm_fun.push_instruction(Instruction::local_get("iovs".into()));
-        // iovs_len - We're printing 1 string stored in an iov - so one.
-        wasm_fun.push_instruction(Instruction::i32_const(1));
-        wasm_fun.push_instruction(Instruction::local_get("nwritten".into()));
-        // fd_write(...)
-        wasm_fun.push_instruction(Instruction::call("fd_write".into(), vec![]));
+        self.emit_function_prologue(&mut wasm_fun);
+
+        // call fd_write()
+        wasm_fun.push_instruction(Instruction::call(
+            "fd_write".into(),
+            vec![
+                Instruction::local_get(local_fd.into()),
+                Instruction::local_get(local_io_vs.into()),
+                // io_vs_len - We're printing 1 string stored in an iov - so one.
+                Instruction::i32_const(1),
+                Instruction::local_get(local_n_written.into()),
+            ],
+        ));
+
+        self.emit_function_epilogue(&mut wasm_fun);
 
         module.push_function(Entity::named("@fd_write_all".into(), wasm_fun));
     }
@@ -139,9 +150,17 @@ impl<'a, 'tcx> Emitter {
         // params
         assert!(fun.params.is_empty());
 
+        if !fun.is_entry_point {
+            self.emit_function_prologue(&mut wasm_fun);
+        }
+
         // body
         for stmt in &fun.body {
             self.emit_stmt(stmt, &mut wasm_fun, module);
+        }
+
+        if !fun.is_entry_point {
+            self.emit_function_epilogue(&mut wasm_fun);
         }
 
         // function name
@@ -174,6 +193,37 @@ impl<'a, 'tcx> Emitter {
             Stmt::Phi(_) => todo!(),
             Stmt::Ret(_) => {}
         }
+    }
+
+    fn emit_function_prologue(&mut self, wasm_fun: &mut wasm::Function) {
+        // Saves the caller's BP and update BP
+        wasm_fun.push_instruction(Instruction::i32_store(
+            Instruction::global_get(SP.into()),
+            Instruction::global_get(BP.into()),
+        ));
+        wasm_fun.push_instruction(Instruction::global_set(
+            BP.into(),
+            Instruction::global_get(SP.into()),
+        ));
+        // Advances SP
+        wasm_fun.push_instruction(Instruction::global_set(
+            SP.into(),
+            Instruction::i32_add(
+                Instruction::global_get(SP.into()),
+                Instruction::i32_const(4),
+            ),
+        ));
+    }
+    fn emit_function_epilogue(&mut self, wasm_fun: &mut wasm::Function) {
+        // Restore the caller's FP
+        wasm_fun.push_instruction(Instruction::global_set(
+            SP.into(),
+            Instruction::global_get(BP.into()),
+        ));
+        wasm_fun.push_instruction(Instruction::global_set(
+            BP.into(),
+            Instruction::i32_load(Instruction::global_get(BP.into())),
+        ));
     }
 
     #[allow(unused_variables)]
@@ -210,7 +260,7 @@ impl<'a, 'tcx> Emitter {
                     // file_descriptor - 1 for stdout
                     wasm_fun.push_instruction(Instruction::i32_const(1));
 
-                    // iovs - The pointer to the iov array
+                    // io_vs - The pointer to the iov array
                     match arg {
                         FormatSpec::Value(value) => {
                             self.emit_expr(value, wasm_fun, module);
@@ -221,9 +271,9 @@ impl<'a, 'tcx> Emitter {
                         }
                     }
 
-                    // nwritten - A place in memory to store the number of bytes written
-                    // TODO: FIXME: set proper location.
-                    wasm_fun.push_instruction(Instruction::i32_const(1024));
+                    // n_written - A place in memory to store the number of bytes written.
+                    // we don't check error so doesn't advance the SP.
+                    wasm_fun.push_instruction(Instruction::global_get(SP.into()));
 
                     // call WASI `fd_write` function.
                     wasm_fun.push_instruction(Instruction::call("@fd_write_all".into(), vec![]));

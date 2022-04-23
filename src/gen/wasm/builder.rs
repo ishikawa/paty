@@ -622,11 +622,98 @@ impl Instruction {
     pub fn i64_const(n: u64) -> Self {
         Self::new(InstructionKind::I64Const(n), vec![])
     }
-    pub fn i32_store(operands: Vec<Instruction>) -> Self {
-        Self::new(InstructionKind::I32Store(MemArg::default()), operands)
+    pub fn i32_store(dst: Instruction, src: Instruction) -> Self {
+        Self::new(InstructionKind::I32Store(MemArg::default()), vec![dst, src])
     }
-    pub fn i64_store(operands: Vec<Instruction>) -> Self {
-        Self::new(InstructionKind::I64Store(MemArg::default()), operands)
+    pub fn i64_store(dst: Instruction, src: Instruction) -> Self {
+        Self::new(InstructionKind::I64Store(MemArg::default()), vec![dst, src])
+    }
+    pub fn i32_load(src: Instruction) -> Self {
+        Self::new(InstructionKind::I32Load(MemArg::default()), vec![src])
+    }
+    pub fn i64_load(src: Instruction) -> Self {
+        Self::new(InstructionKind::I64Load(MemArg::default()), vec![src])
+    }
+    pub fn i32_add(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32Add, vec![lhs, rhs])
+    }
+    pub fn i32_sub(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32Sub, vec![lhs, rhs])
+    }
+    pub fn i32_mul(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32Mul, vec![lhs, rhs])
+    }
+    pub fn i32_div_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32DivU, vec![lhs, rhs])
+    }
+    pub fn i32_div_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32DivS, vec![lhs, rhs])
+    }
+    pub fn i32_rem_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32RemU, vec![lhs, rhs])
+    }
+    pub fn i32_rem_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32RemS, vec![lhs, rhs])
+    }
+    pub fn i32_and(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32And, vec![lhs, rhs])
+    }
+    pub fn i32_or(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32Or, vec![lhs, rhs])
+    }
+    pub fn i32_xor(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32Xor, vec![lhs, rhs])
+    }
+    pub fn i32_shil(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32ShiLeft, vec![lhs, rhs])
+    }
+    pub fn i32_shir_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32ShiftRightU, vec![lhs, rhs])
+    }
+    pub fn i32_shir_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32ShiftRightS, vec![lhs, rhs])
+    }
+    pub fn i32_clz(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I32Clz, vec![operand])
+    }
+    pub fn i32_ctz(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I32Ctz, vec![operand])
+    }
+    pub fn i32_popcnt(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I32PopCnt, vec![operand])
+    }
+    pub fn i32_eqz(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I32Eqz, vec![operand])
+    }
+    pub fn i32_eq(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32Eq, vec![lhs, rhs])
+    }
+    pub fn i32_ne(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32Ne, vec![lhs, rhs])
+    }
+    pub fn i32_lt_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32LtU, vec![lhs, rhs])
+    }
+    pub fn i32_lt_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32LtS, vec![lhs, rhs])
+    }
+    pub fn i32_gt_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32GtU, vec![lhs, rhs])
+    }
+    pub fn i32_gt_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32GtS, vec![lhs, rhs])
+    }
+    pub fn i32_le_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32LeU, vec![lhs, rhs])
+    }
+    pub fn i32_le_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32LeS, vec![lhs, rhs])
+    }
+    pub fn i32_ge_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32GeU, vec![lhs, rhs])
+    }
+    pub fn i32_ge_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I32GeS, vec![lhs, rhs])
     }
     pub fn local_get(name: String) -> Self {
         Self::new(InstructionKind::LocalGet(Index::Id(name)), vec![])
@@ -640,8 +727,8 @@ impl Instruction {
     pub fn global_get(name: String) -> Self {
         Self::new(InstructionKind::GlobalGet(Index::Id(name)), vec![])
     }
-    pub fn global_set(name: String) -> Self {
-        Self::new(InstructionKind::GlobalSet(Index::Id(name)), vec![])
+    pub fn global_set(name: String, value: Instruction) -> Self {
+        Self::new(InstructionKind::GlobalSet(Index::Id(name)), vec![value])
     }
     pub fn call(name: String, operands: Vec<Instruction>) -> Self {
         Self::new(InstructionKind::Call(Index::Id(name)), operands)
@@ -653,27 +740,55 @@ impl Instruction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstructionKind {
-    /// `i32.const {inn}`
+    // const
     I32Const(u32),
-    /// `i64.const {inn}`
     I64Const(u64),
-    /// `i32.store [offset=N] [align=M]`
+    // integer binary operators
+    I32Add,
+    I32Sub,
+    I32Mul,
+    I32DivU,
+    I32DivS,
+    I32RemU,
+    I32RemS,
+    I32And,
+    I32Or,
+    I32Xor,
+    I32ShiLeft,
+    I32ShiftRightU,
+    I32ShiftRightS,
+    I32RotateLeft,
+    I32RotateRight,
+    // integer unary operators
+    I32Clz,
+    I32Ctz,
+    I32PopCnt,
+    // integer test and relations
+    I32Eqz,
+    I32Eq,
+    I32Ne,
+    I32LtU,
+    I32LtS,
+    I32GtU,
+    I32GtS,
+    I32LeU,
+    I32LeS,
+    I32GeU,
+    I32GeS,
+    // memory instructions
     I32Store(MemArg),
-    /// `i64.store [offset=N] [align=M]`
     I64Store(MemArg),
-    /// `local.get idx`
+    I32Load(MemArg),
+    I64Load(MemArg),
+    // local variables
     LocalGet(Index),
-    /// `local.set idx`
     LocalSet(Index),
-    /// `local.tee idx`
     LocalTee(Index),
-    /// `global.get idx`
+    // globals
     GlobalGet(Index),
-    /// `global.set idx`
     GlobalSet(Index),
-    /// `call x:idx`
     Call(Index),
-    /// `drop`
+    // parametric instructions
     Drop,
 }
 
@@ -882,6 +997,14 @@ impl WatBuilder {
                 self.buffer.push_str("i64.store");
                 self.emit_mem_arg(mem);
             }
+            InstructionKind::I32Load(mem) => {
+                self.buffer.push_str("i32.load");
+                self.emit_mem_arg(mem);
+            }
+            InstructionKind::I64Load(mem) => {
+                self.buffer.push_str("i64.load");
+                self.emit_mem_arg(mem);
+            }
             InstructionKind::LocalGet(index) => {
                 self.buffer.push_str("local.get");
                 self.emit_index(index);
@@ -908,6 +1031,93 @@ impl WatBuilder {
             }
             InstructionKind::Drop => {
                 self.buffer.push_str("drop");
+            }
+            InstructionKind::I32Add => {
+                self.buffer.push_str("i32.add");
+            }
+            InstructionKind::I32Sub => {
+                self.buffer.push_str("i32.sub");
+            }
+            InstructionKind::I32Mul => {
+                self.buffer.push_str("i32.mul");
+            }
+            InstructionKind::I32DivU => {
+                self.buffer.push_str("i32.div_u");
+            }
+            InstructionKind::I32DivS => {
+                self.buffer.push_str("i32.div_s");
+            }
+            InstructionKind::I32RemU => {
+                self.buffer.push_str("i32.rem_u");
+            }
+            InstructionKind::I32RemS => {
+                self.buffer.push_str("i32.rem_s");
+            }
+            InstructionKind::I32And => {
+                self.buffer.push_str("i32.and");
+            }
+            InstructionKind::I32Or => {
+                self.buffer.push_str("i32.or");
+            }
+            InstructionKind::I32Xor => {
+                self.buffer.push_str("i32.xor");
+            }
+            InstructionKind::I32ShiLeft => {
+                self.buffer.push_str("i32.shil");
+            }
+            InstructionKind::I32ShiftRightU => {
+                self.buffer.push_str("i32.shir_u");
+            }
+            InstructionKind::I32ShiftRightS => {
+                self.buffer.push_str("i32.shir_s");
+            }
+            InstructionKind::I32RotateLeft => {
+                self.buffer.push_str("i32.rotl");
+            }
+            InstructionKind::I32RotateRight => {
+                self.buffer.push_str("i32.rotr");
+            }
+            InstructionKind::I32Clz => {
+                self.buffer.push_str("i32.clz");
+            }
+            InstructionKind::I32Ctz => {
+                self.buffer.push_str("i32.ctz");
+            }
+            InstructionKind::I32PopCnt => {
+                self.buffer.push_str("i32.popcnt");
+            }
+            InstructionKind::I32Eqz => {
+                self.buffer.push_str("i32.eqz");
+            }
+            InstructionKind::I32Eq => {
+                self.buffer.push_str("i32.eq");
+            }
+            InstructionKind::I32Ne => {
+                self.buffer.push_str("i32.ne");
+            }
+            InstructionKind::I32LtU => {
+                self.buffer.push_str("i32.lt_u");
+            }
+            InstructionKind::I32LtS => {
+                self.buffer.push_str("i32.lt_s");
+            }
+            InstructionKind::I32GtU => {
+                self.buffer.push_str("i32.gt_u");
+            }
+            InstructionKind::I32GtS => {
+                self.buffer.push_str("i32.gt_s");
+            }
+            InstructionKind::I32LeU => {
+                self.buffer.push_str("i32.le_u");
+            }
+            InstructionKind::I32LeS => {
+                self.buffer.push_str("i32.le_s");
+            }
+            InstructionKind::I32GeU => {
+                self.buffer.push_str("i32.ge_u");
+            }
+            InstructionKind::I32GeS => {
+                self.buffer.push_str("i32.ge_s");
             }
         }
         for operand in inst.operands() {
