@@ -61,10 +61,10 @@ impl<'a, 'tcx> Emitter {
             // fd_write(fd: fd, iovs: ciovec_array) -> Result<size, errno>
             let fun_fd_write = wasm::FunctionSignature::new(
                 vec![
-                    Entity::named("fd".into(), wasm::Type::I32),
-                    Entity::named("iovs".into(), wasm::Type::I32),
-                    Entity::named("iovs_len".into(), wasm::Type::I32),
-                    Entity::named("nwritten".into(), wasm::Type::I32),
+                    Entity::named("fd", wasm::Type::I32),
+                    Entity::named("iovs", wasm::Type::I32),
+                    Entity::named("iovs_len", wasm::Type::I32),
+                    Entity::named("nwritten", wasm::Type::I32),
                 ],
                 vec![wasm::Type::I32],
             );
@@ -72,7 +72,7 @@ impl<'a, 'tcx> Emitter {
             module.push_import(Import::new(
                 "wasi_snapshot_preview1".into(),
                 "fd_write".into(),
-                ImportDesc::Function(Entity::named("fd_write".into(), fun_fd_write)),
+                ImportDesc::Function(Entity::named("fd_write", fun_fd_write)),
             ));
         }
 
@@ -93,12 +93,12 @@ impl<'a, 'tcx> Emitter {
         // program stack. Write it to the BP and SP global.
         let stack_base_address =
             wasm::Global::new(true, wasm::Type::I32, vec![Instruction::i32_const(self.cp)]);
-        module.push_global(Entity::named(BP.into(), stack_base_address.clone()));
-        module.push_global(Entity::named(SP.into(), stack_base_address));
+        module.push_global(Entity::named(BP, stack_base_address.clone()));
+        module.push_global(Entity::named(SP, stack_base_address));
 
         // -- build
         let mut wat = WatBuilder::new();
-        wat.emit(&Entity::named("demo.wat".into(), module))
+        wat.emit(&Entity::named("demo.wat", module))
     }
 
     /// The prelude; a standard module; is defined by default.
@@ -120,45 +120,45 @@ impl<'a, 'tcx> Emitter {
 
         let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
             vec![
-                Entity::named(param_fd.into(), wasm::Type::I32),
-                Entity::named(param_io_vs.into(), wasm::Type::I32),
+                Entity::named(param_fd, wasm::Type::I32),
+                Entity::named(param_io_vs, wasm::Type::I32),
             ],
             vec![wasm::Type::I32],
         ));
-        wasm_fun.push_local(Entity::named(io_vs_ptr.into(), wasm::Type::I32));
-        wasm_fun.push_local(Entity::named(n_written_ptr.into(), wasm::Type::I32));
+        wasm_fun.push_local(Entity::named(io_vs_ptr, wasm::Type::I32));
+        wasm_fun.push_local(Entity::named(n_written_ptr, wasm::Type::I32));
 
         self.emit_function_prologue(&mut wasm_fun);
 
         // local: copy io_vs array to the stack.
         wasm_fun.push_instruction(Instruction::i64_store(
-            Instruction::local_tee(io_vs_ptr.into(), Instruction::global_get(SP.into())),
-            Instruction::i64_load(Instruction::local_get(param_io_vs.into())),
+            Instruction::local_tee(io_vs_ptr, Instruction::global_get(SP)),
+            Instruction::i64_load(Instruction::local_get(param_io_vs)),
         ));
         wasm_fun.push_instruction(self.build_incr_sp(8));
 
         // local: n_written
         wasm_fun.push_instruction(Instruction::local_set(
-            n_written_ptr.into(),
-            Instruction::global_get(SP.into()),
+            n_written_ptr,
+            Instruction::global_get(SP),
         ));
         wasm_fun.push_instruction(self.build_incr_sp(4));
 
         // call fd_write()
         wasm_fun.push_instruction(Instruction::call(
-            "fd_write".into(),
+            "fd_write",
             vec![
-                Instruction::local_get(param_fd.into()),
-                Instruction::local_get(io_vs_ptr.into()),
+                Instruction::local_get(param_fd),
+                Instruction::local_get(io_vs_ptr),
                 // io_vs_len - We're printing 1 string stored in an iov - so one.
                 Instruction::i32_const(1),
-                Instruction::local_get(n_written_ptr.into()),
+                Instruction::local_get(n_written_ptr),
             ],
         ));
         // TODO: check n_written and loop until flush.
 
         self.emit_function_epilogue(&mut wasm_fun);
-        module.push_function(Entity::named("@fd_write_all".into(), wasm_fun));
+        module.push_function(Entity::named("@fd_write_all", wasm_fun));
     }
     /// Defines `fd_write_u32` function.
     ///
@@ -173,7 +173,7 @@ impl<'a, 'tcx> Emitter {
         let table_ptr = Instruction::i32_const(self.cp);
 
         module.push_data_segment(Entity::named(
-            "digits".into(),
+            "digits",
             wasm::DataSegment::new(
                 vec![table_ptr.clone()],
                 vec![wasm::StringData::String(digits.into())],
@@ -191,21 +191,18 @@ impl<'a, 'tcx> Emitter {
 
         let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
             vec![
-                Entity::named(param_fd.into(), wasm::Type::I32),
-                Entity::named(param_n.into(), wasm::Type::I32),
+                Entity::named(param_fd, wasm::Type::I32),
+                Entity::named(param_n, wasm::Type::I32),
             ],
             vec![wasm::Type::I32],
         ));
-        wasm_fun.push_local(Entity::named(n.into(), wasm::Type::I32));
-        wasm_fun.push_local(Entity::named(io_vec_ptr.into(), wasm::Type::I32));
-        wasm_fun.push_local(Entity::named(n_columns.into(), wasm::Type::I32));
+        wasm_fun.push_local(Entity::named(n, wasm::Type::I32));
+        wasm_fun.push_local(Entity::named(io_vec_ptr, wasm::Type::I32));
+        wasm_fun.push_local(Entity::named(n_columns, wasm::Type::I32));
         self.emit_function_prologue(&mut wasm_fun);
 
         // tmp_n = n
-        wasm_fun.push_instruction(Instruction::local_set(
-            n.into(),
-            Instruction::local_get(param_n.into()),
-        ));
+        wasm_fun.push_instruction(Instruction::local_set(n, Instruction::local_get(param_n)));
 
         // The algorithm
         // -------------
@@ -218,8 +215,8 @@ impl<'a, 'tcx> Emitter {
 
         // Saves the address of io_vec_array.
         wasm_fun.push_instruction(Instruction::local_set(
-            io_vec_ptr.into(),
-            Instruction::global_get(SP.into()),
+            io_vec_ptr,
+            Instruction::global_get(SP),
         ));
         // Allocates memory for string.
         wasm_fun.push_instruction(self.build_incr_sp(
@@ -237,22 +234,16 @@ impl<'a, 'tcx> Emitter {
         // c: u8 = table[i]
         // *SP = c
         wasm_loop.push_instruction(Instruction::i32_store8(
-            Instruction::global_get(SP.into()),
+            Instruction::global_get(SP),
             Instruction::i32_load8_u(Instruction::i32_add(
                 table_ptr,
-                Instruction::i32_rem_u(
-                    Instruction::local_get(n.into()),
-                    Instruction::i32_const(10),
-                ),
+                Instruction::i32_rem_u(Instruction::local_get(n), Instruction::i32_const(10)),
             )),
         ));
         // n_columns += 1
         wasm_loop.push_instruction(Instruction::local_set(
-            n_columns.into(),
-            Instruction::i32_add(
-                Instruction::local_get(n_columns.into()),
-                Instruction::i32_const(1),
-            ),
+            n_columns,
+            Instruction::i32_add(Instruction::local_get(n_columns), Instruction::i32_const(1)),
         ));
 
         // tmp_n = tmp_n / 10
@@ -260,11 +251,8 @@ impl<'a, 'tcx> Emitter {
         wasm_loop.push_instruction(Instruction::br_if(
             0,
             Instruction::local_tee(
-                n.into(),
-                Instruction::i32_div_u(
-                    Instruction::local_get(n.into()),
-                    Instruction::i32_const(10),
-                ),
+                n,
+                Instruction::i32_div_u(Instruction::local_get(n), Instruction::i32_const(10)),
             ),
         ));
 
@@ -273,34 +261,34 @@ impl<'a, 'tcx> Emitter {
 
         // writes `buf` and `buf_len`
         wasm_fun.push_instruction(Instruction::i32_store(
-            Instruction::local_get(io_vec_ptr.into()),
-            Instruction::global_get(SP.into()),
+            Instruction::local_get(io_vec_ptr),
+            Instruction::global_get(SP),
         ));
         wasm_fun.push_instruction(Instruction::i32_store_m(
             MemArg::with_offset(4),
-            Instruction::local_get(io_vec_ptr.into()),
-            Instruction::local_get(n_columns.into()),
+            Instruction::local_get(io_vec_ptr),
+            Instruction::local_get(n_columns),
             //Instruction::i32_const(1),
         ));
 
         // Reset SP to aligns with 4
         wasm_fun.push_instruction(Instruction::global_set(
-            SP.into(),
-            Instruction::local_get(io_vec_ptr.into()),
+            SP,
+            Instruction::local_get(io_vec_ptr),
         ));
 
         // calls fd_write()
         wasm_fun.push_instruction(Instruction::call(
-            "@fd_write_all".into(),
+            "@fd_write_all",
             vec![
-                Instruction::local_get(param_fd.into()),
-                Instruction::local_get(io_vec_ptr.into()),
+                Instruction::local_get(param_fd),
+                Instruction::local_get(io_vec_ptr),
             ],
         ));
 
         // register function
         self.emit_function_epilogue(&mut wasm_fun);
-        module.push_function(Entity::named("@fd_write_u32".into(), wasm_fun));
+        module.push_function(Entity::named("@fd_write_u32", wasm_fun));
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, module: &mut Module) {
@@ -357,25 +345,19 @@ impl<'a, 'tcx> Emitter {
     fn emit_function_prologue(&mut self, wasm_fun: &mut wasm::Function) {
         // Saves the caller's BP and update BP
         wasm_fun.push_instruction(Instruction::i32_store(
-            Instruction::global_get(SP.into()),
-            Instruction::global_get(BP.into()),
+            Instruction::global_get(SP),
+            Instruction::global_get(BP),
         ));
-        wasm_fun.push_instruction(Instruction::global_set(
-            BP.into(),
-            Instruction::global_get(SP.into()),
-        ));
+        wasm_fun.push_instruction(Instruction::global_set(BP, Instruction::global_get(SP)));
         // Advances SP
         wasm_fun.push_instruction(self.build_incr_sp(4));
     }
     fn emit_function_epilogue(&mut self, wasm_fun: &mut wasm::Function) {
         // Restore the caller's FP
+        wasm_fun.push_instruction(Instruction::global_set(SP, Instruction::global_get(BP)));
         wasm_fun.push_instruction(Instruction::global_set(
-            SP.into(),
-            Instruction::global_get(BP.into()),
-        ));
-        wasm_fun.push_instruction(Instruction::global_set(
-            BP.into(),
-            Instruction::i32_load(Instruction::global_get(BP.into())),
+            BP,
+            Instruction::i32_load(Instruction::global_get(BP)),
         ));
     }
 
@@ -425,7 +407,7 @@ impl<'a, 'tcx> Emitter {
                     }
 
                     // call WASI `fd_write` function.
-                    wasm_fun.push_instruction(Instruction::call("@fd_write_all".into(), vec![]));
+                    wasm_fun.push_instruction(Instruction::call("@fd_write_all", vec![]));
 
                     // // ----- DEBUG
                     // // TODO: create a new temporary variable
@@ -510,20 +492,14 @@ impl<'a, 'tcx> Emitter {
 impl Emitter {
     fn build_incr_sp(&self, n: u32) -> Instruction {
         Instruction::global_set(
-            SP.into(),
-            Instruction::i32_add(
-                Instruction::global_get(SP.into()),
-                Instruction::i32_const(n),
-            ),
+            SP,
+            Instruction::i32_add(Instruction::global_get(SP), Instruction::i32_const(n)),
         )
     }
     fn build_decr_sp(&mut self, n: u32) -> Instruction {
         Instruction::global_set(
-            SP.into(),
-            Instruction::i32_sub(
-                Instruction::global_get(SP.into()),
-                Instruction::i32_const(n),
-            ),
+            SP,
+            Instruction::i32_sub(Instruction::global_get(SP), Instruction::i32_const(n)),
         )
     }
 }

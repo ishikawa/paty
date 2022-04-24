@@ -34,6 +34,24 @@ pub enum Index {
     Id(String),
 }
 
+impl From<&str> for Index {
+    fn from(s: &str) -> Self {
+        Self::Id(s.to_string())
+    }
+}
+
+impl From<String> for Index {
+    fn from(s: String) -> Self {
+        Self::Id(s)
+    }
+}
+
+impl From<u32> for Index {
+    fn from(n: u32) -> Self {
+        Self::Index(n)
+    }
+}
+
 // -- Use
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MemoryUse(Index);
@@ -73,9 +91,9 @@ impl<T> Entity<T> {
 
     /// Creates a new `Entity` containing the given value with
     /// an identifier.
-    pub fn named(id: String, value: T) -> Self {
+    pub fn named<I: Into<String>>(id: I, value: T) -> Self {
         Self {
-            id: Some(id),
+            id: Some(id.into()),
             value,
         }
     }
@@ -739,27 +757,27 @@ impl Instruction {
     pub fn i32_ge_s(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I32GeS, vec![lhs, rhs])
     }
-    pub fn local_get(name: String) -> Self {
-        Self::new(InstructionKind::LocalGet(Index::Id(name)), vec![])
+    pub fn local_get<T: Into<Index>>(index: T) -> Self {
+        Self::new(InstructionKind::LocalGet(index.into()), vec![])
     }
-    pub fn local_set(name: String, value: Instruction) -> Self {
-        Self::new(InstructionKind::LocalSet(Index::Id(name)), vec![value])
+    pub fn local_set<T: Into<Index>>(index: T, value: Instruction) -> Self {
+        Self::new(InstructionKind::LocalSet(index.into()), vec![value])
     }
     // TODO: consider rename to more proper name.
-    pub fn local_set0(name: String) -> Self {
-        Self::new(InstructionKind::LocalSet(Index::Id(name)), vec![])
+    pub fn local_set0<T: Into<Index>>(index: T) -> Self {
+        Self::new(InstructionKind::LocalSet(index.into()), vec![])
     }
-    pub fn local_tee(name: String, value: Instruction) -> Self {
-        Self::new(InstructionKind::LocalTee(Index::Id(name)), vec![value])
+    pub fn local_tee<T: Into<Index>>(index: T, value: Instruction) -> Self {
+        Self::new(InstructionKind::LocalTee(index.into()), vec![value])
     }
-    pub fn global_get(name: String) -> Self {
-        Self::new(InstructionKind::GlobalGet(Index::Id(name)), vec![])
+    pub fn global_get<T: Into<Index>>(index: T) -> Self {
+        Self::new(InstructionKind::GlobalGet(index.into()), vec![])
     }
-    pub fn global_set(name: String, value: Instruction) -> Self {
-        Self::new(InstructionKind::GlobalSet(Index::Id(name)), vec![value])
+    pub fn global_set<T: Into<Index>>(index: T, value: Instruction) -> Self {
+        Self::new(InstructionKind::GlobalSet(index.into()), vec![value])
     }
-    pub fn call(name: String, operands: Vec<Instruction>) -> Self {
-        Self::new(InstructionKind::Call(Index::Id(name)), operands)
+    pub fn call<T: Into<Index>>(index: T, operands: Vec<Instruction>) -> Self {
+        Self::new(InstructionKind::Call(index.into()), operands)
     }
     pub fn drop() -> Self {
         Self::new(InstructionKind::Drop, vec![])
