@@ -409,7 +409,7 @@ impl Default for Limits {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionSignature {
     params: Vec<Entity<Type>>,
     results: Vec<Type>,
@@ -623,13 +623,37 @@ impl Instruction {
         Self::new(InstructionKind::I64Const(n), vec![])
     }
     pub fn i32_store(dst: Instruction, src: Instruction) -> Self {
-        Self::new(InstructionKind::I32Store(MemArg::default()), vec![dst, src])
+        Self::i32_store_m(MemArg::default(), dst, src)
+    }
+    pub fn i32_store8(dst: Instruction, src: Instruction) -> Self {
+        Self::i32_store8_m(MemArg::default(), dst, src)
+    }
+    pub fn i32_store_m(mem: MemArg, dst: Instruction, src: Instruction) -> Self {
+        Self::new(InstructionKind::I32Store(mem), vec![dst, src])
+    }
+    pub fn i32_store8_m(mem: MemArg, dst: Instruction, src: Instruction) -> Self {
+        Self::new(InstructionKind::I32Store8(mem), vec![dst, src])
     }
     pub fn i64_store(dst: Instruction, src: Instruction) -> Self {
         Self::new(InstructionKind::I64Store(MemArg::default()), vec![dst, src])
     }
     pub fn i32_load(src: Instruction) -> Self {
-        Self::new(InstructionKind::I32Load(MemArg::default()), vec![src])
+        Self::i32_load_m(MemArg::default(), src)
+    }
+    pub fn i32_load8_s(src: Instruction) -> Self {
+        Self::i32_load8_s_m(MemArg::default(), src)
+    }
+    pub fn i32_load8_u(src: Instruction) -> Self {
+        Self::i32_load8_u_m(MemArg::default(), src)
+    }
+    pub fn i32_load_m(mem: MemArg, src: Instruction) -> Self {
+        Self::new(InstructionKind::I32Load(mem), vec![src])
+    }
+    pub fn i32_load8_s_m(mem: MemArg, src: Instruction) -> Self {
+        Self::new(InstructionKind::I32Load8S(mem), vec![src])
+    }
+    pub fn i32_load8_u_m(mem: MemArg, src: Instruction) -> Self {
+        Self::new(InstructionKind::I32Load8U(mem), vec![src])
     }
     pub fn i64_load(src: Instruction) -> Self {
         Self::new(InstructionKind::I64Load(MemArg::default()), vec![src])
@@ -721,6 +745,10 @@ impl Instruction {
     pub fn local_set(name: String, value: Instruction) -> Self {
         Self::new(InstructionKind::LocalSet(Index::Id(name)), vec![value])
     }
+    // TODO: consider rename to more proper name.
+    pub fn local_set0(name: String) -> Self {
+        Self::new(InstructionKind::LocalSet(Index::Id(name)), vec![])
+    }
     pub fn local_tee(name: String, value: Instruction) -> Self {
         Self::new(InstructionKind::LocalTee(Index::Id(name)), vec![value])
     }
@@ -735,6 +763,15 @@ impl Instruction {
     }
     pub fn drop() -> Self {
         Self::new(InstructionKind::Drop, vec![])
+    }
+    pub fn r#loop(wasm_loop: LoopInstruction) -> Self {
+        Self::new(InstructionKind::Loop(wasm_loop), vec![])
+    }
+    pub fn br(label_idx: u32) -> Self {
+        Self::new(InstructionKind::Br(label_idx), vec![])
+    }
+    pub fn br_if(label_idx: u32, cond: Instruction) -> Self {
+        Self::new(InstructionKind::BrIf(label_idx), vec![cond])
     }
 
     // ext: bulk-memory
@@ -782,8 +819,11 @@ pub enum InstructionKind {
     I32GeS,
     // memory instructions
     I32Store(MemArg),
+    I32Store8(MemArg),
     I64Store(MemArg),
     I32Load(MemArg),
+    I32Load8S(MemArg),
+    I32Load8U(MemArg),
     I64Load(MemArg),
     // local variables
     LocalGet(Index),
@@ -795,9 +835,55 @@ pub enum InstructionKind {
     Call(Index),
     // parametric instructions
     Drop,
-
+    // control instructions
+    Loop(LoopInstruction),
+    Br(u32),
+    BrIf(u32),
     // Ext: bulk-memory
     MemoryCopy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopInstruction {
+    /// A structured instruction can consume input and produce output on
+    /// the operand stack according to its annotated block type.
+    signature: FunctionSignature,
+    body: Vec<Instruction>,
+}
+
+impl LoopInstruction {
+    pub fn new() -> Self {
+        Self::with_signature(FunctionSignature::new(vec![], vec![]))
+    }
+
+    pub fn with_result(retty: Type) -> Self {
+        Self::with_signature(FunctionSignature::new(vec![], vec![retty]))
+    }
+
+    // To use multiple results, you need multi-value extension.
+    pub fn with_signature(signature: FunctionSignature) -> Self {
+        Self {
+            signature,
+            body: vec![],
+        }
+    }
+
+    pub fn signature(&self) -> &FunctionSignature {
+        &self.signature
+    }
+    pub fn body(&self) -> impl ExactSizeIterator<Item = &Instruction> {
+        self.body.iter()
+    }
+
+    pub fn push_instruction(&mut self, inst: Instruction) {
+        self.body.push(inst);
+    }
+}
+
+impl Default for LoopInstruction {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -809,6 +895,9 @@ pub struct MemArg {
 impl MemArg {
     pub fn new(offset: Option<u32>, align: Option<u32>) -> Self {
         Self { offset, align }
+    }
+    pub fn with_offset(offset: u32) -> Self {
+        Self::new(Some(offset), None)
     }
 
     pub fn offset(&self) -> Option<u32> {
@@ -881,12 +970,14 @@ fn walk(visitor: &mut dyn Visitor, module: &Entity<Module>) {
 #[derive(Debug, Default)]
 pub struct WatBuilder {
     buffer: String,
+    indent: u32,
 }
 
 impl WatBuilder {
     pub fn new() -> Self {
         Self {
             buffer: String::new(),
+            indent: 0,
         }
     }
 
@@ -895,6 +986,35 @@ impl WatBuilder {
 
         walk(self, module);
         std::mem::take(&mut self.buffer)
+    }
+
+    /// Prints a newline and indent.
+    fn newline(&mut self) {
+        self.buffer.push('\n');
+        self.indent();
+    }
+    /// Prints spaces according to the current indentation level.
+    fn indent(&mut self) {
+        for _ in 0..self.indent {
+            self.buffer.push_str("  ");
+        }
+    }
+    /// Increases indentation level.
+    fn inc_indent(&mut self) {
+        self.indent += 1;
+    }
+    /// Decreases indentation level.
+    fn decr_indent(&mut self) {
+        self.indent -= 1;
+    }
+
+    fn push_indent(&mut self) {
+        self.inc_indent();
+        self.newline();
+    }
+    fn pop_indent(&mut self) {
+        self.decr_indent();
+        self.newline();
     }
 
     fn emit_index(&mut self, index: &Index) {
@@ -973,6 +1093,9 @@ impl WatBuilder {
         self.buffer.push(')');
     }
     fn emit_mem_arg(&mut self, mem: &MemArg) {
+        if mem.offset().is_some() || mem.align().is_some() {
+            self.buffer.push(' ');
+        }
         if let Some(offset) = mem.offset() {
             self.buffer.push(' ');
             self.buffer.push_str("offset=");
@@ -1001,12 +1124,24 @@ impl WatBuilder {
                 self.buffer.push_str("i32.store");
                 self.emit_mem_arg(mem);
             }
+            InstructionKind::I32Store8(mem) => {
+                self.buffer.push_str("i32.store8");
+                self.emit_mem_arg(mem);
+            }
             InstructionKind::I64Store(mem) => {
                 self.buffer.push_str("i64.store");
                 self.emit_mem_arg(mem);
             }
             InstructionKind::I32Load(mem) => {
                 self.buffer.push_str("i32.load");
+                self.emit_mem_arg(mem);
+            }
+            InstructionKind::I32Load8S(mem) => {
+                self.buffer.push_str("i32.load8_s");
+                self.emit_mem_arg(mem);
+            }
+            InstructionKind::I32Load8U(mem) => {
+                self.buffer.push_str("i32.load8_u");
                 self.emit_mem_arg(mem);
             }
             InstructionKind::I64Load(mem) => {
@@ -1130,8 +1265,36 @@ impl WatBuilder {
             InstructionKind::I32GeS => {
                 self.buffer.push_str("i32.ge_s");
             }
+            InstructionKind::Br(label_idx) => {
+                self.buffer.push_str("br");
+                self.buffer.push(' ');
+                self.buffer.push_str(&label_idx.to_string());
+            }
+            InstructionKind::BrIf(label_idx) => {
+                self.buffer.push_str("br_if");
+                self.buffer.push(' ');
+                self.buffer.push_str(&label_idx.to_string());
+            }
+            InstructionKind::Loop(ctrl) => {
+                self.buffer.push_str("loop");
+                self.emit_function_signature(ctrl.signature());
+                self.push_indent();
+
+                let mut instructions = ctrl.body().peekable();
+
+                while let Some(inst) = instructions.next() {
+                    self.emit_inst(inst);
+                    if instructions.peek().is_some() {
+                        self.newline();
+                    }
+                }
+
+                self.pop_indent();
+            }
         }
+
         for operand in inst.operands() {
+            self.buffer.push(' ');
             self.emit_inst(operand);
         }
 
@@ -1147,9 +1310,11 @@ impl Visitor for WatBuilder {
         if let Some(name) = module.id() {
             self.emit_id(name);
         }
+        self.push_indent();
     }
     fn exit_module(&mut self, _module: &Entity<Module>) {
         self.buffer.push(')');
+        self.pop_indent();
     }
 
     fn enter_import(&mut self, import: &Import) {
@@ -1158,7 +1323,7 @@ impl Visitor for WatBuilder {
 
         self.emit_str(import.module());
         self.emit_str(import.name());
-        self.buffer.push(' ');
+        self.push_indent();
 
         match import.desc() {
             ImportDesc::Function(fun) => self.emit_import_desc_function(fun),
@@ -1166,6 +1331,7 @@ impl Visitor for WatBuilder {
     }
     fn exit_import(&mut self, _import: &Import) {
         self.buffer.push(')');
+        self.pop_indent();
     }
 
     fn enter_export(&mut self, export: &Export) {
@@ -1190,6 +1356,7 @@ impl Visitor for WatBuilder {
     }
     fn exit_export(&mut self, _export: &Export) {
         self.buffer.push(')');
+        self.newline();
     }
 
     fn enter_memory(&mut self, memory: &Entity<Memory>) {
@@ -1204,6 +1371,7 @@ impl Visitor for WatBuilder {
     }
     fn exit_memory(&mut self, _memory: &Entity<Memory>) {
         self.buffer.push(')');
+        self.newline();
     }
 
     fn enter_data_segment(&mut self, data_segment: &Entity<DataSegment>) {
@@ -1239,6 +1407,7 @@ impl Visitor for WatBuilder {
     }
     fn exit_data_segment(&mut self, _data_segment: &Entity<DataSegment>) {
         self.buffer.push(')');
+        self.newline();
     }
 
     fn enter_function(&mut self, fun: &Entity<Function>) {
@@ -1251,9 +1420,12 @@ impl Visitor for WatBuilder {
         }
 
         self.emit_function_signature(fun.get().signature());
+        self.push_indent();
 
         // locals
-        for local in fun.get().locals() {
+        let mut locals = fun.get().locals().peekable();
+
+        while let Some(local) = locals.next() {
             self.buffer.push('(');
             self.buffer.push_str("local");
             if let Some(name) = local.id() {
@@ -1261,15 +1433,29 @@ impl Visitor for WatBuilder {
             }
             self.emit_type(local.get());
             self.buffer.push(')');
+
+            if locals.peek().is_some() {
+                self.buffer.push(' ');
+            }
+        }
+        if fun.get().locals().len() != 0 {
+            self.newline();
+            self.newline();
         }
 
         // instructions
-        for inst in fun.get().instructions() {
+        let mut instructions = fun.get().instructions().peekable();
+
+        while let Some(inst) = instructions.next() {
             self.emit_inst(inst);
+            if instructions.peek().is_some() {
+                self.newline();
+            }
         }
     }
     fn exit_function(&mut self, _function: &Entity<Function>) {
         self.buffer.push(')');
+        self.pop_indent();
     }
 
     fn enter_global(&mut self, global: &Entity<Global>) {
@@ -1299,5 +1485,6 @@ impl Visitor for WatBuilder {
     }
     fn exit_global(&mut self, _global: &Entity<Global>) {
         self.buffer.push(')');
+        self.newline();
     }
 }
