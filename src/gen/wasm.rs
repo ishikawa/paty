@@ -228,22 +228,23 @@ impl<'a, 'tcx> Emitter {
         // begin loop - until all digits printed
         let mut wasm_loop = wasm::LoopInstruction::new();
 
-        // SP--;
-        wasm_loop.push_instruction(self.build_decr_sp(1));
-        // i = tmp_n % 10
-        // c: u8 = table[i]
-        // *SP = c
-        wasm_loop.push_instruction(Instruction::i32_store8(
-            Instruction::global_get(SP),
-            Instruction::i32_load8_u(Instruction::i32_add(
-                table_ptr,
-                Instruction::i32_rem_u(Instruction::local_get(n), Instruction::i32_const(10)),
-            )),
-        ));
         // n_columns += 1
         wasm_loop.push_instruction(Instruction::local_set(
             n_columns,
             Instruction::i32_add(Instruction::local_get(n_columns), Instruction::i32_const(1)),
+        ));
+        // i = tmp_n % 10
+        // c: u8 = table[i]
+        // *(SP - n_columns) = c
+        wasm_loop.push_instruction(Instruction::i32_store8(
+            Instruction::i32_sub(
+                Instruction::global_get(SP),
+                Instruction::local_get(n_columns),
+            ),
+            Instruction::i32_load8_u(Instruction::i32_add(
+                table_ptr,
+                Instruction::i32_rem_u(Instruction::local_get(n), Instruction::i32_const(10)),
+            )),
         ));
 
         // tmp_n = tmp_n / 10
@@ -262,19 +263,15 @@ impl<'a, 'tcx> Emitter {
         // writes `buf` and `buf_len`
         wasm_fun.push_instruction(Instruction::i32_store(
             Instruction::local_get(io_vec_ptr),
-            Instruction::global_get(SP),
+            Instruction::i32_sub(
+                Instruction::global_get(SP),
+                Instruction::local_get(n_columns),
+            ),
         ));
         wasm_fun.push_instruction(Instruction::i32_store_m(
             MemArg::with_offset(4),
             Instruction::local_get(io_vec_ptr),
             Instruction::local_get(n_columns),
-            //Instruction::i32_const(1),
-        ));
-
-        // Reset SP to aligns with 4
-        wasm_fun.push_instruction(Instruction::global_set(
-            SP,
-            Instruction::local_get(io_vec_ptr),
         ));
 
         // calls fd_write()
@@ -411,15 +408,12 @@ impl<'a, 'tcx> Emitter {
 
                     // // ----- DEBUG
                     // // TODO: create a new temporary variable
-                    // wasm_fun.push_tmp(wasm::Type::I32);
+                    // let tmp = wasm_fun.push_tmp(wasm::Type::I32);
 
-                    // wasm_fun.push_instruction(Instruction::local_set0("tmp".into()));
+                    // wasm_fun.push_instruction(Instruction::local_set0(tmp.clone()));
                     // wasm_fun.push_instruction(Instruction::call(
-                    //     "@fd_write_u32".into(),
-                    //     vec![
-                    //         Instruction::i32_const(2),
-                    //         Instruction::local_get("tmp".into()),
-                    //     ],
+                    //     "@fd_write_u32",
+                    //     vec![Instruction::i32_const(2), Instruction::local_get(tmp)],
                     // ));
                     // // /DEBUG
 
@@ -496,6 +490,7 @@ impl Emitter {
             Instruction::i32_add(Instruction::global_get(SP), Instruction::i32_const(n)),
         )
     }
+    #[allow(unused)]
     fn build_decr_sp(&mut self, n: u32) -> Instruction {
         Instruction::global_set(
             SP,

@@ -367,7 +367,7 @@ impl Memory {
     }
 }
 
-/// Limits classify the size range of resizeable storage associated with memory
+/// Limits classify the size range of resizable storage associated with memory
 /// types and table types.
 ///
 /// If no maximum is given, the respective storage can
@@ -540,7 +540,7 @@ impl Global {
 /// assert_eq!(fun.signature().params().len(), 0);
 /// assert_eq!(fun.signature().results().len(), 0);
 ///
-/// fun.push_local(Entity::named("a".into(), Type::I32));
+/// fun.push_local(Entity::named("a", Type::I32));
 /// assert_eq!(fun.locals().len(), 1);
 /// ```
 #[derive(Debug)]
@@ -570,11 +570,11 @@ impl Function {
     ///
     /// ```
     /// # use paty::gen::wasm::builder::{Function, Entity, Type, Instruction, FunctionSignature};
-    /// let signature = FunctionSignature::new(vec![Entity::named("x".into(), Type::I32)], vec![Type::I32]);
+    /// let signature = FunctionSignature::new(vec![Entity::named("x", Type::I32)], vec![Type::I32]);
     /// let fun = Function::with_signature(signature);
     ///
     /// assert_eq!(fun.signature().params().len(), 1);
-    /// assert_eq!(fun.signature().params().next(), Some(&Entity::named("x".into(), Type::I32)));
+    /// assert_eq!(fun.signature().params().next(), Some(&Entity::named("x", Type::I32)));
     /// assert_eq!(fun.signature().results().len(), 1);
     /// assert_eq!(fun.signature().results().next(), Some(&Type::I32));
     /// ```
@@ -601,6 +601,29 @@ impl Function {
     }
     pub fn push_instruction(&mut self, inst: Instruction) {
         self.instructions.push(inst);
+    }
+
+    /// Adds a new temporary variable with the given type and
+    /// returns its index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use paty::gen::wasm::builder::{Function, Entity, Type, Instruction, FunctionSignature};
+    /// let mut fun = Function::new();
+    /// let tmp1 = fun.push_tmp(Type::I32);
+    /// let tmp2 = fun.push_tmp(Type::I32);
+    ///
+    /// assert_eq!(fun.locals().len(), 2);
+    /// assert_ne!(tmp1, tmp2);
+    /// ```
+    pub fn push_tmp(&mut self, ty: Type) -> Index {
+        // The index space for locals is only accessible inside a function and
+        // includes the parameters of that function, which precede the local variables.
+        let idx = self.signature.params().len() + self.locals.len();
+
+        self.push_local(Entity::new(ty));
+        Index::Index(u32::try_from(idx).unwrap())
     }
 }
 
