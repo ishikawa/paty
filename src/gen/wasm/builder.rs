@@ -255,6 +255,9 @@ impl Module {
     pub fn push_function(&mut self, function: Entity<Function>) {
         self.functions.push(function);
     }
+    pub fn prepend_function(&mut self, function: Entity<Function>) {
+        self.functions.insert(0, function);
+    }
 }
 
 /// The `imports` component of a module defines a set of imports that are

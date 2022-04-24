@@ -1,6 +1,8 @@
 //! WebAssembly backend which emits WAT (WebAssembly Text Format).
 pub mod builder;
 
+use std::fmt;
+
 use self::builder as wasm;
 use self::builder::{
     Entity, Export, ExportDesc, Import, ImportDesc, Instruction, MemArg, Module, WatBuilder,
@@ -36,6 +38,28 @@ const SP: &str = "sp";
 
 /// The name of a global variable which points to the current base pointer.
 const BP: &str = "bp";
+
+/// Functions in prelude. You can get function id from `prelude.id()`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Prelude {
+    FdWriteAll,
+    FdWriteU32,
+}
+
+impl Prelude {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::FdWriteAll => "@fd_write_all",
+            Self::FdWriteU32 => "@fd_write_u32",
+        }
+    }
+}
+
+impl fmt::Display for Prelude {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.id())
+    }
+}
 
 #[derive(Debug)]
 pub struct Emitter {
@@ -76,8 +100,6 @@ impl<'a, 'tcx> Emitter {
             ));
         }
 
-        self.define_prelude(&mut module);
-
         // -- exports
         module.push_export(Export::new(
             "memory".into(),
@@ -101,17 +123,33 @@ impl<'a, 'tcx> Emitter {
         wat.emit(&Entity::named("demo.wat", module))
     }
 
-    /// The prelude; a standard module; is defined by default.
-    fn define_prelude(&mut self, module: &mut Module) {
-        self.define_prelude_fd_write_all(module);
-        self.define_prelude_fd_write_u32(module);
+    /// Define a prelude function if not yet present. returns
+    /// the prelude enum.
+    fn use_prelude(&mut self, prelude: Prelude, module: &mut Module) -> Prelude {
+        let fun_id = prelude.id();
+
+        if !module
+            .functions()
+            .any(|fun| fun.id().filter(|id| *id == fun_id).is_some())
+        {
+            self.define_prelude(prelude, module);
+        }
+        prelude
+    }
+
+    fn define_prelude(&mut self, prelude: Prelude, module: &mut Module) {
+        let wasm_fun = match prelude {
+            Prelude::FdWriteAll => self.build_prelude_fd_write_all(module),
+            Prelude::FdWriteU32 => self.build_prelude_fd_write_u32(module),
+        };
+        module.prepend_function(Entity::named(prelude.id(), wasm_fun));
     }
     /// Defines `fd_write_all` function.
     ///
     /// ```ignore
     /// @fd_write_all(fd: i32, io_vs: i32) error
     /// ```
-    fn define_prelude_fd_write_all(&mut self, module: &mut Module) {
+    fn build_prelude_fd_write_all(&mut self, _module: &mut Module) -> wasm::Function {
         // locals
         let param_fd = "fd";
         let param_io_vs = "io_vs";
@@ -158,7 +196,7 @@ impl<'a, 'tcx> Emitter {
         // TODO: check n_written and loop until flush.
 
         self.emit_function_epilogue(&mut wasm_fun);
-        module.push_function(Entity::named("@fd_write_all", wasm_fun));
+        wasm_fun
     }
     /// Defines `fd_write_u32` function.
     ///
@@ -167,7 +205,7 @@ impl<'a, 'tcx> Emitter {
     /// ```ignore
     /// @fd_write_u32(fd: i32, n: u32) error
     /// ```
-    fn define_prelude_fd_write_u32(&mut self, module: &mut Module) {
+    fn build_prelude_fd_write_u32(&mut self, module: &mut Module) -> wasm::Function {
         // Defines the "0".."9" table.
         let digits = "0123456789";
         let table_ptr = Instruction::i32_const(self.cp);
@@ -275,8 +313,9 @@ impl<'a, 'tcx> Emitter {
         ));
 
         // calls fd_write()
+        let fd_write_all = self.use_prelude(Prelude::FdWriteAll, module);
         wasm_fun.push_instruction(Instruction::call(
-            "@fd_write_all",
+            fd_write_all.id(),
             vec![
                 Instruction::local_get(param_fd),
                 Instruction::local_get(io_vec_ptr),
@@ -285,7 +324,7 @@ impl<'a, 'tcx> Emitter {
 
         // register function
         self.emit_function_epilogue(&mut wasm_fun);
-        module.push_function(Entity::named("@fd_write_u32", wasm_fun));
+        wasm_fun
     }
 
     fn emit_function(&mut self, fun: &Function<'a, 'tcx>, module: &mut Module) {
@@ -404,15 +443,16 @@ impl<'a, 'tcx> Emitter {
                     }
 
                     // call WASI `fd_write` function.
-                    wasm_fun.push_instruction(Instruction::call("@fd_write_all", vec![]));
+                    let fd_write_all = self.use_prelude(Prelude::FdWriteAll, module);
+                    wasm_fun.push_instruction(Instruction::call(fd_write_all.id(), vec![]));
 
                     // // ----- DEBUG
-                    // // TODO: create a new temporary variable
                     // let tmp = wasm_fun.push_tmp(wasm::Type::I32);
+                    // let fd_write_u32 = self.use_prelude(Prelude::FdWriteU32, module);
 
                     // wasm_fun.push_instruction(Instruction::local_set0(tmp.clone()));
                     // wasm_fun.push_instruction(Instruction::call(
-                    //     "@fd_write_u32",
+                    //     fd_write_u32.id(),
                     //     vec![Instruction::i32_const(2), Instruction::local_get(tmp)],
                     // ));
                     // // /DEBUG
