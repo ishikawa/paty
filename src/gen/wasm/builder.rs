@@ -1,6 +1,5 @@
 //! WebAssembly
 //! https://webassembly.github.io/spec/core/intro/introduction.html
-
 use std::fmt;
 
 /// Various entities in WebAssembly are classified by types.
@@ -550,7 +549,7 @@ impl Global {
 pub struct Function {
     signature: FunctionSignature,
     locals: Vec<Entity<Type>>,
-    instructions: Vec<Instruction>,
+    instructions: Instructions,
 }
 
 impl Default for Function {
@@ -585,25 +584,25 @@ impl Function {
         Self {
             signature,
             locals: Vec::with_capacity(0),
-            instructions: vec![],
+            instructions: Instructions::new(),
         }
     }
 
     pub fn signature(&self) -> &FunctionSignature {
         &self.signature
     }
+    pub fn instructions(&self) -> &Instructions {
+        &self.instructions
+    }
+    pub fn instructions_mut(&mut self) -> &mut Instructions {
+        &mut self.instructions
+    }
+
     pub fn locals(&self) -> impl ExactSizeIterator<Item = &Entity<Type>> {
         self.locals.iter()
     }
-    pub fn instructions(&self) -> impl ExactSizeIterator<Item = &Instruction> {
-        self.instructions.iter()
-    }
-
     pub fn push_local(&mut self, local: Entity<Type>) {
         self.locals.push(local);
-    }
-    pub fn push_instruction(&mut self, inst: Instruction) {
-        self.instructions.push(inst);
     }
 
     /// Adds a new temporary variable with the given type and
@@ -899,6 +898,9 @@ impl Instruction {
     pub fn nop() -> Self {
         Self::new(InstructionKind::Nop, vec![])
     }
+    pub fn unreachable() -> Self {
+        Self::new(InstructionKind::Unreachable, vec![])
+    }
     pub fn r#loop(wasm_loop: LoopInstruction) -> Self {
         Self::new(InstructionKind::Loop(wasm_loop), vec![])
     }
@@ -1005,6 +1007,9 @@ pub enum InstructionKind {
     Drop,
     // control instructions
     Nop,
+    Unreachable,
+    // Block(BlockInstruction),
+    // If(IfInstruction),
     Loop(LoopInstruction),
     Br(u32),
     BrIf(u32),
@@ -1013,11 +1018,67 @@ pub enum InstructionKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instructions {
+    instructions: Vec<Instruction>,
+}
+
+impl Instructions {
+    pub fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.instructions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.instructions.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&Instruction> {
+        self.instructions.get(index)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Instruction> {
+        self.instructions.iter()
+    }
+
+    pub fn push(&mut self, inst: Instruction) {
+        self.instructions.push(inst);
+    }
+
+    pub fn insert(&mut self, index: usize, inst: Instruction) {
+        self.instructions.insert(index, inst);
+    }
+
+    pub fn remove(&mut self, index: usize) -> Instruction {
+        self.instructions.remove(index)
+    }
+}
+
+impl IntoIterator for Instructions {
+    type Item = Instruction;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.instructions.into_iter()
+    }
+}
+
+impl Extend<Instruction> for Instructions {
+    fn extend<T: IntoIterator<Item = Instruction>>(&mut self, instructions: T) {
+        self.instructions.extend(instructions)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoopInstruction {
     /// A structured instruction can consume input and produce output on
     /// the operand stack according to its annotated block type.
     signature: FunctionSignature,
-    body: Vec<Instruction>,
+    instructions: Instructions,
 }
 
 impl LoopInstruction {
@@ -1033,19 +1094,19 @@ impl LoopInstruction {
     pub fn with_signature(signature: FunctionSignature) -> Self {
         Self {
             signature,
-            body: vec![],
+            instructions: Instructions::new(),
         }
     }
 
     pub fn signature(&self) -> &FunctionSignature {
         &self.signature
     }
-    pub fn body(&self) -> impl ExactSizeIterator<Item = &Instruction> {
-        self.body.iter()
-    }
 
-    pub fn push_instruction(&mut self, inst: Instruction) {
-        self.body.push(inst);
+    pub fn instructions(&self) -> &Instructions {
+        &self.instructions
+    }
+    pub fn instructions_mut(&mut self) -> &mut Instructions {
+        &mut self.instructions
     }
 }
 
@@ -1534,6 +1595,9 @@ impl WatBuilder {
             InstructionKind::Nop => {
                 self.buffer.push_str("nop");
             }
+            InstructionKind::Unreachable => {
+                self.buffer.push_str("unreachable");
+            }
             InstructionKind::Br(label_idx) => {
                 self.buffer.push_str("br");
                 self.buffer.push(' ');
@@ -1549,7 +1613,7 @@ impl WatBuilder {
                 self.emit_function_signature(ctrl.signature());
                 self.push_indent();
 
-                let mut instructions = ctrl.body().peekable();
+                let mut instructions = ctrl.instructions().iter().peekable();
 
                 while let Some(inst) = instructions.next() {
                     self.emit_inst(inst);
@@ -1713,7 +1777,7 @@ impl Visitor for WatBuilder {
         }
 
         // instructions
-        let mut instructions = fun.get().instructions().peekable();
+        let mut instructions = fun.get().instructions().iter().peekable();
 
         while let Some(inst) = instructions.next() {
             self.emit_inst(inst);

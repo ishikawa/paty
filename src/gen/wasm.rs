@@ -169,31 +169,55 @@ impl<'a, 'tcx> Emitter {
         self.emit_function_prologue(&mut wasm_fun);
 
         // local: copy io_vs array to the stack.
-        wasm_fun.push_instruction(Instruction::i64_store(
-            Instruction::local_tee(io_vs_ptr, Instruction::global_get(SP)),
-            Instruction::i64_load(Instruction::local_get(param_io_vs)),
-        ));
-        wasm_fun.push_instruction(self.build_incr_sp(8));
+        wasm_fun.instructions_mut().extend([
+            Instruction::i64_store(
+                Instruction::local_tee(io_vs_ptr, Instruction::global_get(SP)),
+                Instruction::i64_load(Instruction::local_get(param_io_vs)),
+            ),
+            self.build_incr_sp(8),
+        ]);
 
         // local: n_written
-        wasm_fun.push_instruction(Instruction::local_set(
-            n_written_ptr,
-            Instruction::global_get(SP),
-        ));
-        wasm_fun.push_instruction(self.build_incr_sp(4));
+        wasm_fun.instructions_mut().extend([
+            Instruction::local_set(n_written_ptr, Instruction::global_get(SP)),
+            self.build_incr_sp(4),
+        ]);
 
-        // call fd_write()
-        wasm_fun.push_instruction(Instruction::call(
-            "fd_write",
-            vec![
-                Instruction::local_get(param_fd),
-                Instruction::local_get(io_vs_ptr),
-                // io_vs_len - We're printing 1 string stored in an iov - so one.
-                Instruction::i32_const(1),
-                Instruction::local_get(n_written_ptr),
-            ],
-        ));
-        // TODO: check n_written and loop until flush.
+        // begin loop
+        let mut wasm_loop = wasm::LoopInstruction::with_result(wasm::Type::I32);
+        {
+            // call fd_write()
+            wasm_loop.instructions_mut().push(Instruction::call(
+                "fd_write",
+                vec![
+                    Instruction::local_get(param_fd),
+                    Instruction::local_get(io_vs_ptr),
+                    // io_vs_len - We're printing 1 string stored in an iov - so one.
+                    Instruction::i32_const(1),
+                    Instruction::local_get(n_written_ptr),
+                ],
+            ));
+            // TODO: check n_written and loop until flush.
+            // v = io_vs_ptr[1] - *n_written
+            // continue if v != 0
+            // wasm_fun.extend_instructions([
+            //     Instruction::i32_sub(
+            //         Instruction::i32_load_m(
+            //             MemArg::with_offset(4),
+            //             Instruction::local_get(io_vs_ptr),
+            //         ),
+            //         Instruction::i32_load(Instruction::local_get(n_written_ptr)),
+            //     ),
+            //     Instruction::br_if(
+            //         0,
+            //         Instruction::i32_ne(Instruction::nop(), Instruction::i32_const(0)),
+            //     ),
+            // ]);
+        }
+        // /end loop
+        wasm_fun
+            .instructions_mut()
+            .push(Instruction::r#loop(wasm_loop));
 
         self.emit_function_epilogue(&mut wasm_fun);
         wasm_fun
@@ -243,7 +267,9 @@ impl<'a, 'tcx> Emitter {
         self.emit_function_prologue(&mut wasm_fun);
 
         // tmp_n = n
-        wasm_fun.push_instruction(Instruction::local_set(n, Instruction::local_get(param_n)));
+        wasm_fun
+            .instructions_mut()
+            .push(Instruction::local_set(n, Instruction::local_get(param_n)));
 
         // The algorithm
         // -------------
@@ -254,30 +280,29 @@ impl<'a, 'tcx> Emitter {
         // 4. Writes `buf` and `buf_len` into (1).
         // 5. Prints io_vec_array by using `fd_write`.
 
-        // Saves the address of io_vec_array.
-        wasm_fun.push_instruction(Instruction::local_set(
-            io_vec_ptr,
-            Instruction::global_get(SP),
-        ));
-        // Allocates memory for string.
-        wasm_fun.push_instruction(self.build_incr_sp(
-            // io_vec_array + string
-            (8 + i64::MIN.to_string().len()).align(4),
-        ));
+        wasm_fun.instructions_mut().extend([
+            // Saves the address of io_vec_array.
+            Instruction::local_set(io_vec_ptr, Instruction::global_get(SP)),
+            // Allocates memory for string.
+            self.build_incr_sp(
+                // io_vec_array + string
+                (8 + i64::MIN.to_string().len()).align(4),
+            ),
+        ]);
 
         // ------
         // begin loop - until all digits printed
         let mut wasm_loop = wasm::LoopInstruction::new();
 
         // n_columns += 1
-        wasm_loop.push_instruction(Instruction::local_set(
+        wasm_loop.instructions_mut().push(Instruction::local_set(
             n_columns,
             Instruction::i32_add(Instruction::local_get(n_columns), Instruction::i32_const(1)),
         ));
         // i = tmp_n % 10
         // c: u8 = table[i]
         // *(SP - n_columns) = c
-        wasm_loop.push_instruction(Instruction::i32_store8(
+        wasm_loop.instructions_mut().push(Instruction::i32_store8(
             Instruction::i32_sub(
                 Instruction::global_get(SP),
                 Instruction::local_get(n_columns),
@@ -293,7 +318,7 @@ impl<'a, 'tcx> Emitter {
 
         // tmp_n = tmp_n / 10
         // continue if tmp_n != 0
-        wasm_loop.push_instruction(Instruction::br_if(
+        wasm_loop.instructions_mut().push(Instruction::br_if(
             0,
             Instruction::i64_ne(
                 Instruction::local_tee(
@@ -305,17 +330,19 @@ impl<'a, 'tcx> Emitter {
         ));
 
         // end loop
-        wasm_fun.push_instruction(Instruction::r#loop(wasm_loop));
+        wasm_fun
+            .instructions_mut()
+            .push(Instruction::r#loop(wasm_loop));
 
         // writes `buf` and `buf_len`
-        wasm_fun.push_instruction(Instruction::i32_store(
+        wasm_fun.instructions_mut().push(Instruction::i32_store(
             Instruction::local_get(io_vec_ptr),
             Instruction::i32_sub(
                 Instruction::global_get(SP),
                 Instruction::local_get(n_columns),
             ),
         ));
-        wasm_fun.push_instruction(Instruction::i32_store_m(
+        wasm_fun.instructions_mut().push(Instruction::i32_store_m(
             MemArg::with_offset(4),
             Instruction::local_get(io_vec_ptr),
             Instruction::local_get(n_columns),
@@ -323,7 +350,7 @@ impl<'a, 'tcx> Emitter {
 
         // calls fd_write()
         let fd_write_all = self.use_prelude(Prelude::FdWriteAll, module);
-        wasm_fun.push_instruction(Instruction::call(
+        wasm_fun.instructions_mut().push(Instruction::call(
             fd_write_all.id(),
             vec![
                 Instruction::local_get(param_fd),
@@ -388,22 +415,20 @@ impl<'a, 'tcx> Emitter {
     }
 
     fn emit_function_prologue(&mut self, wasm_fun: &mut wasm::Function) {
-        // Saves the caller's BP and update BP
-        wasm_fun.push_instruction(Instruction::i32_store(
-            Instruction::global_get(SP),
-            Instruction::global_get(BP),
-        ));
-        wasm_fun.push_instruction(Instruction::global_set(BP, Instruction::global_get(SP)));
-        // Advances SP
-        wasm_fun.push_instruction(self.build_incr_sp(4));
+        wasm_fun.instructions_mut().extend([
+            // Saves the caller's BP and update BP
+            Instruction::i32_store(Instruction::global_get(SP), Instruction::global_get(BP)),
+            Instruction::global_set(BP, Instruction::global_get(SP)),
+            // Advances SP
+            self.build_incr_sp(4),
+        ]);
     }
     fn emit_function_epilogue(&mut self, wasm_fun: &mut wasm::Function) {
         // Restore the caller's FP
-        wasm_fun.push_instruction(Instruction::global_set(SP, Instruction::global_get(BP)));
-        wasm_fun.push_instruction(Instruction::global_set(
-            BP,
-            Instruction::i32_load(Instruction::global_get(BP)),
-        ));
+        wasm_fun.instructions_mut().extend([
+            Instruction::global_set(SP, Instruction::global_get(BP)),
+            Instruction::global_set(BP, Instruction::i32_load(Instruction::global_get(BP))),
+        ]);
     }
 
     #[allow(unused_variables)]
@@ -438,7 +463,7 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Printf(args) => {
                 for arg in args {
                     // file_descriptor - 1 for stdout
-                    wasm_fun.push_instruction(Instruction::i32_const(1));
+                    wasm_fun.instructions_mut().push(Instruction::i32_const(1));
 
                     // io_vs - The pointer to the iov array
                     match arg {
@@ -453,25 +478,27 @@ impl<'a, 'tcx> Emitter {
 
                     // call WASI `fd_write` function.
                     let fd_write_all = self.use_prelude(Prelude::FdWriteAll, module);
-                    wasm_fun.push_instruction(Instruction::call(fd_write_all.id(), vec![]));
+                    wasm_fun
+                        .instructions_mut()
+                        .push(Instruction::call(fd_write_all.id(), vec![]));
 
                     // ----- DEBUG
-                    let fd_write_i64 = self.use_prelude(Prelude::FdWriteI64, module);
-                    let tmp = wasm_fun.push_tmp(wasm::Type::I64);
+                    // let fd_write_i64 = self.use_prelude(Prelude::FdWriteI64, module);
+                    // let tmp = wasm_fun.push_tmp(wasm::Type::I64);
 
-                    wasm_fun.push_instruction(Instruction::local_set(
-                        tmp.clone(),
-                        Instruction::i64_extend_i32_s(
-                            Instruction::nop(), // result - fd_write_all
-                        ),
-                    ));
-                    wasm_fun.push_instruction(Instruction::call(
-                        fd_write_i64.id(),
-                        vec![Instruction::i32_const(2), Instruction::local_get(tmp)],
-                    ));
+                    // wasm_fun.instructions_mut().push(Instruction::local_set(
+                    //     tmp.clone(),
+                    //     Instruction::i64_extend_i32_s(
+                    //         Instruction::nop(), // result - fd_write_all
+                    //     ),
+                    // ));
+                    // wasm_fun.instructions_mut().push(Instruction::call(
+                    //     fd_write_i64.id(),
+                    //     vec![Instruction::i32_const(2), Instruction::local_get(tmp)],
+                    // ));
                     // /DEBUG
 
-                    wasm_fun.push_instruction(Instruction::drop());
+                    wasm_fun.instructions_mut().push(Instruction::drop());
                 }
             }
             ExprKind::Int64(_) => todo!(),
@@ -533,7 +560,7 @@ impl<'a, 'tcx> Emitter {
         self.cp = (str_base + str_len).align(4);
 
         // The pointer to the iov array
-        wasm_fun.push_instruction(data_loc);
+        wasm_fun.instructions_mut().push(data_loc);
     }
 }
 
