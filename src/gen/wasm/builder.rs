@@ -783,15 +783,103 @@ impl Instruction {
     pub fn i32_ge_s(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I32GeS, vec![lhs, rhs])
     }
+    pub fn i64_add(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64Add, vec![lhs, rhs])
+    }
+    pub fn i64_sub(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64Sub, vec![lhs, rhs])
+    }
+    pub fn i64_mul(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64Mul, vec![lhs, rhs])
+    }
+    pub fn i64_div_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64DivU, vec![lhs, rhs])
+    }
+    pub fn i64_div_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64DivS, vec![lhs, rhs])
+    }
+    pub fn i64_rem_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64RemU, vec![lhs, rhs])
+    }
+    pub fn i64_rem_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64RemS, vec![lhs, rhs])
+    }
+    pub fn i64_and(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64And, vec![lhs, rhs])
+    }
+    pub fn i64_or(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64Or, vec![lhs, rhs])
+    }
+    pub fn i64_xor(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64Xor, vec![lhs, rhs])
+    }
+    pub fn i64_shil(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64ShiLeft, vec![lhs, rhs])
+    }
+    pub fn i64_shir_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64ShiftRightU, vec![lhs, rhs])
+    }
+    pub fn i64_shir_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64ShiftRightS, vec![lhs, rhs])
+    }
+    pub fn i64_clz(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I64Clz, vec![operand])
+    }
+    pub fn i64_ctz(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I64Ctz, vec![operand])
+    }
+    pub fn i64_popcnt(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I64PopCnt, vec![operand])
+    }
+    pub fn i64_eqz(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I64Eqz, vec![operand])
+    }
+    pub fn i64_eq(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64Eq, vec![lhs, rhs])
+    }
+    pub fn i64_ne(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64Ne, vec![lhs, rhs])
+    }
+    pub fn i64_lt_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64LtU, vec![lhs, rhs])
+    }
+    pub fn i64_lt_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64LtS, vec![lhs, rhs])
+    }
+    pub fn i64_gt_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64GtU, vec![lhs, rhs])
+    }
+    pub fn i64_gt_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64GtS, vec![lhs, rhs])
+    }
+    pub fn i64_le_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64LeU, vec![lhs, rhs])
+    }
+    pub fn i64_le_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64LeS, vec![lhs, rhs])
+    }
+    pub fn i64_ge_u(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64GeU, vec![lhs, rhs])
+    }
+    pub fn i64_ge_s(lhs: Instruction, rhs: Instruction) -> Self {
+        Self::new(InstructionKind::I64GeS, vec![lhs, rhs])
+    }
+    // conversions
+    pub fn i64_extend_i32_s(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I64ExtendI32S, vec![operand])
+    }
+    pub fn i64_extend_i32_u(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I64ExtendI32U, vec![operand])
+    }
+    pub fn i32_wrap_i64(operand: Instruction) -> Self {
+        Self::new(InstructionKind::I32WrapI64, vec![operand])
+    }
+    // locals
     pub fn local_get<T: Into<Index>>(index: T) -> Self {
         Self::new(InstructionKind::LocalGet(index.into()), vec![])
     }
     pub fn local_set<T: Into<Index>>(index: T, value: Instruction) -> Self {
         Self::new(InstructionKind::LocalSet(index.into()), vec![value])
-    }
-    // TODO: consider rename to more proper name.
-    pub fn local_set0<T: Into<Index>>(index: T) -> Self {
-        Self::new(InstructionKind::LocalSet(index.into()), vec![])
     }
     pub fn local_tee<T: Into<Index>>(index: T, value: Instruction) -> Self {
         Self::new(InstructionKind::LocalTee(index.into()), vec![value])
@@ -807,6 +895,9 @@ impl Instruction {
     }
     pub fn drop() -> Self {
         Self::new(InstructionKind::Drop, vec![])
+    }
+    pub fn nop() -> Self {
+        Self::new(InstructionKind::Nop, vec![])
     }
     pub fn r#loop(wasm_loop: LoopInstruction) -> Self {
         Self::new(InstructionKind::Loop(wasm_loop), vec![])
@@ -845,10 +936,28 @@ pub enum InstructionKind {
     I32ShiftRightS,
     I32RotateLeft,
     I32RotateRight,
+    I64Add,
+    I64Sub,
+    I64Mul,
+    I64DivU,
+    I64DivS,
+    I64RemU,
+    I64RemS,
+    I64And,
+    I64Or,
+    I64Xor,
+    I64ShiLeft,
+    I64ShiftRightU,
+    I64ShiftRightS,
+    I64RotateLeft,
+    I64RotateRight,
     // integer unary operators
     I32Clz,
     I32Ctz,
     I32PopCnt,
+    I64Clz,
+    I64Ctz,
+    I64PopCnt,
     // integer test and relations
     I32Eqz,
     I32Eq,
@@ -861,6 +970,21 @@ pub enum InstructionKind {
     I32LeS,
     I32GeU,
     I32GeS,
+    I64Eqz,
+    I64Eq,
+    I64Ne,
+    I64LtU,
+    I64LtS,
+    I64GtU,
+    I64GtS,
+    I64LeU,
+    I64LeS,
+    I64GeU,
+    I64GeS,
+    // conversions
+    I64ExtendI32S, // [i32] -> [i64]
+    I64ExtendI32U, // [i32] -> [i64]
+    I32WrapI64,    // [i64] -> [i32]
     // memory instructions
     I32Store(MemArg),
     I32Store8(MemArg),
@@ -880,6 +1004,7 @@ pub enum InstructionKind {
     // parametric instructions
     Drop,
     // control instructions
+    Nop,
     Loop(LoopInstruction),
     Br(u32),
     BrIf(u32),
@@ -1308,6 +1433,106 @@ impl WatBuilder {
             }
             InstructionKind::I32GeS => {
                 self.buffer.push_str("i32.ge_s");
+            }
+            InstructionKind::I64Add => {
+                self.buffer.push_str("i64.add");
+            }
+            InstructionKind::I64Sub => {
+                self.buffer.push_str("i64.sub");
+            }
+            InstructionKind::I64Mul => {
+                self.buffer.push_str("i64.mul");
+            }
+            InstructionKind::I64DivU => {
+                self.buffer.push_str("i64.div_u");
+            }
+            InstructionKind::I64DivS => {
+                self.buffer.push_str("i64.div_s");
+            }
+            InstructionKind::I64RemU => {
+                self.buffer.push_str("i64.rem_u");
+            }
+            InstructionKind::I64RemS => {
+                self.buffer.push_str("i64.rem_s");
+            }
+            InstructionKind::I64And => {
+                self.buffer.push_str("i64.and");
+            }
+            InstructionKind::I64Or => {
+                self.buffer.push_str("i64.or");
+            }
+            InstructionKind::I64Xor => {
+                self.buffer.push_str("i64.xor");
+            }
+            InstructionKind::I64ShiLeft => {
+                self.buffer.push_str("i64.shil");
+            }
+            InstructionKind::I64ShiftRightU => {
+                self.buffer.push_str("i64.shir_u");
+            }
+            InstructionKind::I64ShiftRightS => {
+                self.buffer.push_str("i64.shir_s");
+            }
+            InstructionKind::I64RotateLeft => {
+                self.buffer.push_str("i64.rotl");
+            }
+            InstructionKind::I64RotateRight => {
+                self.buffer.push_str("i64.rotr");
+            }
+            InstructionKind::I64Clz => {
+                self.buffer.push_str("i64.clz");
+            }
+            InstructionKind::I64Ctz => {
+                self.buffer.push_str("i64.ctz");
+            }
+            InstructionKind::I64PopCnt => {
+                self.buffer.push_str("i64.popcnt");
+            }
+            InstructionKind::I64Eqz => {
+                self.buffer.push_str("i64.eqz");
+            }
+            InstructionKind::I64Eq => {
+                self.buffer.push_str("i64.eq");
+            }
+            InstructionKind::I64Ne => {
+                self.buffer.push_str("i64.ne");
+            }
+            InstructionKind::I64LtU => {
+                self.buffer.push_str("i64.lt_u");
+            }
+            InstructionKind::I64LtS => {
+                self.buffer.push_str("i64.lt_s");
+            }
+            InstructionKind::I64GtU => {
+                self.buffer.push_str("i64.gt_u");
+            }
+            InstructionKind::I64GtS => {
+                self.buffer.push_str("i64.gt_s");
+            }
+            InstructionKind::I64LeU => {
+                self.buffer.push_str("i64.le_u");
+            }
+            InstructionKind::I64LeS => {
+                self.buffer.push_str("i64.le_s");
+            }
+            InstructionKind::I64GeU => {
+                self.buffer.push_str("i64.ge_u");
+            }
+            InstructionKind::I64GeS => {
+                self.buffer.push_str("i64.ge_s");
+            }
+            // conversions
+            InstructionKind::I64ExtendI32S => {
+                self.buffer.push_str("i64.extend_i32_s");
+            }
+            InstructionKind::I64ExtendI32U => {
+                self.buffer.push_str("i64.extend_i32_u");
+            }
+            InstructionKind::I32WrapI64 => {
+                self.buffer.push_str("i32.wrap_i64");
+            }
+            InstructionKind::Nop => {
+                self.buffer.push_str("nop");
             }
             InstructionKind::Br(label_idx) => {
                 self.buffer.push_str("br");

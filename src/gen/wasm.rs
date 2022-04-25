@@ -43,14 +43,14 @@ const BP: &str = "bp";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prelude {
     FdWriteAll,
-    FdWriteU32,
+    FdWriteI64,
 }
 
 impl Prelude {
     pub fn id(&self) -> &str {
         match self {
             Self::FdWriteAll => "@fd_write_all",
-            Self::FdWriteU32 => "@fd_write_u32",
+            Self::FdWriteI64 => "@fd_write_i64",
         }
     }
 }
@@ -140,7 +140,7 @@ impl<'a, 'tcx> Emitter {
     fn define_prelude(&mut self, prelude: Prelude, module: &mut Module) {
         let wasm_fun = match prelude {
             Prelude::FdWriteAll => self.build_prelude_fd_write_all(module),
-            Prelude::FdWriteU32 => self.build_prelude_fd_write_u32(module),
+            Prelude::FdWriteI64 => self.build_prelude_fd_write_i64(module),
         };
         module.prepend_function(Entity::named(prelude.id(), wasm_fun));
     }
@@ -198,14 +198,17 @@ impl<'a, 'tcx> Emitter {
         self.emit_function_epilogue(&mut wasm_fun);
         wasm_fun
     }
-    /// Defines `fd_write_u32` function.
+    /// Build a prelude function prints digits from the given integer.
     ///
-    /// The function prints digits from the given integer.
+    /// Input
     ///
-    /// ```ignore
-    /// @fd_write_u32(fd: i32, n: u32) error
-    /// ```
-    fn build_prelude_fd_write_u32(&mut self, module: &mut Module) -> wasm::Function {
+    /// - `fd: i32` - file descriptor
+    /// - `n: i64` - an integer value
+    ///
+    /// Output
+    ///
+    /// - `error: i32`
+    fn build_prelude_fd_write_i64(&mut self, module: &mut Module) -> wasm::Function {
         // Defines the "0".."9" table.
         let digits = "0123456789";
         let table_ptr = Instruction::i32_const(self.cp);
@@ -230,11 +233,11 @@ impl<'a, 'tcx> Emitter {
         let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
             vec![
                 Entity::named(param_fd, wasm::Type::I32),
-                Entity::named(param_n, wasm::Type::I32),
+                Entity::named(param_n, wasm::Type::I64),
             ],
             vec![wasm::Type::I32],
         ));
-        wasm_fun.push_local(Entity::named(n, wasm::Type::I32));
+        wasm_fun.push_local(Entity::named(n, wasm::Type::I64));
         wasm_fun.push_local(Entity::named(io_vec_ptr, wasm::Type::I32));
         wasm_fun.push_local(Entity::named(n_columns, wasm::Type::I32));
         self.emit_function_prologue(&mut wasm_fun);
@@ -259,7 +262,7 @@ impl<'a, 'tcx> Emitter {
         // Allocates memory for string.
         wasm_fun.push_instruction(self.build_incr_sp(
             // io_vec_array + string
-            (8 + u32::MAX.to_string().len()).align(4),
+            (8 + i64::MIN.to_string().len()).align(4),
         ));
 
         // ------
@@ -281,7 +284,10 @@ impl<'a, 'tcx> Emitter {
             ),
             Instruction::i32_load8_u(Instruction::i32_add(
                 table_ptr,
-                Instruction::i32_rem_u(Instruction::local_get(n), Instruction::i32_const(10)),
+                Instruction::i32_wrap_i64(Instruction::i64_rem_u(
+                    Instruction::local_get(n),
+                    Instruction::i64_const(10),
+                )),
             )),
         ));
 
@@ -289,9 +295,12 @@ impl<'a, 'tcx> Emitter {
         // continue if tmp_n != 0
         wasm_loop.push_instruction(Instruction::br_if(
             0,
-            Instruction::local_tee(
-                n,
-                Instruction::i32_div_u(Instruction::local_get(n), Instruction::i32_const(10)),
+            Instruction::i64_ne(
+                Instruction::local_tee(
+                    n,
+                    Instruction::i64_div_u(Instruction::local_get(n), Instruction::i64_const(10)),
+                ),
+                Instruction::i64_const(0),
             ),
         ));
 
@@ -446,16 +455,21 @@ impl<'a, 'tcx> Emitter {
                     let fd_write_all = self.use_prelude(Prelude::FdWriteAll, module);
                     wasm_fun.push_instruction(Instruction::call(fd_write_all.id(), vec![]));
 
-                    // // ----- DEBUG
-                    // let tmp = wasm_fun.push_tmp(wasm::Type::I32);
-                    // let fd_write_u32 = self.use_prelude(Prelude::FdWriteU32, module);
+                    // ----- DEBUG
+                    let fd_write_i64 = self.use_prelude(Prelude::FdWriteI64, module);
+                    let tmp = wasm_fun.push_tmp(wasm::Type::I64);
 
-                    // wasm_fun.push_instruction(Instruction::local_set0(tmp.clone()));
-                    // wasm_fun.push_instruction(Instruction::call(
-                    //     fd_write_u32.id(),
-                    //     vec![Instruction::i32_const(2), Instruction::local_get(tmp)],
-                    // ));
-                    // // /DEBUG
+                    wasm_fun.push_instruction(Instruction::local_set(
+                        tmp.clone(),
+                        Instruction::i64_extend_i32_s(
+                            Instruction::nop(), // result - fd_write_all
+                        ),
+                    ));
+                    wasm_fun.push_instruction(Instruction::call(
+                        fd_write_i64.id(),
+                        vec![Instruction::i32_const(2), Instruction::local_get(tmp)],
+                    ));
+                    // /DEBUG
 
                     wasm_fun.push_instruction(Instruction::drop());
                 }
