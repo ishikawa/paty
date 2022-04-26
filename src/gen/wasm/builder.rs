@@ -549,7 +549,7 @@ impl Global {
 pub struct Function {
     signature: FunctionSignature,
     locals: Vec<Entity<Type>>,
-    instructions: Instructions,
+    body: Instructions,
 }
 
 impl Default for Function {
@@ -584,18 +584,18 @@ impl Function {
         Self {
             signature,
             locals: Vec::with_capacity(0),
-            instructions: Instructions::new(),
+            body: Instructions::new(),
         }
     }
 
     pub fn signature(&self) -> &FunctionSignature {
         &self.signature
     }
-    pub fn instructions(&self) -> &Instructions {
-        &self.instructions
+    pub fn body(&self) -> &Instructions {
+        &self.body
     }
-    pub fn instructions_mut(&mut self) -> &mut Instructions {
-        &mut self.instructions
+    pub fn body_mut(&mut self) -> &mut Instructions {
+        &mut self.body
     }
 
     pub fn locals(&self) -> impl ExactSizeIterator<Item = &Entity<Type>> {
@@ -1017,9 +1017,360 @@ pub enum InstructionKind {
     MemoryCopy,
 }
 
+/// Instruction buffer and builder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instructions {
     instructions: Vec<Instruction>,
+}
+
+impl Default for Instructions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Instructions {
+    pub fn i32_const(&mut self, n: u32) -> &mut Self {
+        self.instructions.push(Instruction::i32_const(n));
+        self
+    }
+    pub fn i64_const(&mut self, n: u64) -> &mut Self {
+        self.instructions.push(Instruction::i64_const(n));
+        self
+    }
+    pub fn i32_store(&mut self, dst: Instruction, src: Instruction) -> &mut Self {
+        self.i32_store_m(MemArg::default(), dst, src)
+    }
+    pub fn i32_store8(&mut self, dst: Instruction, src: Instruction) -> &mut Self {
+        self.i32_store8_m(MemArg::default(), dst, src)
+    }
+    pub fn i32_store_m(&mut self, mem: MemArg, dst: Instruction, src: Instruction) -> &mut Self {
+        self.instructions
+            .push(Instruction::i32_store_m(mem, dst, src));
+        self
+    }
+    pub fn i32_store8_m(&mut self, mem: MemArg, dst: Instruction, src: Instruction) -> &mut Self {
+        self.instructions
+            .push(Instruction::i32_store8_m(mem, dst, src));
+        self
+    }
+    pub fn i64_store(&mut self, dst: Instruction, src: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_store(dst, src));
+        self
+    }
+    pub fn i32_load(&mut self, src: Instruction) -> &mut Self {
+        self.i32_load_m(MemArg::default(), src)
+    }
+    pub fn i32_load8_s(&mut self, src: Instruction) -> &mut Self {
+        self.i32_load8_s_m(MemArg::default(), src)
+    }
+    pub fn i32_load8_u(&mut self, src: Instruction) -> &mut Self {
+        self.i32_load8_u_m(MemArg::default(), src)
+    }
+    pub fn i32_load_m(&mut self, mem: MemArg, src: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_load_m(mem, src));
+        self
+    }
+    pub fn i32_load8_s_m(&mut self, mem: MemArg, src: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_load8_s_m(mem, src));
+        self
+    }
+    pub fn i32_load8_u_m(&mut self, mem: MemArg, src: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_load8_u_m(mem, src));
+        self
+    }
+    pub fn i64_load(&mut self, src: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_load(src));
+        self
+    }
+    pub fn i32_add(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_add(lhs, rhs));
+        self
+    }
+    pub fn i32_sub(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_sub(lhs, rhs));
+        self
+    }
+    pub fn i32_mul(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_mul(lhs, rhs));
+        self
+    }
+    pub fn i32_div_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_div_u(lhs, rhs));
+        self
+    }
+    pub fn i32_div_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_div_s(lhs, rhs));
+        self
+    }
+    pub fn i32_rem_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_rem_u(lhs, rhs));
+        self
+    }
+    pub fn i32_rem_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_rem_s(lhs, rhs));
+        self
+    }
+    pub fn i32_and(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_and(lhs, rhs));
+        self
+    }
+    pub fn i32_or(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_or(lhs, rhs));
+        self
+    }
+    pub fn i32_xor(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_xor(lhs, rhs));
+        self
+    }
+    pub fn i32_shil(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_shil(lhs, rhs));
+        self
+    }
+    pub fn i32_shir_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_shir_u(lhs, rhs));
+        self
+    }
+    pub fn i32_shir_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_shir_s(lhs, rhs));
+        self
+    }
+    pub fn i32_clz(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_clz(operand));
+        self
+    }
+    pub fn i32_ctz(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_ctz(operand));
+        self
+    }
+    pub fn i32_popcnt(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_popcnt(operand));
+        self
+    }
+    pub fn i32_eqz(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_eqz(operand));
+        self
+    }
+    pub fn i32_eq(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_eq(lhs, rhs));
+        self
+    }
+    pub fn i32_ne(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_ne(lhs, rhs));
+        self
+    }
+    pub fn i32_lt_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_lt_u(lhs, rhs));
+        self
+    }
+    pub fn i32_lt_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_lt_s(lhs, rhs));
+        self
+    }
+    pub fn i32_gt_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_gt_u(lhs, rhs));
+        self
+    }
+    pub fn i32_gt_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_gt_s(lhs, rhs));
+        self
+    }
+    pub fn i32_le_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_le_u(lhs, rhs));
+        self
+    }
+    pub fn i32_le_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_le_s(lhs, rhs));
+        self
+    }
+    pub fn i32_ge_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_ge_u(lhs, rhs));
+        self
+    }
+    pub fn i32_ge_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_ge_s(lhs, rhs));
+        self
+    }
+    pub fn i64_add(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_add(lhs, rhs));
+        self
+    }
+    pub fn i64_sub(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_sub(lhs, rhs));
+        self
+    }
+    pub fn i64_mul(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_mul(lhs, rhs));
+        self
+    }
+    pub fn i64_div_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_div_u(lhs, rhs));
+        self
+    }
+    pub fn i64_div_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_div_s(lhs, rhs));
+        self
+    }
+    pub fn i64_rem_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_rem_u(lhs, rhs));
+        self
+    }
+    pub fn i64_rem_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_rem_s(lhs, rhs));
+        self
+    }
+    pub fn i64_and(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_and(lhs, rhs));
+        self
+    }
+    pub fn i64_or(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_or(lhs, rhs));
+        self
+    }
+    pub fn i64_xor(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_xor(lhs, rhs));
+        self
+    }
+    pub fn i64_shil(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_shil(lhs, rhs));
+        self
+    }
+    pub fn i64_shir_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_shir_u(lhs, rhs));
+        self
+    }
+    pub fn i64_shir_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_shir_s(lhs, rhs));
+        self
+    }
+    pub fn i64_clz(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_clz(operand));
+        self
+    }
+    pub fn i64_ctz(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_ctz(operand));
+        self
+    }
+    pub fn i64_popcnt(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_popcnt(operand));
+        self
+    }
+    pub fn i64_eqz(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_eqz(operand));
+        self
+    }
+    pub fn i64_eq(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_eq(lhs, rhs));
+        self
+    }
+    pub fn i64_ne(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_ne(lhs, rhs));
+        self
+    }
+    pub fn i64_lt_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_lt_u(lhs, rhs));
+        self
+    }
+    pub fn i64_lt_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_lt_s(lhs, rhs));
+        self
+    }
+    pub fn i64_gt_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_gt_u(lhs, rhs));
+        self
+    }
+    pub fn i64_gt_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_gt_s(lhs, rhs));
+        self
+    }
+    pub fn i64_le_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_le_u(lhs, rhs));
+        self
+    }
+    pub fn i64_le_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_le_s(lhs, rhs));
+        self
+    }
+    pub fn i64_ge_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_ge_u(lhs, rhs));
+        self
+    }
+    pub fn i64_ge_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_ge_s(lhs, rhs));
+        self
+    }
+    // conversions
+    pub fn i64_extend_i32_s(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions
+            .push(Instruction::i64_extend_i32_s(operand));
+        self
+    }
+    pub fn i64_extend_i32_u(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions
+            .push(Instruction::i64_extend_i32_u(operand));
+        self
+    }
+    pub fn i32_wrap_i64(&mut self, operand: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_wrap_i64(operand));
+        self
+    }
+    // locals
+    pub fn local_get<T: Into<Index>>(&mut self, index: T) -> &mut Self {
+        self.instructions.push(Instruction::local_get(index));
+        self
+    }
+    pub fn local_set<T: Into<Index>>(&mut self, index: T, value: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::local_set(index, value));
+        self
+    }
+    pub fn local_tee<T: Into<Index>>(&mut self, index: T, value: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::local_tee(index, value));
+        self
+    }
+    pub fn global_get<T: Into<Index>>(&mut self, index: T) -> &mut Self {
+        self.instructions.push(Instruction::global_get(index));
+        self
+    }
+    pub fn global_set<T: Into<Index>>(&mut self, index: T, value: Instruction) -> &mut Self {
+        self.instructions
+            .push(Instruction::global_set(index, value));
+        self
+    }
+    pub fn call<T: Into<Index>>(&mut self, index: T, operands: Vec<Instruction>) -> &mut Self {
+        self.instructions.push(Instruction::call(index, operands));
+        self
+    }
+    pub fn drop(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::drop());
+        self
+    }
+    pub fn nop(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::nop());
+        self
+    }
+    pub fn unreachable(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::unreachable());
+        self
+    }
+    pub fn r#loop(&mut self, wasm_loop: LoopInstruction) -> &mut Self {
+        self.instructions.push(Instruction::r#loop(wasm_loop));
+        self
+    }
+    pub fn br(&mut self, label_idx: u32) -> &mut Self {
+        self.instructions.push(Instruction::br(label_idx));
+        self
+    }
+    pub fn br_if(&mut self, label_idx: u32, cond: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::br_if(label_idx, cond));
+        self
+    }
+
+    // ext: bulk-memory
+    pub fn memory_copy(&mut self, n: Instruction, src: Instruction, dst: Instruction) -> &mut Self {
+        self.instructions
+            .push(Instruction::memory_copy(n, src, dst));
+        self
+    }
 }
 
 impl Instructions {
@@ -1045,8 +1396,9 @@ impl Instructions {
         self.instructions.iter()
     }
 
-    pub fn push(&mut self, inst: Instruction) {
+    pub fn push(&mut self, inst: Instruction) -> &mut Self {
         self.instructions.push(inst);
+        self
     }
 
     pub fn insert(&mut self, index: usize, inst: Instruction) {
@@ -1078,7 +1430,7 @@ pub struct LoopInstruction {
     /// A structured instruction can consume input and produce output on
     /// the operand stack according to its annotated block type.
     signature: FunctionSignature,
-    instructions: Instructions,
+    body: Instructions,
 }
 
 impl LoopInstruction {
@@ -1094,7 +1446,7 @@ impl LoopInstruction {
     pub fn with_signature(signature: FunctionSignature) -> Self {
         Self {
             signature,
-            instructions: Instructions::new(),
+            body: Instructions::new(),
         }
     }
 
@@ -1102,11 +1454,11 @@ impl LoopInstruction {
         &self.signature
     }
 
-    pub fn instructions(&self) -> &Instructions {
-        &self.instructions
+    pub fn body(&self) -> &Instructions {
+        &self.body
     }
-    pub fn instructions_mut(&mut self) -> &mut Instructions {
-        &mut self.instructions
+    pub fn body_mut(&mut self) -> &mut Instructions {
+        &mut self.body
     }
 }
 
@@ -1613,7 +1965,7 @@ impl WatBuilder {
                 self.emit_function_signature(ctrl.signature());
                 self.push_indent();
 
-                let mut instructions = ctrl.instructions().iter().peekable();
+                let mut instructions = ctrl.body().iter().peekable();
 
                 while let Some(inst) = instructions.next() {
                     self.emit_inst(inst);
@@ -1777,7 +2129,7 @@ impl Visitor for WatBuilder {
         }
 
         // instructions
-        let mut instructions = fun.get().instructions().iter().peekable();
+        let mut instructions = fun.get().body().iter().peekable();
 
         while let Some(inst) = instructions.next() {
             self.emit_inst(inst);
