@@ -258,22 +258,49 @@ impl<'a, 'tcx> Emitter {
                     Instruction::local_get(n_written_ptr),
                 ],
             );
-            // TODO: check n_written and loop until flush.
-            // v = io_vs_ptr[1] - *n_written
-            // continue if v != 0
-            // wasm_fun.extend_instructions([
-            //     Instruction::i32_sub(
-            //         Instruction::i32_load_m(
-            //             MemArg::with_offset(4),
-            //             Instruction::local_get(io_vs_ptr),
-            //         ),
-            //         Instruction::i32_load(Instruction::local_get(n_written_ptr)),
-            //     ),
-            //     Instruction::br_if(
-            //         0,
-            //         Instruction::i32_ne(Instruction::nop(), Instruction::i32_const(0)),
-            //     ),
-            // ]);
+
+            //  check n_written and loop until entire input is written.
+
+            let n_written = wasm_fun.push_tmp(wasm::Type::I32);
+            let n_left = wasm_fun.push_tmp(wasm::Type::I32);
+
+            wasm_loop
+                .body_mut()
+                // n_written = *n_written_ptr
+                .local_set(
+                    n_written.clone(),
+                    Instruction::i32_load(Instruction::local_get(n_written_ptr)),
+                )
+                // n_left = io_vs_ptr[1] - n_written
+                .local_set(
+                    n_left.clone(),
+                    Instruction::i32_sub(
+                        Instruction::i32_load_m(
+                            MemArg::with_offset(4),
+                            Instruction::local_get(io_vs_ptr),
+                        ),
+                        Instruction::local_get(n_written.clone()),
+                    ),
+                )
+                // io_vs_ptr[0] += n_written
+                .i32_store(
+                    Instruction::local_get(io_vs_ptr),
+                    Instruction::i32_add(
+                        Instruction::i32_load(Instruction::local_get(io_vs_ptr)),
+                        Instruction::local_get(n_written),
+                    ),
+                )
+                // io_vs_ptr[1] = n_left
+                .i32_store_m(
+                    MemArg::with_offset(4),
+                    Instruction::local_get(io_vs_ptr),
+                    Instruction::local_get(n_left.clone()),
+                )
+                // continue if n_left != 0
+                .br_if(
+                    0,
+                    Instruction::i32_ne(Instruction::local_get(n_left), Instruction::i32_const(0)),
+                );
         }
         // /end loop
         wasm_fun.body_mut().push(Instruction::r#loop(wasm_loop));
