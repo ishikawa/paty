@@ -1009,7 +1009,7 @@ pub enum InstructionKind {
     Nop,
     Unreachable,
     // Block(BlockInstruction),
-    // If(IfInstruction),
+    If(IfInstruction),
     Loop(LoopInstruction),
     Br(u32),
     BrIf(u32),
@@ -1468,6 +1468,58 @@ impl Default for LoopInstruction {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IfInstruction {
+    /// A structured instruction can consume input and produce output on
+    /// the operand stack according to its annotated block type.
+    signature: FunctionSignature,
+    then_body: Instructions,
+    else_body: Instructions,
+}
+
+impl IfInstruction {
+    pub fn new() -> Self {
+        Self::with_signature(FunctionSignature::new(vec![], vec![]))
+    }
+
+    pub fn with_result(retty: Type) -> Self {
+        Self::with_signature(FunctionSignature::new(vec![], vec![retty]))
+    }
+
+    // To use multiple results, you need multi-value extension.
+    pub fn with_signature(signature: FunctionSignature) -> Self {
+        Self {
+            signature,
+            then_body: Instructions::new(),
+            else_body: Instructions::new(),
+        }
+    }
+
+    pub fn signature(&self) -> &FunctionSignature {
+        &self.signature
+    }
+
+    pub fn then_body(&self) -> &Instructions {
+        &self.then_body
+    }
+    pub fn then_body_mut(&mut self) -> &mut Instructions {
+        &mut self.then_body
+    }
+
+    pub fn else_body(&self) -> &Instructions {
+        &self.else_body
+    }
+    pub fn else_body_mut(&mut self) -> &mut Instructions {
+        &mut self.else_body
+    }
+}
+
+impl Default for IfInstruction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct MemArg {
     offset: Option<u32>,
@@ -1687,6 +1739,17 @@ impl WatBuilder {
             self.buffer.push(' ');
             self.buffer.push_str("align=");
             self.buffer.push_str(&align.to_string());
+        }
+    }
+    fn emit_instructions<'a>(&mut self, instructions: impl Iterator<Item = &'a Instruction>) {
+        let mut first = true;
+        for inst in instructions {
+            if !first {
+                self.newline();
+            } else {
+                first = false;
+            }
+            self.emit_inst(inst);
         }
     }
     fn emit_inst(&mut self, inst: &Instruction) {
@@ -1960,20 +2023,18 @@ impl WatBuilder {
                 self.buffer.push(' ');
                 self.buffer.push_str(&label_idx.to_string());
             }
+            InstructionKind::If(ctrl) => {
+                self.buffer.push_str("if");
+                self.emit_function_signature(ctrl.signature());
+                self.push_indent();
+                self.emit_instructions(ctrl.then_body().iter());
+                self.pop_indent();
+            }
             InstructionKind::Loop(ctrl) => {
                 self.buffer.push_str("loop");
                 self.emit_function_signature(ctrl.signature());
                 self.push_indent();
-
-                let mut instructions = ctrl.body().iter().peekable();
-
-                while let Some(inst) = instructions.next() {
-                    self.emit_inst(inst);
-                    if instructions.peek().is_some() {
-                        self.newline();
-                    }
-                }
-
+                self.emit_instructions(ctrl.body().iter());
                 self.pop_indent();
             }
         }
