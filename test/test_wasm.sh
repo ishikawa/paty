@@ -39,5 +39,15 @@ assert "12345" 'puts(12345)'
 assert "-12345" 'puts(-12345)'
 assert "true" 'puts(true)'
 assert "false" 'puts(false)'
+# number
+assert 20211231 "puts(20211231)"
+assert -20229116 "puts(-20229116)"
+# boolean operators
+assert true "puts(10 > 5)"
+assert false "puts(10 < 5)"
+assert true "puts(10 >= 10)"
+assert false "puts(10 <= 5)"
+assert true "puts(10 == 10)"
+assert false "puts(10 != 10)"
 
 echo OK

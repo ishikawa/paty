@@ -782,6 +782,75 @@ impl Instruction {
     pub fn i32_ge_s(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I32GeS, vec![lhs, rhs])
     }
+    pub fn i32_add_() -> Self {
+        Self::new(InstructionKind::I32Add, vec![])
+    }
+    pub fn i32_sub_() -> Self {
+        Self::new(InstructionKind::I32Sub, vec![])
+    }
+    pub fn i32_mul_() -> Self {
+        Self::new(InstructionKind::I32Mul, vec![])
+    }
+    pub fn i32_div_u_() -> Self {
+        Self::new(InstructionKind::I32DivU, vec![])
+    }
+    pub fn i32_div_s_() -> Self {
+        Self::new(InstructionKind::I32DivS, vec![])
+    }
+    pub fn i32_rem_u_() -> Self {
+        Self::new(InstructionKind::I32RemU, vec![])
+    }
+    pub fn i32_rem_s_() -> Self {
+        Self::new(InstructionKind::I32RemS, vec![])
+    }
+    pub fn i32_and_() -> Self {
+        Self::new(InstructionKind::I32And, vec![])
+    }
+    pub fn i32_or_() -> Self {
+        Self::new(InstructionKind::I32Or, vec![])
+    }
+    pub fn i32_xor_() -> Self {
+        Self::new(InstructionKind::I32Xor, vec![])
+    }
+    pub fn i32_shl_() -> Self {
+        Self::new(InstructionKind::I32ShiLeft, vec![])
+    }
+    pub fn i32_shr_u_() -> Self {
+        Self::new(InstructionKind::I32ShiftRightU, vec![])
+    }
+    pub fn i32_shr_s_() -> Self {
+        Self::new(InstructionKind::I32ShiftRightS, vec![])
+    }
+    pub fn i32_eq_() -> Self {
+        Self::new(InstructionKind::I32Eq, vec![])
+    }
+    pub fn i32_ne_() -> Self {
+        Self::new(InstructionKind::I32Ne, vec![])
+    }
+    pub fn i32_lt_u_() -> Self {
+        Self::new(InstructionKind::I32LtU, vec![])
+    }
+    pub fn i32_lt_s_() -> Self {
+        Self::new(InstructionKind::I32LtS, vec![])
+    }
+    pub fn i32_gt_u_() -> Self {
+        Self::new(InstructionKind::I32GtU, vec![])
+    }
+    pub fn i32_gt_s_() -> Self {
+        Self::new(InstructionKind::I32GtS, vec![])
+    }
+    pub fn i32_le_u_() -> Self {
+        Self::new(InstructionKind::I32LeU, vec![])
+    }
+    pub fn i32_le_s_() -> Self {
+        Self::new(InstructionKind::I32LeS, vec![])
+    }
+    pub fn i32_ge_u_() -> Self {
+        Self::new(InstructionKind::I32GeU, vec![])
+    }
+    pub fn i32_ge_s_() -> Self {
+        Self::new(InstructionKind::I32GeS, vec![])
+    }
     pub fn i64_add(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I64Add, vec![lhs, rhs])
     }
@@ -863,6 +932,75 @@ impl Instruction {
     pub fn i64_ge_s(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I64GeS, vec![lhs, rhs])
     }
+    pub fn i64_add_() -> Self {
+        Self::new(InstructionKind::I64Add, vec![])
+    }
+    pub fn i64_sub_() -> Self {
+        Self::new(InstructionKind::I64Sub, vec![])
+    }
+    pub fn i64_mul_() -> Self {
+        Self::new(InstructionKind::I64Mul, vec![])
+    }
+    pub fn i64_div_u_() -> Self {
+        Self::new(InstructionKind::I64DivU, vec![])
+    }
+    pub fn i64_div_s_() -> Self {
+        Self::new(InstructionKind::I64DivS, vec![])
+    }
+    pub fn i64_rem_u_() -> Self {
+        Self::new(InstructionKind::I64RemU, vec![])
+    }
+    pub fn i64_rem_s_() -> Self {
+        Self::new(InstructionKind::I64RemS, vec![])
+    }
+    pub fn i64_and_() -> Self {
+        Self::new(InstructionKind::I64And, vec![])
+    }
+    pub fn i64_or_() -> Self {
+        Self::new(InstructionKind::I64Or, vec![])
+    }
+    pub fn i64_xor_() -> Self {
+        Self::new(InstructionKind::I64Xor, vec![])
+    }
+    pub fn i64_shl_() -> Self {
+        Self::new(InstructionKind::I64ShiLeft, vec![])
+    }
+    pub fn i64_shr_u_() -> Self {
+        Self::new(InstructionKind::I64ShiftRightU, vec![])
+    }
+    pub fn i64_shr_s_() -> Self {
+        Self::new(InstructionKind::I64ShiftRightS, vec![])
+    }
+    pub fn i64_eq_() -> Self {
+        Self::new(InstructionKind::I64Eq, vec![])
+    }
+    pub fn i64_ne_() -> Self {
+        Self::new(InstructionKind::I64Ne, vec![])
+    }
+    pub fn i64_lt_u_() -> Self {
+        Self::new(InstructionKind::I64LtU, vec![])
+    }
+    pub fn i64_lt_s_() -> Self {
+        Self::new(InstructionKind::I64LtS, vec![])
+    }
+    pub fn i64_gt_u_() -> Self {
+        Self::new(InstructionKind::I64GtU, vec![])
+    }
+    pub fn i64_gt_s_() -> Self {
+        Self::new(InstructionKind::I64GtS, vec![])
+    }
+    pub fn i64_le_u_() -> Self {
+        Self::new(InstructionKind::I64LeU, vec![])
+    }
+    pub fn i64_le_s_() -> Self {
+        Self::new(InstructionKind::I64LeS, vec![])
+    }
+    pub fn i64_ge_u_() -> Self {
+        Self::new(InstructionKind::I64GeU, vec![])
+    }
+    pub fn i64_ge_s_() -> Self {
+        Self::new(InstructionKind::I64GeS, vec![])
+    }
     // conversions
     pub fn i64_extend_i32_s(operand: Instruction) -> Self {
         Self::new(InstructionKind::I64ExtendI32S, vec![operand])
@@ -879,6 +1017,9 @@ impl Instruction {
     }
     pub fn local_set<T: Into<Index>>(index: T, value: Instruction) -> Self {
         Self::new(InstructionKind::LocalSet(index.into()), vec![value])
+    }
+    pub fn local_set_<T: Into<Index>>(index: T) -> Self {
+        Self::new(InstructionKind::LocalSet(index.into()), vec![])
     }
     pub fn local_tee<T: Into<Index>>(index: T, value: Instruction) -> Self {
         Self::new(InstructionKind::LocalTee(index.into()), vec![value])
@@ -1207,6 +1348,98 @@ impl Instructions {
         self.instructions.push(Instruction::i32_ge_s(lhs, rhs));
         self
     }
+    pub fn i32_add_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_add_());
+        self
+    }
+    pub fn i32_sub_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_sub_());
+        self
+    }
+    pub fn i32_mul_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_mul_());
+        self
+    }
+    pub fn i32_div_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_div_u_());
+        self
+    }
+    pub fn i32_div_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_div_s_());
+        self
+    }
+    pub fn i32_rem_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_rem_u_());
+        self
+    }
+    pub fn i32_rem_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_rem_s_());
+        self
+    }
+    pub fn i32_and_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_and_());
+        self
+    }
+    pub fn i32_or_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_or_());
+        self
+    }
+    pub fn i32_xor_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_xor_());
+        self
+    }
+    pub fn i32_shl_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_shl_());
+        self
+    }
+    pub fn i32_shr_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_shr_u_());
+        self
+    }
+    pub fn i32_shr_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_shr_s_());
+        self
+    }
+    pub fn i32_eq_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_eq_());
+        self
+    }
+    pub fn i32_ne_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_ne_());
+        self
+    }
+    pub fn i32_lt_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_lt_u_());
+        self
+    }
+    pub fn i32_lt_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_lt_s_());
+        self
+    }
+    pub fn i32_gt_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_gt_u_());
+        self
+    }
+    pub fn i32_gt_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_gt_s_());
+        self
+    }
+    pub fn i32_le_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_le_u_());
+        self
+    }
+    pub fn i32_le_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_le_s_());
+        self
+    }
+    pub fn i32_ge_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_ge_u_());
+        self
+    }
+    pub fn i32_ge_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_ge_s_());
+        self
+    }
     pub fn i64_add(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
         self.instructions.push(Instruction::i64_add(lhs, rhs));
         self
@@ -1315,6 +1548,98 @@ impl Instructions {
         self.instructions.push(Instruction::i64_ge_s(lhs, rhs));
         self
     }
+    pub fn i64_add_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_add_());
+        self
+    }
+    pub fn i64_sub_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_sub_());
+        self
+    }
+    pub fn i64_mul_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_mul_());
+        self
+    }
+    pub fn i64_div_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_div_u_());
+        self
+    }
+    pub fn i64_div_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_div_s_());
+        self
+    }
+    pub fn i64_rem_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_rem_u_());
+        self
+    }
+    pub fn i64_rem_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_rem_s_());
+        self
+    }
+    pub fn i64_and_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_and_());
+        self
+    }
+    pub fn i64_or_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_or_());
+        self
+    }
+    pub fn i64_xor_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_xor_());
+        self
+    }
+    pub fn i64_shl_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_shl_());
+        self
+    }
+    pub fn i64_shr_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_shr_u_());
+        self
+    }
+    pub fn i64_shr_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_shr_s_());
+        self
+    }
+    pub fn i64_eq_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_eq_());
+        self
+    }
+    pub fn i64_ne_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_ne_());
+        self
+    }
+    pub fn i64_lt_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_lt_u_());
+        self
+    }
+    pub fn i64_lt_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_lt_s_());
+        self
+    }
+    pub fn i64_gt_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_gt_u_());
+        self
+    }
+    pub fn i64_gt_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_gt_s_());
+        self
+    }
+    pub fn i64_le_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_le_u_());
+        self
+    }
+    pub fn i64_le_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_le_s_());
+        self
+    }
+    pub fn i64_ge_u_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_ge_u_());
+        self
+    }
+    pub fn i64_ge_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_ge_s_());
+        self
+    }
     // conversions
     pub fn i64_extend_i32_s(&mut self, operand: Instruction) -> &mut Self {
         self.instructions
@@ -1337,6 +1662,10 @@ impl Instructions {
     }
     pub fn local_set<T: Into<Index>>(&mut self, index: T, value: Instruction) -> &mut Self {
         self.instructions.push(Instruction::local_set(index, value));
+        self
+    }
+    pub fn local_set_<T: Into<Index>>(&mut self, index: T) -> &mut Self {
+        self.instructions.push(Instruction::local_set_(index));
         self
     }
     pub fn local_tee<T: Into<Index>>(&mut self, index: T, value: Instruction) -> &mut Self {

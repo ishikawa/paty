@@ -491,7 +491,7 @@ impl<'a, 'tcx> Emitter {
             .local_get(param_n)
             // tmp_n = abs(n)
             .call(abs_i64, vec![])
-            .local_set(n, Instruction::nop())
+            .local_set_(n)
             // is_negative = n != tmp_n
             .local_set(
                 is_negative,
@@ -816,12 +816,36 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Sub(_, _) => todo!(),
             ExprKind::Mul(_, _) => todo!(),
             ExprKind::Div(_, _) => todo!(),
-            ExprKind::Eq(_, _) => todo!(),
-            ExprKind::Ne(_, _) => todo!(),
-            ExprKind::Lt(_, _) => todo!(),
-            ExprKind::Le(_, _) => todo!(),
-            ExprKind::Gt(_, _) => todo!(),
-            ExprKind::Ge(_, _) => todo!(),
+            ExprKind::Eq(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_eq_();
+            }
+            ExprKind::Ne(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_ne_();
+            }
+            ExprKind::Lt(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_lt_s_();
+            }
+            ExprKind::Le(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_le_s_();
+            }
+            ExprKind::Gt(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_gt_s_();
+            }
+            ExprKind::Ge(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_ge_s_();
+            }
             ExprKind::And(_, _) => todo!(),
             ExprKind::Or(_, _) => todo!(),
             ExprKind::Call { name, cc, args } => todo!(),
@@ -861,10 +885,7 @@ impl<'a, 'tcx> Emitter {
                             let tmp32 = wasm_fun.push_tmp(wasm::Type::I32);
                             wasm_fun
                                 .body_mut()
-                                .local_set(
-                                    tmp32.clone(),
-                                    Instruction::i32_wrap_i64(Instruction::nop()),
-                                )
+                                .local_set_(tmp32.clone())
                                 .select(
                                     self.build_const_string("true", module),
                                     self.build_const_string("false", module),
@@ -907,7 +928,7 @@ impl<'a, 'tcx> Emitter {
                 wasm_fun.body_mut().i64_const(n as u64);
             }
             &ExprKind::Bool(b) => {
-                wasm_fun.body_mut().i64_const(u64::try_from(b).unwrap());
+                wasm_fun.body_mut().i32_const(u32::try_from(b).unwrap());
             }
             ExprKind::Str(s) => {
                 wasm_fun.body_mut().push(self.build_const_string(s, module));
