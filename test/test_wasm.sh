@@ -57,5 +57,16 @@ assert 30 "puts(20 * 3 / 2)"
 assert 40 "puts(10 + 20 * 3 / 2)"
 assert 45 "puts((10 + 20) * 3 / 2)"
 assert -75 "puts(-(10 + 20 * 3) + 5 - 10)"
+# variable
+assert 5 "
+  five = 5
+  puts(five)"
+assert "33
+44" "_ = puts(33)
+  puts(44)"
+assert "66" "(x, y, z) = (11, 22, 33)
+  puts(x + y + z)"
+assert "231" "((a, b, c), (d, e), (f,)) = ((11, 22, 33), (44, 55), (66,))
+  puts(a + b + c + d + e + f)"
 
 echo OK

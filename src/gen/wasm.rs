@@ -778,7 +778,13 @@ impl<'a, 'tcx> Emitter {
                 assert_eq!(def.var().used(), 0);
                 self.emit_expr(def.init(), wasm_fun, module);
             }
-            Stmt::VarDef(_) => todo!(),
+            Stmt::VarDef(var_def) => {
+                let wasm_ty = wasm_type(var_def.init().ty());
+
+                wasm_fun.push_local(Entity::named(var_def.name(), wasm_ty));
+                self.emit_expr(var_def.init(), wasm_fun, module);
+                wasm_fun.body_mut().local_set_(var_def.name());
+            }
             Stmt::Cond(_) => todo!(),
             Stmt::Phi(_) => todo!(),
             Stmt::Ret(_) => {}
@@ -966,7 +972,9 @@ impl<'a, 'tcx> Emitter {
             ExprKind::IndexAccess { operand, index } => todo!(),
             ExprKind::FieldAccess { operand, name } => todo!(),
             ExprKind::TmpVar(_) => todo!(),
-            ExprKind::Var(_) => todo!(),
+            ExprKind::Var(var) => {
+                wasm_fun.body_mut().local_get(var.name());
+            }
             ExprKind::UnionTag(_) => todo!(),
             ExprKind::UnionMemberAccess { operand, tag } => todo!(),
             ExprKind::UnionValue { value, tag } => todo!(),
@@ -1022,6 +1030,22 @@ impl Address for usize {
     #[inline]
     fn align(self, alignment: u32) -> u32 {
         u32::try_from(self).unwrap().align(alignment)
+    }
+}
+
+fn wasm_type(ty: &Type) -> wasm::Type {
+    match ty {
+        // All integral types are 64 bits integer.
+        Type::Int64 | Type::LiteralInt64(_) | Type::NativeInt => wasm::Type::I64,
+        // Boolean type in WASM is 32 bits integer 0 or 1.
+        Type::Boolean | Type::LiteralBoolean(_) => wasm::Type::I32,
+        // Memory location (io_vec_ptr)
+        Type::String | Type::LiteralString(_) => wasm::Type::I32,
+        Type::Tuple(_) => todo!(),
+        Type::Struct(_) => todo!(),
+        Type::Union(_) => todo!(),
+        Type::Named(_) => todo!(),
+        Type::Undetermined => todo!(),
     }
 }
 
