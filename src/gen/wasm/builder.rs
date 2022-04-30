@@ -731,13 +731,13 @@ impl Instruction {
     pub fn i32_xor(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I32Xor, vec![lhs, rhs])
     }
-    pub fn i32_shil(lhs: Instruction, rhs: Instruction) -> Self {
+    pub fn i32_shl(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I32ShiLeft, vec![lhs, rhs])
     }
-    pub fn i32_shir_u(lhs: Instruction, rhs: Instruction) -> Self {
+    pub fn i32_shr_u(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I32ShiftRightU, vec![lhs, rhs])
     }
-    pub fn i32_shir_s(lhs: Instruction, rhs: Instruction) -> Self {
+    pub fn i32_shr_s(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I32ShiftRightS, vec![lhs, rhs])
     }
     pub fn i32_clz(operand: Instruction) -> Self {
@@ -812,13 +812,13 @@ impl Instruction {
     pub fn i64_xor(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I64Xor, vec![lhs, rhs])
     }
-    pub fn i64_shil(lhs: Instruction, rhs: Instruction) -> Self {
+    pub fn i64_shl(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I64ShiLeft, vec![lhs, rhs])
     }
-    pub fn i64_shir_u(lhs: Instruction, rhs: Instruction) -> Self {
+    pub fn i64_shr_u(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I64ShiftRightU, vec![lhs, rhs])
     }
-    pub fn i64_shir_s(lhs: Instruction, rhs: Instruction) -> Self {
+    pub fn i64_shr_s(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I64ShiftRightS, vec![lhs, rhs])
     }
     pub fn i64_clz(operand: Instruction) -> Self {
@@ -903,6 +903,9 @@ impl Instruction {
     }
     pub fn r#loop(wasm_loop: LoopInstruction) -> Self {
         Self::new(InstructionKind::Loop(wasm_loop), vec![])
+    }
+    pub fn r#if(wasm_if: IfInstruction) -> Self {
+        Self::new(InstructionKind::If(wasm_if), vec![])
     }
     pub fn br(label_idx: u32) -> Self {
         Self::new(InstructionKind::Br(label_idx), vec![])
@@ -1123,16 +1126,16 @@ impl Instructions {
         self.instructions.push(Instruction::i32_xor(lhs, rhs));
         self
     }
-    pub fn i32_shil(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i32_shil(lhs, rhs));
+    pub fn i32_shl(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_shl(lhs, rhs));
         self
     }
-    pub fn i32_shir_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i32_shir_u(lhs, rhs));
+    pub fn i32_shr_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_shr_u(lhs, rhs));
         self
     }
-    pub fn i32_shir_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i32_shir_s(lhs, rhs));
+    pub fn i32_shr_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_shr_s(lhs, rhs));
         self
     }
     pub fn i32_clz(&mut self, operand: Instruction) -> &mut Self {
@@ -1231,16 +1234,16 @@ impl Instructions {
         self.instructions.push(Instruction::i64_xor(lhs, rhs));
         self
     }
-    pub fn i64_shil(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i64_shil(lhs, rhs));
+    pub fn i64_shl(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_shl(lhs, rhs));
         self
     }
-    pub fn i64_shir_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i64_shir_u(lhs, rhs));
+    pub fn i64_shr_u(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_shr_u(lhs, rhs));
         self
     }
-    pub fn i64_shir_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i64_shir_s(lhs, rhs));
+    pub fn i64_shr_s(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_shr_s(lhs, rhs));
         self
     }
     pub fn i64_clz(&mut self, operand: Instruction) -> &mut Self {
@@ -1354,6 +1357,10 @@ impl Instructions {
     }
     pub fn r#loop(&mut self, wasm_loop: LoopInstruction) -> &mut Self {
         self.instructions.push(Instruction::r#loop(wasm_loop));
+        self
+    }
+    pub fn r#if(&mut self, wasm_if: IfInstruction) -> &mut Self {
+        self.instructions.push(Instruction::r#if(wasm_if));
         self
     }
     pub fn br(&mut self, label_idx: u32) -> &mut Self {
@@ -1753,6 +1760,11 @@ impl WatBuilder {
         }
     }
     fn emit_inst(&mut self, inst: &Instruction) {
+        if matches!(inst.kind(), InstructionKind::Nop) {
+            // Emit nothing for .nop
+            return;
+        }
+
         self.buffer.push('(');
         match inst.kind() {
             InstructionKind::I32Const(n) => {
@@ -1854,13 +1866,13 @@ impl WatBuilder {
                 self.buffer.push_str("i32.xor");
             }
             InstructionKind::I32ShiLeft => {
-                self.buffer.push_str("i32.shil");
+                self.buffer.push_str("i32.shl");
             }
             InstructionKind::I32ShiftRightU => {
-                self.buffer.push_str("i32.shir_u");
+                self.buffer.push_str("i32.shr_u");
             }
             InstructionKind::I32ShiftRightS => {
-                self.buffer.push_str("i32.shir_s");
+                self.buffer.push_str("i32.shr_s");
             }
             InstructionKind::I32RotateLeft => {
                 self.buffer.push_str("i32.rotl");
@@ -1941,13 +1953,13 @@ impl WatBuilder {
                 self.buffer.push_str("i64.xor");
             }
             InstructionKind::I64ShiLeft => {
-                self.buffer.push_str("i64.shil");
+                self.buffer.push_str("i64.shl");
             }
             InstructionKind::I64ShiftRightU => {
-                self.buffer.push_str("i64.shir_u");
+                self.buffer.push_str("i64.shr_u");
             }
             InstructionKind::I64ShiftRightS => {
-                self.buffer.push_str("i64.shir_s");
+                self.buffer.push_str("i64.shr_s");
             }
             InstructionKind::I64RotateLeft => {
                 self.buffer.push_str("i64.rotl");

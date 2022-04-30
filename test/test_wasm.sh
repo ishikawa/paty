@@ -36,5 +36,6 @@ assert() {
 # print primitive value.
 assert "Hello, World!" 'puts("Hello, World!")'
 assert "12345" 'puts(12345)'
+assert "-12345" 'puts(-12345)'
 
 echo OK

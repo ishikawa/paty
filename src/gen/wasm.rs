@@ -49,6 +49,7 @@ pub enum Prelude {
     FdWriteI64,
     FdWriteU32,
     FdDebugU8,
+    AbsI64,
 }
 
 impl Prelude {
@@ -58,6 +59,7 @@ impl Prelude {
             Self::FdWriteI64 => "@fd_write_i64",
             Self::FdWriteU32 => "@fd_write_u32",
             Self::FdDebugU8 => "@fd_debug_u8",
+            Self::AbsI64 => "@abs_i64",
         }
     }
 }
@@ -205,6 +207,7 @@ impl<'a, 'tcx> Emitter {
             Prelude::FdWriteI64 => self.build_prelude_fd_write_i64(module),
             Prelude::FdWriteU32 => self.build_prelude_fd_write_u32(module),
             Prelude::FdDebugU8 => self.build_prelude_fd_debug_u8(module),
+            Prelude::AbsI64 => self.build_prelude_abs_i64(module),
         };
         module.prepend_function(Entity::named(prelude.id(), wasm_fun));
     }
@@ -458,10 +461,11 @@ impl<'a, 'tcx> Emitter {
         // locals
         let param_fd = "fd";
         let param_n = "n";
-        let n = "tmp_n";
 
-        let io_vec_ptr = "tmp_io_vec_ptr";
-        let n_columns = "tmp_n_columns";
+        let n = "tmp_n";
+        let io_vec_ptr = "io_vec_ptr";
+        let n_columns = "n_columns";
+        let is_negative = "is_negative";
 
         let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
             vec![
@@ -476,13 +480,23 @@ impl<'a, 'tcx> Emitter {
         wasm_fun.push_local(Entity::named(n, wasm::Type::I64));
         wasm_fun.push_local(Entity::named(io_vec_ptr, wasm::Type::I32));
         wasm_fun.push_local(Entity::named(n_columns, wasm::Type::I32));
+        wasm_fun.push_local(Entity::named(is_negative, wasm::Type::I32));
 
         self.emit_function_prologue(&mut wasm_fun);
 
-        // tmp_n = n
+        let abs_i64 = self.use_prelude(module, &Prelude::AbsI64);
+
         wasm_fun
             .body_mut()
-            .local_set(n, Instruction::local_get(param_n));
+            .local_get(param_n)
+            // tmp_n = abs(n)
+            .call(abs_i64, vec![])
+            .local_set(n, Instruction::nop())
+            // is_negative = n != tmp_n
+            .local_set(
+                is_negative,
+                Instruction::i64_ne(Instruction::local_get(param_n), Instruction::local_get(n)),
+            );
 
         // The algorithm
         // -------------
@@ -544,7 +558,28 @@ impl<'a, 'tcx> Emitter {
             );
 
         // end loop
-        wasm_fun.body_mut().push(Instruction::r#loop(wasm_loop));
+        wasm_fun.body_mut().r#loop(wasm_loop);
+
+        // minus sign "-"?
+        let mut wasm_if = wasm::IfInstruction::new();
+
+        wasm_if
+            .then_body_mut()
+            // n_columns += 1
+            .local_set(
+                n_columns,
+                Instruction::i32_add(Instruction::local_get(n_columns), Instruction::i32_const(1)),
+            )
+            // *(SP - n_columns) = '-'
+            .i32_store8(
+                Instruction::i32_sub(
+                    Instruction::global_get(SP),
+                    Instruction::local_get(n_columns),
+                ),
+                Instruction::i32_const('-' as u32),
+            );
+
+        wasm_fun.body_mut().local_get(is_negative).r#if(wasm_if);
 
         // writes `buf` and `buf_len`
         wasm_fun
@@ -644,8 +679,58 @@ impl<'a, 'tcx> Emitter {
             ],
         );
 
-        // register function
         self.emit_function_epilogue(&mut wasm_fun);
+        wasm_fun
+    }
+    /// Build a prelude function that computes the integer absolute value.
+    ///
+    /// Input
+    ///
+    /// - `value: i64` - input value
+    ///
+    /// Output
+    ///
+    /// - `value: i64`
+    fn build_prelude_abs_i64(&mut self, _module: &mut Module) -> wasm::Function {
+        // locals
+        let param_value = "value";
+        let local_mask = "mask";
+
+        let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
+            vec![Entity::named(param_value, wasm::Type::I64)],
+            vec![wasm::Type::I64],
+        ));
+        wasm_fun.push_local(Entity::named(local_mask, wasm::Type::I64));
+
+        // No stack used.
+        //self.emit_function_prologue(&mut wasm_fun);
+
+        // Since negative numbers are stored in 2's complement form, to get
+        // the absolute value of a negative number we have to toggle bits of
+        // the number and add 1 to the result.
+
+        wasm_fun
+            .body_mut()
+            // (1) Set the mask as right shift of integer by 63 (for 64 bits integer).
+            //
+            //    mask = n >> 31
+            .local_tee(
+                local_mask,
+                Instruction::i64_shr_s(
+                    Instruction::local_get(param_value),
+                    Instruction::i64_const(63),
+                ),
+            )
+            // (2) Add the mask to the given number.
+            //
+            //    v = mask + n
+            .i64_add(Instruction::nop(), Instruction::local_get(param_value))
+            // (3) XOR of mask +n and mask gives the absolute value.
+            //
+            //    v = v ^ mask
+            .i64_xor(Instruction::nop(), Instruction::local_get(local_mask));
+
+        //self.emit_function_epilogue(&mut wasm_fun);
         wasm_fun
     }
 
