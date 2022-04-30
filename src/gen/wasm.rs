@@ -844,19 +844,35 @@ impl<'a, 'tcx> Emitter {
                         }
                         FormatSpec::Quoted(_) => todo!(),
                         FormatSpec::Str(s) => {
-                            self.emit_string(s, wasm_fun, module);
+                            wasm_fun.body_mut().push(self.build_const_string(s, module));
                             &Type::String
                         }
                     };
 
+                    let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
+                    let fd_write_all = self.use_prelude(module, &Prelude::FdWriteAll);
+
                     match value_ty {
                         Type::Int64 | Type::LiteralInt64(_) | Type::NativeInt => {
-                            let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
                             wasm_fun.body_mut().call(fd_write_i64, vec![]);
                         }
-                        Type::Boolean | Type::LiteralBoolean(_) => todo!(),
+                        Type::Boolean | Type::LiteralBoolean(_) => {
+                            // v == 0 ? "false" : "true"
+                            let tmp32 = wasm_fun.push_tmp(wasm::Type::I32);
+                            wasm_fun
+                                .body_mut()
+                                .local_set(
+                                    tmp32.clone(),
+                                    Instruction::i32_wrap_i64(Instruction::nop()),
+                                )
+                                .select(
+                                    self.build_const_string("true", module),
+                                    self.build_const_string("false", module),
+                                    Instruction::local_get(tmp32),
+                                )
+                                .call(fd_write_all, vec![]);
+                        }
                         Type::String | Type::LiteralString(_) => {
-                            let fd_write_all = self.use_prelude(module, &Prelude::FdWriteAll);
                             wasm_fun.body_mut().call(fd_write_all, vec![]);
                         }
                         Type::Tuple(_) => todo!(),
@@ -890,9 +906,11 @@ impl<'a, 'tcx> Emitter {
             &ExprKind::Int64(n) => {
                 wasm_fun.body_mut().i64_const(n as u64);
             }
-            ExprKind::Bool(_) => todo!(),
+            &ExprKind::Bool(b) => {
+                wasm_fun.body_mut().i64_const(u64::try_from(b).unwrap());
+            }
             ExprKind::Str(s) => {
-                self.emit_string(s, wasm_fun, module);
+                wasm_fun.body_mut().push(self.build_const_string(s, module));
             }
             ExprKind::Tuple(_) => todo!(),
             ExprKind::StructValue(_) => todo!(),
@@ -906,17 +924,18 @@ impl<'a, 'tcx> Emitter {
         }
     }
 
-    /// Emit the specified string `s` into a WASM function body. It also add a new data
-    /// segment which holds a constant string as `ciovec` structure in WASI.
+    /// Build an instruction that points to cio_vec_ptr of the specified string `s`.
+    /// It also add a new data segment which holds a constant string as `ciovec`
+    /// structure in WASI.
     ///
     /// ```ignore
     /// WASM stack:
     ///   IN: []
     ///   OUT: [ciovec location (u32)]
     /// ```
-    fn emit_string(&mut self, s: &str, wasm_fun: &mut wasm::Function, module: &mut Module) {
+    fn build_const_string(&mut self, s: &str, module: &mut Module) -> Instruction {
         let (cio_vec_ptr, _) = self.define_string_constant(s, module);
-        wasm_fun.body_mut().i32_const(cio_vec_ptr);
+        Instruction::i32_const(cio_vec_ptr)
     }
 }
 

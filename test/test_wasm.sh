@@ -37,5 +37,7 @@ assert() {
 assert "Hello, World!" 'puts("Hello, World!")'
 assert "12345" 'puts(12345)'
 assert "-12345" 'puts(-12345)'
+assert "true" 'puts(true)'
+assert "false" 'puts(false)'
 
 echo OK

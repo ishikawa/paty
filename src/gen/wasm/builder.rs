@@ -895,6 +895,16 @@ impl Instruction {
     pub fn drop() -> Self {
         Self::new(InstructionKind::Drop, vec![])
     }
+    pub fn select(
+        then_value: Instruction,
+        else_value: Instruction,
+        cond_value: Instruction,
+    ) -> Self {
+        Self::new(
+            InstructionKind::Select,
+            vec![then_value, else_value, cond_value],
+        )
+    }
     pub fn nop() -> Self {
         Self::new(InstructionKind::Nop, vec![])
     }
@@ -1008,6 +1018,9 @@ pub enum InstructionKind {
     Call(Index),
     // parametric instructions
     Drop,
+    // The `select` instruction selects one of its first two operands based
+    // on whether its third operand is zero or not.
+    Select,
     // control instructions
     Nop,
     Unreachable,
@@ -1345,6 +1358,16 @@ impl Instructions {
     }
     pub fn drop(&mut self) -> &mut Self {
         self.instructions.push(Instruction::drop());
+        self
+    }
+    pub fn select(
+        &mut self,
+        then_value: Instruction,
+        else_value: Instruction,
+        cond_value: Instruction,
+    ) -> &mut Self {
+        self.instructions
+            .push(Instruction::select(then_value, else_value, cond_value));
         self
     }
     pub fn nop(&mut self) -> &mut Self {
@@ -1834,6 +1857,9 @@ impl WatBuilder {
             }
             InstructionKind::Drop => {
                 self.buffer.push_str("drop");
+            }
+            InstructionKind::Select => {
+                self.buffer.push_str("select");
             }
             InstructionKind::I32Add => {
                 self.buffer.push_str("i32.add");
