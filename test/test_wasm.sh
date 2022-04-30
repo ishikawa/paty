@@ -33,7 +33,8 @@ assert() {
   i=$((i+1))
 }
 
-# Hello, World!
+# print primitive value.
 assert "Hello, World!" 'puts("Hello, World!")'
+assert "12345" 'puts(12345)'
 
 echo OK

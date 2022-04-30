@@ -9,6 +9,7 @@ use self::builder::{
     Entity, Export, ExportDesc, Import, ImportDesc, Instruction, MemArg, Module, WatBuilder,
 };
 use crate::ir::inst::{Expr, ExprKind, FormatSpec, Function, Program, Stmt};
+use crate::ty::Type;
 
 use super::util::mangle_name;
 
@@ -751,19 +752,34 @@ impl<'a, 'tcx> Emitter {
                     wasm_fun.body_mut().i32_const(1);
 
                     // io_vs - The pointer to the iov array
-                    match arg {
+                    let value_ty = match arg {
                         FormatSpec::Value(value) => {
                             self.emit_expr(value, wasm_fun, module);
+                            value.ty()
                         }
                         FormatSpec::Quoted(_) => todo!(),
                         FormatSpec::Str(s) => {
                             self.emit_string(s, wasm_fun, module);
+                            &Type::String
                         }
-                    }
+                    };
 
-                    // call WASI `fd_write` function.
-                    let fd_write_all = self.use_prelude(module, &Prelude::FdWriteAll);
-                    wasm_fun.body_mut().call(fd_write_all, vec![]);
+                    match value_ty {
+                        Type::Int64 | Type::LiteralInt64(_) | Type::NativeInt => {
+                            let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
+                            wasm_fun.body_mut().call(fd_write_i64, vec![]);
+                        }
+                        Type::Boolean | Type::LiteralBoolean(_) => todo!(),
+                        Type::String | Type::LiteralString(_) => {
+                            let fd_write_all = self.use_prelude(module, &Prelude::FdWriteAll);
+                            wasm_fun.body_mut().call(fd_write_all, vec![]);
+                        }
+                        Type::Tuple(_) => todo!(),
+                        Type::Struct(_) => todo!(),
+                        Type::Union(_) => todo!(),
+                        Type::Named(_) => todo!(),
+                        Type::Undetermined => todo!(),
+                    }
 
                     // ----- DEBUG
                     // let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
@@ -786,7 +802,9 @@ impl<'a, 'tcx> Emitter {
                     wasm_fun.body_mut().drop();
                 }
             }
-            ExprKind::Int64(_) => todo!(),
+            &ExprKind::Int64(n) => {
+                wasm_fun.body_mut().i64_const(n as u64);
+            }
             ExprKind::Bool(_) => todo!(),
             ExprKind::Str(s) => {
                 self.emit_string(s, wasm_fun, module);
