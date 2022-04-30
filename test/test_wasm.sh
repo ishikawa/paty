@@ -49,5 +49,13 @@ assert true "puts(10 >= 10)"
 assert false "puts(10 <= 5)"
 assert true "puts(10 == 10)"
 assert false "puts(10 != 10)"
+assert true "puts(10 > 5 && 10 > 0)"
+assert true "puts(true || false)"
+assert true "puts(10 >= (5 * 2) && 100 == (300 / 3))"
+# basic arithmetic operations
+assert 30 "puts(20 * 3 / 2)"
+assert 40 "puts(10 + 20 * 3 / 2)"
+assert 45 "puts((10 + 20) * 3 / 2)"
+assert -75 "puts(-(10 + 20 * 3) + 5 - 10)"
 
 echo OK

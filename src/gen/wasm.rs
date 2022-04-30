@@ -810,12 +810,32 @@ impl<'a, 'tcx> Emitter {
         module: &mut Module,
     ) {
         match expr.kind() {
-            ExprKind::Minus(_) => todo!(),
+            ExprKind::Minus(operand) => {
+                wasm_fun.body_mut().i64_const(0);
+                self.emit_expr(operand, wasm_fun, module);
+                wasm_fun.body_mut().i64_sub_();
+            }
             ExprKind::Not(_) => todo!(),
-            ExprKind::Add(_, _) => todo!(),
-            ExprKind::Sub(_, _) => todo!(),
-            ExprKind::Mul(_, _) => todo!(),
-            ExprKind::Div(_, _) => todo!(),
+            ExprKind::Add(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_add_();
+            }
+            ExprKind::Sub(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_sub_();
+            }
+            ExprKind::Mul(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_mul_();
+            }
+            ExprKind::Div(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i64_div_s_();
+            }
             ExprKind::Eq(lhs, rhs) => {
                 self.emit_expr(lhs, wasm_fun, module);
                 self.emit_expr(rhs, wasm_fun, module);
@@ -846,8 +866,16 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(rhs, wasm_fun, module);
                 wasm_fun.body_mut().i64_ge_s_();
             }
-            ExprKind::And(_, _) => todo!(),
-            ExprKind::Or(_, _) => todo!(),
+            ExprKind::And(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i32_and_();
+            }
+            ExprKind::Or(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, module);
+                self.emit_expr(rhs, wasm_fun, module);
+                wasm_fun.body_mut().i32_or_();
+            }
             ExprKind::Call { name, cc, args } => todo!(),
             ExprKind::CondValue {
                 cond,

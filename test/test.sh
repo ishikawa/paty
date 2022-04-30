@@ -45,6 +45,8 @@ assert false "puts(10 <= 5)"
 assert true "puts(10 == 10)"
 assert false "puts(10 != 10)"
 assert true "puts(10 > 5 && 10 > 0)"
+assert true "puts(true)"
+assert false "puts(false)"
 assert true "puts(true || false)"
 assert true "puts(10 >= (5 * 2) && 100 == (300 / 3))"
 # basic arithmetic operations
