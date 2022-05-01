@@ -821,6 +821,18 @@ impl Instruction {
     pub fn i32_shr_s_() -> Self {
         Self::new(InstructionKind::I32ShiftRightS, vec![])
     }
+    pub fn i32_clz_() -> Self {
+        Self::new(InstructionKind::I32Clz, vec![])
+    }
+    pub fn i32_ctz_() -> Self {
+        Self::new(InstructionKind::I32Ctz, vec![])
+    }
+    pub fn i32_popcnt_() -> Self {
+        Self::new(InstructionKind::I32PopCnt, vec![])
+    }
+    pub fn i32_eqz_() -> Self {
+        Self::new(InstructionKind::I32Eqz, vec![])
+    }
     pub fn i32_eq_() -> Self {
         Self::new(InstructionKind::I32Eq, vec![])
     }
@@ -1052,6 +1064,9 @@ impl Instruction {
     pub fn unreachable() -> Self {
         Self::new(InstructionKind::Unreachable, vec![])
     }
+    pub fn block(wasm_block: BlockInstruction) -> Self {
+        Self::new(InstructionKind::Block(wasm_block), vec![])
+    }
     pub fn r#loop(wasm_loop: LoopInstruction) -> Self {
         Self::new(InstructionKind::Loop(wasm_loop), vec![])
     }
@@ -1063,6 +1078,9 @@ impl Instruction {
     }
     pub fn br_if(label_idx: u32, cond: Instruction) -> Self {
         Self::new(InstructionKind::BrIf(label_idx), vec![cond])
+    }
+    pub fn br_if_(label_idx: u32) -> Self {
+        Self::new(InstructionKind::BrIf(label_idx), vec![])
     }
 
     // ext: bulk-memory
@@ -1166,6 +1184,7 @@ pub enum InstructionKind {
     Nop,
     Unreachable,
     // Block(BlockInstruction),
+    Block(BlockInstruction),
     If(IfInstruction),
     Loop(LoopInstruction),
     Br(u32),
@@ -1398,6 +1417,22 @@ impl Instructions {
     }
     pub fn i32_shr_s_(&mut self) -> &mut Self {
         self.instructions.push(Instruction::i32_shr_s_());
+        self
+    }
+    pub fn i32_clz_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_clz_());
+        self
+    }
+    pub fn i32_ctz_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_ctz_());
+        self
+    }
+    pub fn i32_popcnt_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_popcnt_());
+        self
+    }
+    pub fn i32_eqz_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i32_eqz_());
         self
     }
     pub fn i32_eq_(&mut self) -> &mut Self {
@@ -1707,6 +1742,10 @@ impl Instructions {
         self.instructions.push(Instruction::unreachable());
         self
     }
+    pub fn block(&mut self, wasm_block: BlockInstruction) -> &mut Self {
+        self.instructions.push(Instruction::block(wasm_block));
+        self
+    }
     pub fn r#loop(&mut self, wasm_loop: LoopInstruction) -> &mut Self {
         self.instructions.push(Instruction::r#loop(wasm_loop));
         self
@@ -1721,6 +1760,10 @@ impl Instructions {
     }
     pub fn br_if(&mut self, label_idx: u32, cond: Instruction) -> &mut Self {
         self.instructions.push(Instruction::br_if(label_idx, cond));
+        self
+    }
+    pub fn br_if_(&mut self, label_idx: u32) -> &mut Self {
+        self.instructions.push(Instruction::br_if_(label_idx));
         self
     }
 
@@ -1781,6 +1824,63 @@ impl IntoIterator for Instructions {
 impl Extend<Instruction> for Instructions {
     fn extend<T: IntoIterator<Item = Instruction>>(&mut self, instructions: T) {
         self.instructions.extend(instructions)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockInstruction {
+    /// Structured control instructions can bind an optional symbolic
+    /// label identifier. The same label identifier may optionally be
+    /// repeated after the corresponding `end` and `else` pseudo instructions,
+    /// to indicate the matching delimiters.
+    label: Option<String>,
+
+    /// A structured instruction can consume input and produce output on
+    /// the operand stack according to its annotated block type.
+    signature: FunctionSignature,
+    body: Instructions,
+}
+
+impl BlockInstruction {
+    pub fn new() -> Self {
+        Self::with_signature(FunctionSignature::new(vec![], vec![]))
+    }
+
+    pub fn with_result(retty: Type) -> Self {
+        Self::with_signature(FunctionSignature::new(vec![], vec![retty]))
+    }
+
+    // To use multiple results, you need multi-value extension.
+    pub fn with_signature(signature: FunctionSignature) -> Self {
+        Self {
+            signature,
+            body: Instructions::new(),
+            label: None,
+        }
+    }
+
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+    pub fn update_label(&mut self, label: String) {
+        self.label.replace(label);
+    }
+
+    pub fn signature(&self) -> &FunctionSignature {
+        &self.signature
+    }
+
+    pub fn body(&self) -> &Instructions {
+        &self.body
+    }
+    pub fn body_mut(&mut self) -> &mut Instructions {
+        &mut self.body
+    }
+}
+
+impl Default for BlockInstruction {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -2112,12 +2212,19 @@ impl WatBuilder {
         }
     }
     fn emit_inst(&mut self, inst: &Instruction) {
-        if matches!(inst.kind(), InstructionKind::Nop) {
-            // Emit nothing for .nop
-            return;
+        match inst.kind() {
+            InstructionKind::Nop => {
+                // Emit nothing for `nop`
+                return;
+            }
+            InstructionKind::Block(block) if block.label().is_some() => {
+                // A block that has a label must not be a S expression.
+            }
+            _ => {
+                self.buffer.push('(');
+            }
         }
 
-        self.buffer.push('(');
         match inst.kind() {
             InstructionKind::I32Const(n) => {
                 self.buffer.push_str("i32.const");
@@ -2403,6 +2510,26 @@ impl WatBuilder {
                 self.push_indent();
                 self.emit_instructions(ctrl.body().iter());
                 self.pop_indent();
+            }
+            InstructionKind::Block(block) => {
+                self.buffer.push_str("block");
+                if let Some(label) = block.label() {
+                    self.emit_id(label);
+                }
+                self.emit_function_signature(block.signature());
+                self.push_indent();
+                self.emit_instructions(block.body().iter());
+
+                if let Some(label) = block.label() {
+                    self.pop_indent();
+                    self.buffer.push_str("end");
+                    self.emit_id(label);
+                } else {
+                    self.buffer.push(')');
+                    self.pop_indent();
+                }
+                // `block` has no folded instructions
+                return;
             }
         }
 

@@ -68,5 +68,14 @@ assert "66" "(x, y, z) = (11, 22, 33)
   puts(x + y + z)"
 assert "231" "((a, b, c), (d, e), (f,)) = ((11, 22, 33), (44, 55), (66,))
   puts(a + b + c + d + e + f)"
+# boolean
+assert 'true' "
+    n = 5
+    case n > 1 && n <= 5
+    when true
+      puts(true)
+    when false
+      puts(false)
+    end"
 
 echo OK

@@ -243,10 +243,10 @@ impl<'a, 'tcx> Emitter {
                 Instruction::local_tee(io_vs_ptr, Instruction::global_get(SP)),
                 Instruction::i64_load(Instruction::local_get(param_io_vs)),
             )
-            .push(self.build_incr_sp(8))
+            .push(self.build_advance_sp(8))
             // local: n_written
             .local_set(n_written_ptr, Instruction::global_get(SP))
-            .push(self.build_incr_sp(4));
+            .push(self.build_advance_sp(4));
 
         // begin loop
         let mut wasm_loop = wasm::LoopInstruction::with_result(wasm::Type::I32);
@@ -368,7 +368,7 @@ impl<'a, 'tcx> Emitter {
             // Saves the address of io_vec_array.
             .local_set(io_vec_ptr, Instruction::global_get(SP))
             // Allocates memory for string.
-            .push(self.build_incr_sp(
+            .push(self.build_advance_sp(
                 // io_vec_array + string
                 (8 + u32::MAX.to_string().len()).align(4),
             ));
@@ -511,7 +511,7 @@ impl<'a, 'tcx> Emitter {
             // Saves the address of io_vec_array.
             .local_set(io_vec_ptr, Instruction::global_get(SP))
             // Allocates memory for string.
-            .push(self.build_incr_sp(
+            .push(self.build_advance_sp(
                 // io_vec_array + string
                 (8 + i64::MIN.to_string().len()).align(4),
             ));
@@ -643,7 +643,7 @@ impl<'a, 'tcx> Emitter {
             // io_vec_ptr = SP
             .local_set(io_vec_ptr, Instruction::global_get(SP))
             // SP += align(len(io_vec) + len(string))
-            .push(self.build_incr_sp((8 + 1_u32).align(4)))
+            .push(self.build_advance_sp((8 + 1_u32).align(4)))
             // string
             .i32_store8_m(
                 MemArg::with_offset(8),
@@ -745,8 +745,14 @@ impl<'a, 'tcx> Emitter {
         }
 
         // body
-        for stmt in &fun.body {
-            self.emit_stmt(stmt, &mut wasm_fun, module);
+        {
+            let mut body = wasm::Instructions::new();
+
+            for stmt in &fun.body {
+                self.emit_stmt(stmt, &mut wasm_fun, &mut body, module);
+            }
+
+            wasm_fun.body_mut().extend(body.into_iter());
         }
 
         if !fun.is_entry_point {
@@ -771,23 +777,230 @@ impl<'a, 'tcx> Emitter {
         &mut self,
         stmt: &Stmt<'a, 'tcx>,
         wasm_fun: &mut wasm::Function,
+        body: &mut wasm::Instructions,
         module: &mut Module,
     ) {
         match stmt {
             Stmt::TmpVarDef(def) => {
+                self.emit_expr(def.init(), wasm_fun, body, module);
+                // unused temporary result
                 assert_eq!(def.var().used(), 0);
-                self.emit_expr(def.init(), wasm_fun, module);
+                body.drop();
             }
             Stmt::VarDef(var_def) => {
                 let wasm_ty = wasm_type(var_def.init().ty());
 
                 wasm_fun.push_local(Entity::named(var_def.name(), wasm_ty));
-                self.emit_expr(var_def.init(), wasm_fun, module);
-                wasm_fun.body_mut().local_set_(var_def.name());
+                self.emit_expr(var_def.init(), wasm_fun, body, module);
+                body.local_set_(var_def.name());
             }
-            Stmt::Cond(_) => todo!(),
+            Stmt::Cond(cond) => {
+                // The outer block wraps child branches. WASM runtime has built-in
+                // value stack, so we don't need to allocate temporary variables.
+                let mut outer_block = if cond.var.used() > 0 {
+                    let retty = wasm_type(cond.var.ty());
+                    wasm::BlockInstruction::with_result(retty)
+                } else {
+                    wasm::BlockInstruction::new()
+                };
+                outer_block.update_label("outer".into());
+
+                for branch in &cond.branches {
+                    // An inner block has no return value.
+                    let mut inner_block = wasm::BlockInstruction::new();
+
+                    // break the branch if condition doesn't met.
+                    if let Some(condition) = branch.condition {
+                        self.emit_expr(condition, wasm_fun, inner_block.body_mut(), module);
+                        inner_block.body_mut().i32_eqz_().br_if_(0);
+                    }
+
+                    for stmt in &branch.body {
+                        self.emit_stmt(stmt, wasm_fun, inner_block.body_mut(), module);
+                    }
+                    // break the outer block.
+                    inner_block.body_mut().br(1);
+
+                    outer_block.body_mut().block(inner_block);
+                }
+
+                body.block(outer_block);
+            }
             Stmt::Phi(_) => todo!(),
             Stmt::Ret(_) => {}
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn emit_expr(
+        &mut self,
+        expr: &Expr<'a, 'tcx>,
+        wasm_fun: &mut wasm::Function,
+        body: &mut wasm::Instructions,
+        module: &mut Module,
+    ) {
+        match expr.kind() {
+            ExprKind::Minus(operand) => {
+                body.i64_const(0);
+                self.emit_expr(operand, wasm_fun, body, module);
+                body.i64_sub_();
+            }
+            ExprKind::Not(operand) => {
+                // XOR truth table
+                // ^^^^^^^^^^^^^^^
+                // | Input | Output  |
+                // |-------|---------|
+                // | A | B | A xor B |
+                // | 0 | 0 | 0       |
+                // | 0 | 1 | 1       |
+                // | 1 | 0 | 1       |
+                // | 1 | 1 | 0       |
+                body.i32_const(1);
+                self.emit_expr(operand, wasm_fun, body, module);
+                body.i32_xor_();
+            }
+            ExprKind::Add(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_add_();
+            }
+            ExprKind::Sub(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_sub_();
+            }
+            ExprKind::Mul(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_mul_();
+            }
+            ExprKind::Div(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_div_s_();
+            }
+            ExprKind::Eq(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_eq_();
+            }
+            ExprKind::Ne(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_ne_();
+            }
+            ExprKind::Lt(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_lt_s_();
+            }
+            ExprKind::Le(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_le_s_();
+            }
+            ExprKind::Gt(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_gt_s_();
+            }
+            ExprKind::Ge(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i64_ge_s_();
+            }
+            ExprKind::And(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i32_and_();
+            }
+            ExprKind::Or(lhs, rhs) => {
+                self.emit_expr(lhs, wasm_fun, body, module);
+                self.emit_expr(rhs, wasm_fun, body, module);
+                body.i32_or_();
+            }
+            ExprKind::Call { name, cc, args } => todo!(),
+            ExprKind::CondValue {
+                cond,
+                then_value,
+                else_value,
+            } => todo!(),
+            ExprKind::CondAndAssign { cond, var } => todo!(),
+            ExprKind::Printf(args) => {
+                let mut args = args.iter().peekable();
+
+                while let Some(arg) = args.next() {
+                    // file_descriptor - 1 for stdout
+                    body.i32_const(1);
+
+                    // io_vs - The pointer to the iov array
+                    let value_ty = match arg {
+                        FormatSpec::Value(value) => {
+                            self.emit_expr(value, wasm_fun, body, module);
+                            value.ty()
+                        }
+                        FormatSpec::Quoted(_) => todo!(),
+                        FormatSpec::Str(s) => {
+                            body.push(self.build_const_string(s, module));
+                            &Type::String
+                        }
+                    };
+
+                    let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
+                    let fd_write_all = self.use_prelude(module, &Prelude::FdWriteAll);
+
+                    match value_ty {
+                        Type::Int64 | Type::LiteralInt64(_) | Type::NativeInt => {
+                            body.call(fd_write_i64, vec![]);
+                        }
+                        Type::Boolean | Type::LiteralBoolean(_) => {
+                            // v == 0 ? "false" : "true"
+                            let tmp32 = wasm_fun.push_tmp(wasm::Type::I32);
+                            body.local_set_(tmp32.clone())
+                                .select(
+                                    self.build_const_string("true", module),
+                                    self.build_const_string("false", module),
+                                    Instruction::local_get(tmp32),
+                                )
+                                .call(fd_write_all, vec![]);
+                        }
+                        Type::String | Type::LiteralString(_) => {
+                            body.call(fd_write_all, vec![]);
+                        }
+                        Type::Tuple(_) => todo!(),
+                        Type::Struct(_) => todo!(),
+                        Type::Union(_) => todo!(),
+                        Type::Named(_) => todo!(),
+                        Type::Undetermined => todo!(),
+                    }
+
+                    if args.peek().is_some() {
+                        // Drop intermediate results.
+                        // TODO: return n_written?
+                        body.drop();
+                    }
+                }
+            }
+            &ExprKind::Int64(n) => {
+                body.i64_const(n as u64);
+            }
+            &ExprKind::Bool(b) => {
+                body.i32_const(u32::try_from(b).unwrap());
+            }
+            ExprKind::Str(s) => {
+                body.push(self.build_const_string(s, module));
+            }
+            ExprKind::Tuple(_) => todo!(),
+            ExprKind::StructValue(_) => todo!(),
+            ExprKind::IndexAccess { operand, index } => todo!(),
+            ExprKind::FieldAccess { operand, name } => todo!(),
+            ExprKind::TmpVar(_) => todo!(),
+            ExprKind::Var(var) => {
+                body.local_get(var.name());
+            }
+            ExprKind::UnionTag(_) => todo!(),
+            ExprKind::UnionMemberAccess { operand, tag } => todo!(),
+            ExprKind::UnionValue { value, tag } => todo!(),
         }
     }
 
@@ -798,7 +1011,7 @@ impl<'a, 'tcx> Emitter {
             .i32_store(Instruction::global_get(SP), Instruction::global_get(BP))
             .global_set(BP, Instruction::global_get(SP))
             // Advances SP
-            .push(self.build_incr_sp(4));
+            .push(self.build_advance_sp(4));
     }
     fn emit_function_epilogue(&mut self, wasm_fun: &mut wasm::Function) {
         wasm_fun
@@ -806,179 +1019,6 @@ impl<'a, 'tcx> Emitter {
             // Restore the caller's FP
             .global_set(SP, Instruction::global_get(BP))
             .global_set(BP, Instruction::i32_load(Instruction::global_get(BP)));
-    }
-
-    #[allow(unused_variables)]
-    fn emit_expr(
-        &mut self,
-        expr: &Expr<'a, 'tcx>,
-        wasm_fun: &mut wasm::Function,
-        module: &mut Module,
-    ) {
-        match expr.kind() {
-            ExprKind::Minus(operand) => {
-                wasm_fun.body_mut().i64_const(0);
-                self.emit_expr(operand, wasm_fun, module);
-                wasm_fun.body_mut().i64_sub_();
-            }
-            ExprKind::Not(_) => todo!(),
-            ExprKind::Add(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_add_();
-            }
-            ExprKind::Sub(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_sub_();
-            }
-            ExprKind::Mul(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_mul_();
-            }
-            ExprKind::Div(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_div_s_();
-            }
-            ExprKind::Eq(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_eq_();
-            }
-            ExprKind::Ne(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_ne_();
-            }
-            ExprKind::Lt(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_lt_s_();
-            }
-            ExprKind::Le(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_le_s_();
-            }
-            ExprKind::Gt(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_gt_s_();
-            }
-            ExprKind::Ge(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i64_ge_s_();
-            }
-            ExprKind::And(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i32_and_();
-            }
-            ExprKind::Or(lhs, rhs) => {
-                self.emit_expr(lhs, wasm_fun, module);
-                self.emit_expr(rhs, wasm_fun, module);
-                wasm_fun.body_mut().i32_or_();
-            }
-            ExprKind::Call { name, cc, args } => todo!(),
-            ExprKind::CondValue {
-                cond,
-                then_value,
-                else_value,
-            } => todo!(),
-            ExprKind::CondAndAssign { cond, var } => todo!(),
-            ExprKind::Printf(args) => {
-                for arg in args {
-                    // file_descriptor - 1 for stdout
-                    wasm_fun.body_mut().i32_const(1);
-
-                    // io_vs - The pointer to the iov array
-                    let value_ty = match arg {
-                        FormatSpec::Value(value) => {
-                            self.emit_expr(value, wasm_fun, module);
-                            value.ty()
-                        }
-                        FormatSpec::Quoted(_) => todo!(),
-                        FormatSpec::Str(s) => {
-                            wasm_fun.body_mut().push(self.build_const_string(s, module));
-                            &Type::String
-                        }
-                    };
-
-                    let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
-                    let fd_write_all = self.use_prelude(module, &Prelude::FdWriteAll);
-
-                    match value_ty {
-                        Type::Int64 | Type::LiteralInt64(_) | Type::NativeInt => {
-                            wasm_fun.body_mut().call(fd_write_i64, vec![]);
-                        }
-                        Type::Boolean | Type::LiteralBoolean(_) => {
-                            // v == 0 ? "false" : "true"
-                            let tmp32 = wasm_fun.push_tmp(wasm::Type::I32);
-                            wasm_fun
-                                .body_mut()
-                                .local_set_(tmp32.clone())
-                                .select(
-                                    self.build_const_string("true", module),
-                                    self.build_const_string("false", module),
-                                    Instruction::local_get(tmp32),
-                                )
-                                .call(fd_write_all, vec![]);
-                        }
-                        Type::String | Type::LiteralString(_) => {
-                            wasm_fun.body_mut().call(fd_write_all, vec![]);
-                        }
-                        Type::Tuple(_) => todo!(),
-                        Type::Struct(_) => todo!(),
-                        Type::Union(_) => todo!(),
-                        Type::Named(_) => todo!(),
-                        Type::Undetermined => todo!(),
-                    }
-
-                    // ----- DEBUG
-                    // let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
-                    // let tmp = wasm_fun.push_tmp(wasm::Type::I64);
-
-                    // wasm_fun
-                    //     .body_mut()
-                    //     .local_set(
-                    //         tmp.clone(),
-                    //         Instruction::i64_extend_i32_s(
-                    //             Instruction::nop(), // result - fd_write_all
-                    //         ),
-                    //     )
-                    //     .call(
-                    //         fd_write_i64,
-                    //         vec![Instruction::i32_const(2), Instruction::local_get(tmp)],
-                    //     );
-                    // /DEBUG
-
-                    wasm_fun.body_mut().drop();
-                }
-            }
-            &ExprKind::Int64(n) => {
-                wasm_fun.body_mut().i64_const(n as u64);
-            }
-            &ExprKind::Bool(b) => {
-                wasm_fun.body_mut().i32_const(u32::try_from(b).unwrap());
-            }
-            ExprKind::Str(s) => {
-                wasm_fun.body_mut().push(self.build_const_string(s, module));
-            }
-            ExprKind::Tuple(_) => todo!(),
-            ExprKind::StructValue(_) => todo!(),
-            ExprKind::IndexAccess { operand, index } => todo!(),
-            ExprKind::FieldAccess { operand, name } => todo!(),
-            ExprKind::TmpVar(_) => todo!(),
-            ExprKind::Var(var) => {
-                wasm_fun.body_mut().local_get(var.name());
-            }
-            ExprKind::UnionTag(_) => todo!(),
-            ExprKind::UnionMemberAccess { operand, tag } => todo!(),
-            ExprKind::UnionValue { value, tag } => todo!(),
-        }
     }
 
     /// Build an instruction that points to cio_vec_ptr of the specified string `s`.
@@ -994,20 +1034,11 @@ impl<'a, 'tcx> Emitter {
         let (cio_vec_ptr, _) = self.define_string_constant(s, module);
         Instruction::i32_const(cio_vec_ptr)
     }
-}
 
-impl Emitter {
-    fn build_incr_sp(&self, n: u32) -> Instruction {
+    fn build_advance_sp(&self, n: u32) -> Instruction {
         Instruction::global_set(
             SP,
             Instruction::i32_add(Instruction::global_get(SP), Instruction::i32_const(n)),
-        )
-    }
-    #[allow(unused)]
-    fn build_decr_sp(&mut self, n: u32) -> Instruction {
-        Instruction::global_set(
-            SP,
-            Instruction::i32_sub(Instruction::global_get(SP), Instruction::i32_const(n)),
         )
     }
 }
