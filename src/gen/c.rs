@@ -43,17 +43,19 @@ impl<'a, 'tcx> Emitter {
         }
 
         for fun in program.functions() {
-            if !fun.is_entry_point {
-                self.emit_function_declaration(fun, &mut code);
-                code.push(';');
-                code.push('\n');
-            }
+            self.emit_function_declaration(fun, false, &mut code);
+            code.push(';');
+            code.push('\n');
         }
         code.push('\n');
 
-        // Emit functions
+        // Emit functions and the entry point
         for fun in program.functions() {
-            self.emit_function(fun, &mut code);
+            self.emit_function(fun, false, &mut code);
+            code.push('\n');
+        }
+        if let Some(fun) = &program.entry_point {
+            self.emit_function(fun, true, &mut code);
             code.push('\n');
         }
 
@@ -147,27 +149,34 @@ impl<'a, 'tcx> Emitter {
         emitted_c_types.insert(c_type_str);
     }
 
-    fn emit_function_declaration(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
-        if fun.is_entry_point {
+    fn emit_function_declaration(
+        &mut self,
+        fun: &Function<'a, 'tcx>,
+        is_entry_point: bool,
+        code: &mut String,
+    ) {
+        if is_entry_point {
             // 'main' must return 'int'
             code.push_str(&c_type(&Type::NativeInt));
-        } else if fun.retty.is_zero_sized() {
+        } else if fun.retty().is_zero_sized() {
             code.push_str("void");
         } else {
-            code.push_str(&c_type(fun.retty));
+            code.push_str(&c_type(fun.retty()));
         }
         code.push(' ');
 
         // `main` function is C function
-        if fun.is_entry_point {
-            code.push_str(&fun.name);
+        if is_entry_point {
+            code.push_str(fun.name());
         } else {
-            let mangled_name = mangle_name(&fun.signature);
+            let mangled_name = mangle_name(fun.signature());
             code.push_str(&mangled_name);
         }
 
+        let mut params = fun.params.iter().peekable();
+
         code.push('(');
-        for (i, param) in fun.params.iter().enumerate() {
+        while let Some(param) = params.next() {
             if param.ty().is_zero_sized() {
                 continue;
             }
@@ -179,15 +188,15 @@ impl<'a, 'tcx> Emitter {
                 Parameter::Var(v) => code.push_str(v.name()),
             };
 
-            if i != (fun.params.len() - 1) {
+            if params.peek().is_some() {
                 code.push_str(", ");
             }
         }
         code.push(')');
     }
 
-    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
-        self.emit_function_declaration(fun, code);
+    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, is_entry_point: bool, code: &mut String) {
+        self.emit_function_declaration(fun, is_entry_point, code);
         code.push('\n');
 
         // body

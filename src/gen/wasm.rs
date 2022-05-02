@@ -1,15 +1,16 @@
 //! WebAssembly backend which emits WAT (WebAssembly Text Format).
 pub mod builder;
 
-use std::collections::HashMap;
-use std::fmt;
-
 use self::builder as wasm;
 use self::builder::{
     Entity, Export, ExportDesc, Import, ImportDesc, Instruction, MemArg, Module, WatBuilder,
 };
-use crate::ir::inst::{Expr, ExprKind, FormatSpec, Function, Program, Stmt};
+use crate::ir::inst::{
+    CallingConvention, Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar,
+};
 use crate::ty::Type;
+use std::collections::HashMap;
+use std::fmt;
 
 use super::util::mangle_name;
 
@@ -119,9 +120,12 @@ impl<'a, 'tcx> Emitter {
             ExportDesc::Memory(wasm::Index::Index(0)),
         ));
 
-        // Emit functions
+        // Emit functions and the entry point
         for fun in program.functions() {
-            self.emit_function(fun, &mut module);
+            self.emit_function(fun, false, &mut module);
+        }
+        if let Some(fun) = &program.entry_point {
+            self.emit_function(fun, true, &mut module);
         }
 
         // Now, the CP (constant pool address) points to the base address of
@@ -734,17 +738,49 @@ impl<'a, 'tcx> Emitter {
         wasm_fun
     }
 
-    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, module: &mut Module) {
-        let mut wasm_fun = wasm::Function::new();
+    fn emit_function(
+        &mut self,
+        fun: &Function<'a, 'tcx>,
+        is_entry_point: bool,
+        module: &mut Module,
+    ) {
+        let mut wasm_params = vec![];
+        let mut wasm_retty = vec![];
 
         // params
-        assert!(fun.params.is_empty());
+        for param in &fun.params {
+            if param.ty().is_zero_sized() {
+                continue;
+            }
 
-        if !fun.is_entry_point {
+            let wasm_ty = wasm_type(param.ty());
+
+            match param {
+                Parameter::TmpVar(_) => {
+                    // In WASM, we can define a parameter as unnamed.
+                    wasm_params.push(Entity::new(wasm_ty));
+                }
+                Parameter::Var(v) => {
+                    wasm_params.push(Entity::named(v.name(), wasm_ty));
+                }
+            };
+        }
+
+        // return type
+        if is_entry_point || fun.retty().is_zero_sized() {
+            // no return
+        } else {
+            wasm_retty.push(wasm_type(fun.retty()));
+        }
+
+        let mut wasm_fun =
+            wasm::Function::with_signature(wasm::FunctionSignature::new(wasm_params, wasm_retty));
+
+        // body
+        if !is_entry_point {
             self.emit_function_prologue(&mut wasm_fun);
         }
 
-        // body
         {
             let mut body = wasm::Instructions::new();
 
@@ -755,17 +791,17 @@ impl<'a, 'tcx> Emitter {
             wasm_fun.body_mut().extend(body.into_iter());
         }
 
-        if !fun.is_entry_point {
+        if !is_entry_point {
             self.emit_function_epilogue(&mut wasm_fun);
         }
 
         // function name
-        let mangled_name = mangle_name(&fun.signature);
+        let mangled_name = mangle_name(fun.signature());
         module.push_function(Entity::named(mangled_name.to_string(), wasm_fun));
 
         // Start function for WASI ABI (legacy)
         // https://github.com/WebAssembly/WASI/blob/main/legacy/application-abi.md
-        if fun.is_entry_point {
+        if is_entry_point {
             module.push_export(Export::new(
                 "_start".into(),
                 ExportDesc::Function(wasm::Index::Id(mangled_name)),
@@ -783,9 +819,16 @@ impl<'a, 'tcx> Emitter {
         match stmt {
             Stmt::TmpVarDef(def) => {
                 self.emit_expr(def.init(), wasm_fun, body, module);
-                // unused temporary result
-                assert_eq!(def.var().used(), 0);
-                body.drop();
+
+                if def.var().used() == 0 {
+                    // unused temporary result
+                    body.drop();
+                } else {
+                    let var_name = tmp_var(def.var());
+
+                    wasm_fun.push_local(Entity::named(var_name.clone(), wasm_type(def.var().ty())));
+                    body.local_set_(var_name);
+                }
             }
             Stmt::VarDef(var_def) => {
                 let wasm_ty = wasm_type(var_def.init().ty());
@@ -919,7 +962,19 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(rhs, wasm_fun, body, module);
                 body.i32_or_();
             }
-            ExprKind::Call { name, cc, args } => todo!(),
+            ExprKind::Call { name, cc, args } => {
+                let callee = if let CallingConvention::Std(signature) = cc {
+                    mangle_name(signature)
+                } else {
+                    name.to_string()
+                };
+
+                for arg in args {
+                    self.emit_expr(arg, wasm_fun, body, module);
+                }
+
+                body.call(callee, vec![]);
+            }
             ExprKind::CondValue {
                 cond,
                 then_value,
@@ -994,7 +1049,10 @@ impl<'a, 'tcx> Emitter {
             ExprKind::StructValue(_) => todo!(),
             ExprKind::IndexAccess { operand, index } => todo!(),
             ExprKind::FieldAccess { operand, name } => todo!(),
-            ExprKind::TmpVar(_) => todo!(),
+            ExprKind::TmpVar(var) => {
+                let var_name = tmp_var(var);
+                body.local_get(var_name);
+            }
             ExprKind::Var(var) => {
                 body.local_get(var.name());
             }
@@ -1062,6 +1120,10 @@ impl Address for usize {
     fn align(self, alignment: u32) -> u32 {
         u32::try_from(self).unwrap().align(alignment)
     }
+}
+
+fn tmp_var(t: &TmpVar) -> String {
+    format!("_t{}", t.index())
 }
 
 fn wasm_type(ty: &Type) -> wasm::Type {

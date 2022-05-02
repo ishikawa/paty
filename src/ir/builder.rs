@@ -219,38 +219,30 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     }
 
     pub fn build(&self, ast: &'nd [syntax::TopLevel<'nd, 'tcx>]) -> Program<'a, 'tcx> {
+        let signature = FunctionSignature::new("main".into(), vec![]);
+        let mut main = Function::new(signature.name().into(), signature, self.tcx.native_int());
         let mut program = Program::new();
-        let mut stmts: Vec<&'a Stmt<'a, 'tcx>> = vec![];
         let mut tmp_vars = TmpVars::new(self.tmp_var_arena);
 
         // Build top level statements and function definitions.
         for top_level in ast {
             match top_level {
                 syntax::TopLevel::Declaration(decl) => {
-                    self.build_decl(decl, &mut tmp_vars, &mut program, &mut stmts);
+                    self.build_decl(decl, &mut tmp_vars, &mut program, &mut main.body);
                 }
                 syntax::TopLevel::Stmt(stmt) => {
-                    self.build_stmt(stmt, &mut tmp_vars, &mut program, &mut stmts);
+                    self.build_stmt(stmt, &mut tmp_vars, &mut program, &mut main.body);
                 }
             }
         }
 
-        // Add `return 0` statement for the entry point function if needed.
-        if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
+        // An integer value to be returned from the entry point.
+        if !matches!(main.body.last(), Some(Stmt::Ret(_))) {
             let ret = Stmt::Ret(self.native_int(0));
-            stmts.push(self.stmt_arena.alloc(ret))
+            main.body.push(self.stmt_arena.alloc(ret))
         }
 
-        let signature = FunctionSignature::new("main".to_string(), vec![]);
-        let main = Function {
-            name: "main".to_string(),
-            params: vec![],
-            signature,
-            body: stmts,
-            retty: self.tcx.native_int(),
-            is_entry_point: true,
-        };
-        program.push_function(main);
+        program.entry_point = Some(main);
         program
     }
 
@@ -297,13 +289,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) {
         match decl.kind() {
             syntax::DeclarationKind::Function(syntax_fun) => {
+                // Return value and type of the function
+                let retty = syntax_fun.retty().expect("return type");
+                program.add_decl_type(retty);
+
+                let mut fun =
+                    Function::new(syntax_fun.name().to_string(), syntax_fun.signature(), retty);
+
                 // save and reset temp var index
                 let mut scoped_tmp_vars = TmpVars::from(&*tmp_vars);
 
                 // convert parameter pattern to parameter name and assign variable.
-                let mut params = vec![];
-                let mut body_stmts = vec![];
-
                 for p in syntax_fun.params() {
                     let pat = p.pattern();
                     let ty = pat.expect_ty();
@@ -329,7 +325,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                 param_expr,
                                 &mut scoped_tmp_vars,
                                 program,
-                                &mut body_stmts,
+                                &mut fun.body,
                             );
 
                             Parameter::TmpVar(t)
@@ -343,36 +339,22 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         }
                     };
 
-                    params.push(param);
+                    fun.params.push(param);
                 }
-
-                // Return value and type of the function
-                let retty = syntax_fun.retty().expect("return type");
-                program.add_decl_type(retty);
 
                 let last_expr = syntax_fun
                     .body()
                     .iter()
-                    .map(|stmt| {
-                        self.build_stmt(stmt, &mut scoped_tmp_vars, program, &mut body_stmts)
-                    })
+                    .map(|stmt| self.build_stmt(stmt, &mut scoped_tmp_vars, program, &mut fun.body))
                     .last()
                     .flatten();
 
                 if let Some(last_expr) = last_expr {
                     let value =
-                        self.promote_to(last_expr, retty, &mut scoped_tmp_vars, &mut body_stmts);
-                    body_stmts.push(self.stmt_arena.alloc(Stmt::Ret(value)));
+                        self.promote_to(last_expr, retty, &mut scoped_tmp_vars, &mut fun.body);
+                    fun.body.push(self.stmt_arena.alloc(Stmt::Ret(value)));
                 }
 
-                let fun = Function {
-                    name: syntax_fun.name().to_string(),
-                    params,
-                    signature: syntax_fun.signature(),
-                    body: body_stmts,
-                    retty,
-                    is_entry_point: false,
-                };
                 program.push_function(fun);
             }
             syntax::DeclarationKind::Struct(struct_def) => {

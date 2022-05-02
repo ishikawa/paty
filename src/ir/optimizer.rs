@@ -33,6 +33,12 @@ impl<'ir, 'tcx> Optimizer<'ir, 'tcx> {
                 modified = true;
             }
         }
+        if let Some(fun) = &mut program.entry_point {
+            if let Some(body) = self._run_function_pass_with_stmts(pass, &fun.body) {
+                fun.body = body;
+                modified = true;
+            }
+        }
 
         modified
     }

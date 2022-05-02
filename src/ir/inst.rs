@@ -8,6 +8,7 @@ const DISPLAY_INDENT: &str = "  ";
 pub struct Program<'a, 'tcx> {
     decl_types: Vec<&'tcx Type<'tcx>>,
     functions: Vec<Function<'a, 'tcx>>,
+    pub entry_point: Option<Function<'a, 'tcx>>,
 }
 
 impl<'a, 'tcx> Program<'a, 'tcx> {
@@ -80,19 +81,51 @@ impl fmt::Display for Program<'_, '_> {
         for fun in &self.functions {
             write!(f, "{}", fun)?;
         }
+        if let Some(fun) = &self.entry_point {
+            write!(f, "{}", fun)?;
+        }
         Ok(())
     }
 }
 
+/// A function instruction.
+///
+/// The function signature of the main function must be:
+///
+/// ```ignore
+/// main(void) -> int32
+/// ```
 #[derive(Debug)]
 pub struct Function<'a, 'tcx> {
-    pub name: String,
+    name: String,
+    signature: FunctionSignature<'tcx>,
+    retty: &'tcx Type<'tcx>,
     pub params: Vec<Parameter<'a, 'tcx>>,
-    pub signature: FunctionSignature<'tcx>,
     pub body: Vec<&'a Stmt<'a, 'tcx>>,
-    pub retty: &'tcx Type<'tcx>,
-    /// Whether this function is `main` or not.
-    pub is_entry_point: bool,
+}
+
+impl<'a, 'tcx> Function<'a, 'tcx> {
+    pub fn new(name: String, signature: FunctionSignature<'tcx>, retty: &'tcx Type<'tcx>) -> Self {
+        Self {
+            name,
+            signature,
+            retty,
+            params: vec![],
+            body: vec![],
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn retty(&self) -> &'tcx Type<'tcx> {
+        self.retty
+    }
+
+    pub fn signature(&self) -> &FunctionSignature<'tcx> {
+        &self.signature
+    }
 }
 
 impl fmt::Display for Function<'_, '_> {
