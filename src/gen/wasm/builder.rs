@@ -126,7 +126,7 @@ impl<T: fmt::Debug> fmt::Debug for Entity<T> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StringData {
     String(String),
-    Bytes(Box<[u8]>),
+    Bytes(Vec<u8>),
 }
 
 const HEX_CHARS: [char; 16] = [

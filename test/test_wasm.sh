@@ -103,6 +103,8 @@ assert 'true' "
   when false
     puts(false)
   end"
-
+# string
+assert 'こんにちは' 'puts("こんにちは")'
+assert '\' 'puts("\\")'
 
 echo OK

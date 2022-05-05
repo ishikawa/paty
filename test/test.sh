@@ -107,8 +107,6 @@ assert 'true' "
       puts(false)
     end"
 # string
-assert "Hello, World!" "
-    puts(\"Hello, World!\\n\")"
 assert 'こんにちは' 'puts("こんにちは")'
 assert '\' 'puts("\\")'
 assert '1 2 3 4' "

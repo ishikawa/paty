@@ -180,8 +180,9 @@ impl<'a, 'tcx> Emitter {
         let mut ciovec: [u8; CIOVEC_LEN] = [0; CIOVEC_LEN];
         // `buf` - The address of the constant string.
         let str_base = io_vec_ptr + CIOVEC_LEN.align(4);
-        // `buf_len` - The length of the buffer to be written.
-        let str_len = u32::try_from(s.len()).unwrap();
+        // `buf_len` - The bytes length of the buffer to be written.
+        let utf8_bytes = s.as_bytes();
+        let str_len = u32::try_from(utf8_bytes.len()).unwrap();
 
         ciovec[..4].clone_from_slice(&str_base.to_le_bytes());
         ciovec[4..].clone_from_slice(&str_len.to_le_bytes());
@@ -189,8 +190,8 @@ impl<'a, 'tcx> Emitter {
         let data_segment = wasm::DataSegment::new(
             vec![Instruction::i32_const(io_vec_ptr)],
             vec![
-                wasm::StringData::Bytes(Box::new(ciovec)),
-                wasm::StringData::String(s.to_string()),
+                wasm::StringData::Bytes(ciovec.to_vec()),
+                wasm::StringData::Bytes(utf8_bytes.to_vec()),
             ],
         );
         module.push_data_segment(Entity::new(data_segment));
