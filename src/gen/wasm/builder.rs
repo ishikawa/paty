@@ -154,7 +154,7 @@ impl StringData {
     ///
     /// // bytes
     /// buffer.clear();
-    /// let string = StringData::Bytes(Box::new([0, 1, 0xFF]));
+    /// let string = StringData::Bytes([0, 1, 0xFF].to_vec());
     /// assert!(string.write_escape(&mut buffer).is_ok());
     /// assert_eq!(&buffer, "\\00\\01\\ff");
     /// ```
