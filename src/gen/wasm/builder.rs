@@ -550,6 +550,8 @@ pub struct Function {
     signature: FunctionSignature,
     locals: Vec<Entity<Type>>,
     body: Instructions,
+    // Abbreviations: `(func id? (export name) ...)` can be applied repeatedly.
+    exports: Vec<String>,
 }
 
 impl Default for Function {
@@ -583,8 +585,9 @@ impl Function {
     pub fn with_signature(signature: FunctionSignature) -> Self {
         Self {
             signature,
-            locals: Vec::with_capacity(0),
+            locals: vec![],
             body: Instructions::new(),
+            exports: vec![],
         }
     }
 
@@ -603,6 +606,13 @@ impl Function {
     }
     pub fn push_local(&mut self, local: Entity<Type>) {
         self.locals.push(local);
+    }
+
+    pub fn exports(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.exports.iter().map(AsRef::as_ref)
+    }
+    pub fn push_export(&mut self, name: String) {
+        self.exports.push(name);
     }
 
     /// Adds a new temporary variable with the given type and
@@ -655,6 +665,11 @@ impl Instruction {
     }
     pub fn operands(&self) -> impl ExactSizeIterator<Item = &Instruction> {
         self.operands.iter()
+    }
+
+    /// Returns `true` if the instruction has operands.
+    pub fn has_operands(&self) -> bool {
+        !self.operands.is_empty()
     }
 }
 
@@ -1082,6 +1097,9 @@ impl Instruction {
     pub fn br_if_(label_idx: u32) -> Self {
         Self::new(InstructionKind::BrIf(label_idx), vec![])
     }
+    pub fn r#return() -> Self {
+        Self::new(InstructionKind::Return, vec![])
+    }
 
     // ext: bulk-memory
     pub fn memory_copy(n: Instruction, src: Instruction, dst: Instruction) -> Self {
@@ -1183,12 +1201,12 @@ pub enum InstructionKind {
     // control instructions
     Nop,
     Unreachable,
-    // Block(BlockInstruction),
     Block(BlockInstruction),
     If(IfInstruction),
     Loop(LoopInstruction),
     Br(u32),
     BrIf(u32),
+    Return,
     // Ext: bulk-memory
     MemoryCopy,
 }
@@ -1766,6 +1784,10 @@ impl Instructions {
         self.instructions.push(Instruction::br_if_(label_idx));
         self
     }
+    pub fn r#return(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::r#return());
+        self
+    }
 
     // ext: bulk-memory
     pub fn memory_copy(&mut self, n: Instruction, src: Instruction, dst: Instruction) -> &mut Self {
@@ -2110,6 +2132,16 @@ impl WatBuilder {
         self.newline();
     }
 
+    /// Removes training white spaces in the buffer.
+    fn trim_trailing_white_spaces(&mut self) {
+        while let Some(c) = self.buffer.pop() {
+            if !char::is_whitespace(c) {
+                self.buffer.push(c);
+                break;
+            }
+        }
+    }
+
     fn emit_index(&mut self, index: &Index) {
         match index {
             &Index::Index(i) => {
@@ -2158,7 +2190,9 @@ impl WatBuilder {
     }
     fn emit_function_signature(&mut self, signature: &FunctionSignature) {
         self.buffer.push(' ');
-        for param in signature.params() {
+        let mut params = signature.params().peekable();
+
+        while let Some(param) = params.next() {
             self.buffer.push('(');
             self.buffer.push_str("param");
             if let Some(name) = param.id() {
@@ -2166,9 +2200,14 @@ impl WatBuilder {
             }
             self.emit_type(param.get());
             self.buffer.push(')');
+
+            if params.peek().is_some() {
+                self.buffer.push(' ');
+            }
         }
 
         for ty in signature.results() {
+            self.buffer.push(' ');
             self.buffer.push('(');
             self.buffer.push_str("result");
             self.emit_type(ty);
@@ -2212,6 +2251,9 @@ impl WatBuilder {
         }
     }
     fn emit_inst(&mut self, inst: &Instruction) {
+        let mut close_paren = false;
+        let scoped_indent = self.indent;
+
         match inst.kind() {
             InstructionKind::Nop => {
                 // Emit nothing for `nop`
@@ -2220,8 +2262,10 @@ impl WatBuilder {
             InstructionKind::Block(block) if block.label().is_some() => {
                 // A block that has a label must not be a S expression.
             }
+            InstructionKind::Drop | InstructionKind::Return if !inst.has_operands() => {}
             _ => {
                 self.buffer.push('(');
+                close_paren = true;
             }
         }
 
@@ -2502,14 +2546,12 @@ impl WatBuilder {
                 self.emit_function_signature(ctrl.signature());
                 self.push_indent();
                 self.emit_instructions(ctrl.then_body().iter());
-                self.pop_indent();
             }
             InstructionKind::Loop(ctrl) => {
                 self.buffer.push_str("loop");
                 self.emit_function_signature(ctrl.signature());
                 self.push_indent();
                 self.emit_instructions(ctrl.body().iter());
-                self.pop_indent();
             }
             InstructionKind::Block(block) => {
                 self.buffer.push_str("block");
@@ -2524,12 +2566,10 @@ impl WatBuilder {
                     self.pop_indent();
                     self.buffer.push_str("end");
                     self.emit_id(label);
-                } else {
-                    self.buffer.push(')');
-                    self.pop_indent();
                 }
-                // `block` has no folded instructions
-                return;
+            }
+            InstructionKind::Return => {
+                self.buffer.push_str("return");
             }
         }
 
@@ -2538,7 +2578,14 @@ impl WatBuilder {
             self.emit_inst(operand);
         }
 
-        self.buffer.push(')');
+        if close_paren {
+            // Pop indent automatically.
+            for _ in scoped_indent..self.indent {
+                self.pop_indent();
+            }
+            self.trim_trailing_white_spaces();
+            self.buffer.push(')');
+        }
     }
 }
 
@@ -2553,8 +2600,9 @@ impl Visitor for WatBuilder {
         self.push_indent();
     }
     fn exit_module(&mut self, _module: &Entity<Module>) {
-        self.buffer.push(')');
         self.pop_indent();
+        self.trim_trailing_white_spaces();
+        self.buffer.push(')');
     }
 
     fn enter_import(&mut self, import: &Import) {
@@ -2570,8 +2618,9 @@ impl Visitor for WatBuilder {
         }
     }
     fn exit_import(&mut self, _import: &Import) {
-        self.buffer.push(')');
         self.pop_indent();
+        self.trim_trailing_white_spaces();
+        self.buffer.push(')');
     }
 
     fn enter_export(&mut self, export: &Export) {
@@ -2657,6 +2706,14 @@ impl Visitor for WatBuilder {
         // id
         if let Some(name) = fun.id() {
             self.emit_id(name);
+        }
+
+        for export in fun.get().exports() {
+            self.buffer.push(' ');
+            self.buffer.push('(');
+            self.buffer.push_str("export");
+            self.emit_str(export);
+            self.buffer.push(')');
         }
 
         self.emit_function_signature(fun.get().signature());

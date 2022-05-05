@@ -122,10 +122,25 @@ impl<'a, 'tcx> Emitter {
 
         // Emit functions and the entry point
         for fun in program.functions() {
-            self.emit_function(fun, false, &mut module);
+            self.emit_function(fun, &mut module);
         }
+
+        // We generate the entry point as a regular function, and then
+        // emit the start function that invokes it.
+        //
+        // Start function for WASI ABI (legacy)
+        // https://github.com/WebAssembly/WASI/blob/main/legacy/application-abi.md
         if let Some(fun) = &program.entry_point {
-            self.emit_function(fun, true, &mut module);
+            self.emit_function(fun, &mut module);
+
+            let mut start_fun = wasm::Function::new();
+
+            // function name
+            let mangled_name = mangle_name(fun.signature());
+            start_fun.body_mut().call(mangled_name, vec![]).drop();
+            start_fun.push_export("_start".into());
+
+            module.push_function(Entity::new(start_fun));
         }
 
         // Now, the CP (constant pool address) points to the base address of
@@ -219,7 +234,7 @@ impl<'a, 'tcx> Emitter {
     /// Defines `fd_write_all` function.
     ///
     /// ```ignore
-    /// @fd_write_all(fd: i32, io_vs: i32) error
+    /// @fd_write_all(fd: i32, io_vs_ptr: i32) error:i32
     /// ```
     fn build_prelude_fd_write_all(&mut self, _module: &mut Module) -> wasm::Function {
         // locals
@@ -248,7 +263,7 @@ impl<'a, 'tcx> Emitter {
                 Instruction::i64_load(Instruction::local_get(param_io_vs)),
             )
             .push(self.build_advance_sp(8))
-            // local: n_written
+            // n_written: *u32
             .local_set(n_written_ptr, Instruction::global_get(SP))
             .push(self.build_advance_sp(4));
 
@@ -309,6 +324,8 @@ impl<'a, 'tcx> Emitter {
                     0,
                     Instruction::i32_ne(Instruction::local_get(n_left), Instruction::i32_const(0)),
                 );
+            // TODO: return if error happened.
+            // TODO: return the length of written.
         }
         // /end loop
         wasm_fun.body_mut().push(Instruction::r#loop(wasm_loop));
@@ -734,16 +751,12 @@ impl<'a, 'tcx> Emitter {
             //    v = v ^ mask
             .i64_xor(Instruction::nop(), Instruction::local_get(local_mask));
 
+        // No stack used.
         //self.emit_function_epilogue(&mut wasm_fun);
         wasm_fun
     }
 
-    fn emit_function(
-        &mut self,
-        fun: &Function<'a, 'tcx>,
-        is_entry_point: bool,
-        module: &mut Module,
-    ) {
+    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, module: &mut Module) {
         let mut wasm_params = vec![];
         let mut wasm_retty = vec![];
 
@@ -767,7 +780,7 @@ impl<'a, 'tcx> Emitter {
         }
 
         // return type
-        if is_entry_point || fun.retty().is_zero_sized() {
+        if fun.retty().is_zero_sized() {
             // no return
         } else {
             wasm_retty.push(wasm_type(fun.retty()));
@@ -777,10 +790,6 @@ impl<'a, 'tcx> Emitter {
             wasm::Function::with_signature(wasm::FunctionSignature::new(wasm_params, wasm_retty));
 
         // body
-        if !is_entry_point {
-            self.emit_function_prologue(&mut wasm_fun);
-        }
-
         {
             let mut body = wasm::Instructions::new();
 
@@ -788,25 +797,16 @@ impl<'a, 'tcx> Emitter {
                 self.emit_stmt(stmt, &mut wasm_fun, &mut body, module);
             }
 
-            wasm_fun.body_mut().extend(body.into_iter());
-        }
+            // TODO: Add stack frame operations if needed.
+            // Leaf functions that don't call any other functions can skip
+            // incrementing and decrementing the stack pointer.
 
-        if !is_entry_point {
-            self.emit_function_epilogue(&mut wasm_fun);
+            wasm_fun.body_mut().extend(body.into_iter());
         }
 
         // function name
         let mangled_name = mangle_name(fun.signature());
-        module.push_function(Entity::named(mangled_name.to_string(), wasm_fun));
-
-        // Start function for WASI ABI (legacy)
-        // https://github.com/WebAssembly/WASI/blob/main/legacy/application-abi.md
-        if is_entry_point {
-            module.push_export(Export::new(
-                "_start".into(),
-                ExportDesc::Function(wasm::Index::Id(mangled_name)),
-            ));
-        }
+        module.push_function(Entity::named(mangled_name, wasm_fun));
     }
 
     fn emit_stmt(
@@ -870,7 +870,10 @@ impl<'a, 'tcx> Emitter {
                 body.block(outer_block);
             }
             Stmt::Phi(_) => todo!(),
-            Stmt::Ret(_) => {}
+            Stmt::Ret(expr) => {
+                self.emit_expr(expr, wasm_fun, body, module);
+                body.r#return();
+            }
         }
     }
 
@@ -1031,10 +1034,14 @@ impl<'a, 'tcx> Emitter {
 
                     if args.peek().is_some() {
                         // Drop intermediate results.
-                        // TODO: return n_written?
                         body.drop();
                     }
                 }
+
+                // Ignore error code
+                // TODO: panic if error happened.
+                // TODO: return n_written.
+                body.drop().i64_const(0);
             }
             &ExprKind::Int64(n) => {
                 body.i64_const(n as u64);

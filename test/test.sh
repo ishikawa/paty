@@ -34,6 +34,28 @@ assert() {
   i=$((i+1))
 }
 
+# print primitive value.
+assert "Hello, World!" 'puts("Hello, World!")'
+assert "12345" 'puts(12345)'
+assert "-12345" 'puts(-12345)'
+assert "true" 'puts(true)'
+assert "false" 'puts(false)'
+assert '12345
+12345
+12345
+12345' '
+  def puts_i(n: int64)
+    puts(n)
+  end
+  def puts_s(s: string)
+    puts(s)
+  end
+  n = 12345
+  s = "12345"
+  puts_i(n)
+  puts_s(s)
+  puts_i(n)
+  puts_s(s)'
 # number
 assert 20211231 "puts(20211231)"
 assert -20229116 "puts(-20229116)"
