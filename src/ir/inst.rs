@@ -457,9 +457,11 @@ pub struct Branch<'a, 'tcx> {
 
 impl<'a, 'tcx> Branch<'a, 'tcx> {
     fn _fmt(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
         if let Some(condition) = self.condition {
-            write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
             write!(f, "({}) => ", condition)?;
+        } else {
+            write!(f, "_ => ")?;
         }
         writeln!(f, "{{")?;
 
@@ -883,7 +885,10 @@ impl fmt::Display for ExprKind<'_, '_> {
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
             ExprKind::UnionTag(expr) => write!(f, "{}.tag", expr),
             ExprKind::UnionMemberAccess { operand, tag } => write!(f, "{}._u.{}", operand, tag),
-            ExprKind::UnionValue { value: operand, .. } => write!(f, "(union){}", operand),
+            ExprKind::UnionValue {
+                value: operand,
+                tag,
+            } => write!(f, "(_u.{}){}", tag, operand),
             ExprKind::TmpVar(var) => var.fmt(f),
             ExprKind::Var(var) => var.fmt(f),
         }
