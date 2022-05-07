@@ -109,6 +109,18 @@ assert 'true' "
 # string
 assert 'こんにちは' 'puts("こんにちは")'
 assert '\' 'puts("\\")'
+assert '2
+two' '
+  def double(n: 1 | "one")
+    case n
+    when 1
+      2
+    when "one"
+      "two"
+    end
+  end
+  puts(double(1))
+  puts(double("one"))'
 assert '1 2 3 4' '
   def fruit_to_num(fruit: string)
     case fruit

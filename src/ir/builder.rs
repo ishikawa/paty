@@ -696,41 +696,39 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             } => {
                 let t = tmp_vars.next_temp_var(expr_ty);
                 let t_head = self.build_expr(head, tmp_vars, program, stmts);
+                let mut cond = Cond::new(t);
 
                 // Construct "if-else" statement from each branches.
-                let mut branches = arms
-                    .iter()
-                    .map(|arm| {
-                        // Build an condition and variable declarations from the pattern
-                        let mut branch_stmts = vec![];
+                for arm in arms {
+                    // Build an condition and variable declarations from the pattern
+                    let mut branch_stmts = vec![];
 
-                        let condition = self.build_pattern(
-                            t_head,
-                            arm.pattern(),
-                            tmp_vars,
-                            program,
-                            stmts,
-                            &mut branch_stmts,
+                    let condition = self.build_pattern(
+                        t_head,
+                        arm.pattern(),
+                        tmp_vars,
+                        program,
+                        stmts,
+                        &mut branch_stmts,
+                    );
+
+                    let mut ret = None;
+                    for stmt in arm.body() {
+                        ret = self.build_stmt(stmt, tmp_vars, program, &mut branch_stmts);
+                    }
+                    if let Some(ret) = ret {
+                        let phi = Stmt::phi(
+                            t,
+                            self.promote_to(ret, expr_ty, tmp_vars, &mut branch_stmts),
                         );
+                        branch_stmts.push(self.stmt_arena.alloc(phi));
+                    }
 
-                        let mut ret = None;
-                        for stmt in arm.body() {
-                            ret = self.build_stmt(stmt, tmp_vars, program, &mut branch_stmts);
-                        }
-                        if let Some(ret) = ret {
-                            let phi = Stmt::phi(
-                                t,
-                                self.promote_to(ret, expr_ty, tmp_vars, &mut branch_stmts),
-                            );
-                            branch_stmts.push(self.stmt_arena.alloc(phi));
-                        }
-
-                        Branch {
-                            condition,
-                            body: branch_stmts,
-                        }
-                    })
-                    .collect::<Vec<_>>();
+                    cond.push_branch(Branch {
+                        condition,
+                        body: branch_stmts,
+                    });
+                }
 
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
@@ -751,8 +749,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         condition: None,
                         body: branch_stmts,
                     };
-                    branches.push(branch);
-                } else if !branches.is_empty() {
+                    cond.push_branch(branch);
+                } else if !cond.branches().is_empty() {
                     // No explicit `else` arm for this `case` expression.
 
                     // TODO: the last arm of every `case` expression which was passed through usefulness
@@ -761,7 +759,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     //branches[i].condition = None;
                 }
 
-                let stmt = Stmt::Cond(Cond { branches, var: t });
+                let stmt = Stmt::Cond(cond);
                 stmts.push(self.stmt_arena.alloc(stmt));
 
                 self.expr_arena.alloc(Expr::tmp_var(t))
@@ -1071,12 +1069,12 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let union_tag = self.push_expr(self.union_tag(arg), tmp_vars, stmts);
 
                 // generates branches
-                let mut branches = vec![];
+                let mut cond = Cond::new(t);
                 for (tag, member_ty) in member_types.iter().enumerate() {
                     let mut branch_stmts = vec![];
 
                     // check union tag
-                    let cond = self.eq(union_tag, self.usize(tag));
+                    let check_tag = self.eq(union_tag, self.usize(tag));
 
                     // print union member
                     let kind = ExprKind::UnionMemberAccess { operand: arg, tag };
@@ -1096,13 +1094,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     let phi = Stmt::phi(t, ret);
                     branch_stmts.push(&*self.stmt_arena.alloc(phi));
 
-                    branches.push(Branch {
-                        condition: Some(cond),
+                    cond.push_branch(Branch {
+                        condition: Some(check_tag),
                         body: branch_stmts,
                     });
                 }
 
-                let stmt = Stmt::Cond(Cond { branches, var: t });
+                let stmt = Stmt::Cond(cond);
                 stmts.push(self.stmt_arena.alloc(stmt));
 
                 self.expr_arena.alloc(Expr::tmp_var(t))

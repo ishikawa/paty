@@ -26,6 +26,11 @@ pub enum WasmArch {
     Bits64 = 64,
 }
 
+// Alignment and size for various types on linear memory.
+const ALIGN_UNION: u32 = 8;
+const SIZE_UNION_TAG: u32 = 8;
+const SIZE_UNION_VALUE: u32 = 8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EmitterOptions {
     pub arch: WasmArch,
@@ -285,25 +290,25 @@ impl<'a, 'tcx> Emitter {
 
             //  check n_written and loop until entire input is written.
 
-            let n_written = wasm_fun.push_tmp(wasm::Type::I32);
-            let n_left = wasm_fun.push_tmp(wasm::Type::I32);
+            let n_written = wasm_fun.checkout_tmp(wasm::Type::I32);
+            let n_left = wasm_fun.checkout_tmp(wasm::Type::I32);
 
             wasm_loop
                 .body_mut()
                 // n_written = *n_written_ptr
                 .local_set(
-                    n_written.clone(),
+                    n_written.get(),
                     Instruction::i32_load(Instruction::local_get(n_written_ptr)),
                 )
                 // n_left = io_vs_ptr[1] - n_written
                 .local_set(
-                    n_left.clone(),
+                    n_left.get(),
                     Instruction::i32_sub(
                         Instruction::i32_load_m(
                             MemArg::with_offset(4),
                             Instruction::local_get(io_vs_ptr),
                         ),
-                        Instruction::local_get(n_written.clone()),
+                        Instruction::local_get(n_written.get()),
                     ),
                 )
                 // io_vs_ptr[0] += n_written
@@ -311,22 +316,28 @@ impl<'a, 'tcx> Emitter {
                     Instruction::local_get(io_vs_ptr),
                     Instruction::i32_add(
                         Instruction::i32_load(Instruction::local_get(io_vs_ptr)),
-                        Instruction::local_get(n_written),
+                        Instruction::local_get(n_written.get()),
                     ),
                 )
                 // io_vs_ptr[1] = n_left
                 .i32_store_m(
                     MemArg::with_offset(4),
                     Instruction::local_get(io_vs_ptr),
-                    Instruction::local_get(n_left.clone()),
+                    Instruction::local_get(n_left.get()),
                 )
                 // continue if n_left != 0
                 .br_if(
                     0,
-                    Instruction::i32_ne(Instruction::local_get(n_left), Instruction::i32_const(0)),
+                    Instruction::i32_ne(
+                        Instruction::local_get(n_left.get()),
+                        Instruction::i32_const(0),
+                    ),
                 );
             // TODO: return if error happened.
             // TODO: return the length of written.
+
+            wasm_fun.checkin_tmp(n_left);
+            wasm_fun.checkin_tmp(n_written);
         }
         // /end loop
         wasm_fun.body_mut().push(Instruction::r#loop(wasm_loop));
@@ -364,8 +375,6 @@ impl<'a, 'tcx> Emitter {
             vec![wasm::Type::I32],
         ));
 
-        let tmp32 = wasm_fun.push_tmp(wasm::Type::I32);
-
         wasm_fun.push_local(Entity::named(n, wasm::Type::I32));
         wasm_fun.push_local(Entity::named(io_vec_ptr, wasm::Type::I32));
         wasm_fun.push_local(Entity::named(n_columns, wasm::Type::I32));
@@ -397,44 +406,55 @@ impl<'a, 'tcx> Emitter {
 
         // ------
         // begin loop - until all digits printed
-        let mut wasm_loop = wasm::LoopInstruction::new();
+        {
+            let mut wasm_loop = wasm::LoopInstruction::new();
+            let tmp32 = wasm_fun.checkout_tmp(wasm::Type::I32);
 
-        wasm_loop
-            .body_mut()
-            // n_columns += 1
-            .local_set(
-                n_columns,
-                Instruction::i32_add(Instruction::local_get(n_columns), Instruction::i32_const(1)),
-            )
-            // c: u8 = table[tmp_n % 10]
-            .local_set(
-                tmp32.clone(),
-                Instruction::i32_load8_u(Instruction::i32_add(
-                    Instruction::i32_const(table_ptr),
-                    Instruction::i32_rem_u(Instruction::local_get(n), Instruction::i32_const(10)),
-                )),
-            )
-            // *(SP - n_columns) = c
-            .i32_store8(
-                Instruction::i32_sub(
-                    Instruction::global_get(SP),
-                    Instruction::local_get(n_columns),
-                ),
-                Instruction::local_get(tmp32),
-            )
-            // tmp_n = tmp_n / 10
-            .local_tee(
-                n,
-                Instruction::i32_div_u(Instruction::local_get(n), Instruction::i32_const(10)),
-            )
-            // continue if tmp_n != 0
-            .br_if(
-                0,
-                Instruction::i32_ne(Instruction::nop(), Instruction::i32_const(0)),
-            );
+            wasm_loop
+                .body_mut()
+                // n_columns += 1
+                .local_set(
+                    n_columns,
+                    Instruction::i32_add(
+                        Instruction::local_get(n_columns),
+                        Instruction::i32_const(1),
+                    ),
+                )
+                // c: u8 = table[tmp_n % 10]
+                .local_set(
+                    tmp32.get(),
+                    Instruction::i32_load8_u(Instruction::i32_add(
+                        Instruction::i32_const(table_ptr),
+                        Instruction::i32_rem_u(
+                            Instruction::local_get(n),
+                            Instruction::i32_const(10),
+                        ),
+                    )),
+                )
+                // *(SP - n_columns) = c
+                .i32_store8(
+                    Instruction::i32_sub(
+                        Instruction::global_get(SP),
+                        Instruction::local_get(n_columns),
+                    ),
+                    Instruction::local_get(tmp32.get()),
+                )
+                // tmp_n = tmp_n / 10
+                .local_tee(
+                    n,
+                    Instruction::i32_div_u(Instruction::local_get(n), Instruction::i32_const(10)),
+                )
+                // continue if tmp_n != 0
+                .br_if(
+                    0,
+                    Instruction::i32_ne(Instruction::nop(), Instruction::i32_const(0)),
+                );
 
-        // end loop
-        wasm_fun.body_mut().push(Instruction::r#loop(wasm_loop));
+            wasm_fun.checkin_tmp(tmp32);
+
+            // end loop
+            wasm_fun.body_mut().push(Instruction::r#loop(wasm_loop));
+        }
 
         // writes `buf` and `buf_len`
         wasm_fun
@@ -497,8 +517,6 @@ impl<'a, 'tcx> Emitter {
             vec![wasm::Type::I32],
         ));
 
-        let tmp32 = wasm_fun.push_tmp(wasm::Type::I32);
-
         wasm_fun.push_local(Entity::named(n, wasm::Type::I64));
         wasm_fun.push_local(Entity::named(io_vec_ptr, wasm::Type::I32));
         wasm_fun.push_local(Entity::named(n_columns, wasm::Type::I32));
@@ -540,47 +558,54 @@ impl<'a, 'tcx> Emitter {
 
         // ------
         // begin loop - until all digits printed
-        let mut wasm_loop = wasm::LoopInstruction::new();
+        {
+            let mut wasm_loop = wasm::LoopInstruction::new();
+            let tmp32 = wasm_fun.checkout_tmp(wasm::Type::I32);
 
-        wasm_loop
-            .body_mut()
-            // n_columns += 1
-            .local_set(
-                n_columns,
-                Instruction::i32_add(Instruction::local_get(n_columns), Instruction::i32_const(1)),
-            )
-            // c: u8 = table[tmp_n % 10]
-            .local_set(
-                tmp32.clone(),
-                Instruction::i32_load8_u(Instruction::i32_add(
-                    Instruction::i32_const(table_ptr),
-                    Instruction::i32_wrap_i64(Instruction::i64_rem_s(
-                        Instruction::local_get(n),
-                        Instruction::i64_const(10),
+            wasm_loop
+                .body_mut()
+                // n_columns += 1
+                .local_set(
+                    n_columns,
+                    Instruction::i32_add(
+                        Instruction::local_get(n_columns),
+                        Instruction::i32_const(1),
+                    ),
+                )
+                // c: u8 = table[tmp_n % 10]
+                .local_set(
+                    tmp32.get(),
+                    Instruction::i32_load8_u(Instruction::i32_add(
+                        Instruction::i32_const(table_ptr),
+                        Instruction::i32_wrap_i64(Instruction::i64_rem_s(
+                            Instruction::local_get(n),
+                            Instruction::i64_const(10),
+                        )),
                     )),
-                )),
-            )
-            // *(SP - n_columns) = c
-            .i32_store8(
-                Instruction::i32_sub(
-                    Instruction::global_get(SP),
-                    Instruction::local_get(n_columns),
-                ),
-                Instruction::local_get(tmp32),
-            )
-            // tmp_n = tmp_n / 10
-            .local_tee(
-                n,
-                Instruction::i64_div_s(Instruction::local_get(n), Instruction::i64_const(10)),
-            )
-            // continue if tmp_n != 0
-            .br_if(
-                0,
-                Instruction::i64_ne(Instruction::nop(), Instruction::i64_const(0)),
-            );
+                )
+                // *(SP - n_columns) = c
+                .i32_store8(
+                    Instruction::i32_sub(
+                        Instruction::global_get(SP),
+                        Instruction::local_get(n_columns),
+                    ),
+                    Instruction::local_get(tmp32.get()),
+                )
+                // tmp_n = tmp_n / 10
+                .local_tee(
+                    n,
+                    Instruction::i64_div_s(Instruction::local_get(n), Instruction::i64_const(10)),
+                )
+                // continue if tmp_n != 0
+                .br_if(
+                    0,
+                    Instruction::i64_ne(Instruction::nop(), Instruction::i64_const(0)),
+                );
 
-        // end loop
-        wasm_fun.body_mut().r#loop(wasm_loop);
+            // end loop
+            wasm_fun.checkin_tmp(tmp32);
+            wasm_fun.body_mut().r#loop(wasm_loop);
+        }
 
         // minus sign "-"?
         let mut wasm_if = wasm::IfInstruction::new();
@@ -840,16 +865,22 @@ impl<'a, 'tcx> Emitter {
             }
             Stmt::Cond(cond) => {
                 // The outer block wraps child branches. WASM runtime has built-in
-                // value stack, so we don't need to allocate temporary variables.
-                let mut outer_block = if cond.var.used() > 0 {
-                    let retty = wasm_type(cond.var.ty());
+                // value stack, so we DON'T need to allocate temporary variables for
+                // phi nodes.
+                let mut outer_block = if cond.var().used() > 0 {
+                    // let var_name = tmp_var(cond.var);
+                    // wasm_fun.push_local(Entity::named(var_name.clone(), wasm_type(cond.var.ty())));
+
+                    let retty = wasm_type(cond.var().ty());
                     wasm::BlockInstruction::with_result(retty)
                 } else {
                     wasm::BlockInstruction::new()
                 };
                 outer_block.update_label("outer".into());
 
-                for branch in &cond.branches {
+                let mut branches = cond.branches().iter().peekable();
+
+                while let Some(branch) = branches.next() {
                     // An inner block has no return value.
                     let mut inner_block = wasm::BlockInstruction::new();
 
@@ -866,11 +897,39 @@ impl<'a, 'tcx> Emitter {
                     inner_block.body_mut().br(1);
 
                     outer_block.body_mut().block(inner_block);
+
+                    if branches.peek().is_none() {
+                        // branches must be exhausted.
+                        outer_block.body_mut().unreachable();
+                    }
                 }
 
                 body.block(outer_block);
+
+                if cond.var().used() > 0 {
+                    // Although we use native value stack to "choose" the result of control
+                    // flow, we have to store it to the original "temporary" variable for
+                    // other expressions referring it.
+                    let var_name = tmp_var(cond.var());
+
+                    wasm_fun
+                        .push_local(Entity::named(var_name.clone(), wasm_type(cond.var().ty())));
+
+                    body.local_set_(var_name);
+                }
             }
-            Stmt::Phi(_) => todo!(),
+            Stmt::Phi(phi) => {
+                // We use native value stack to propagate phi value.
+                self.emit_expr(phi.value(), wasm_fun, body, module);
+
+                if phi.var().used() == 0 {
+                    // unused temporary result
+                    body.drop();
+                } else {
+                    // let var_name = tmp_var(phi.var());
+                    // body.local_set_(var_name);
+                }
+            }
             Stmt::Ret(expr) => {
                 self.emit_expr(expr, wasm_fun, body, module);
                 body.r#return();
@@ -1014,14 +1073,17 @@ impl<'a, 'tcx> Emitter {
                         }
                         Type::Boolean | Type::LiteralBoolean(_) => {
                             // v == 0 ? "false" : "true"
-                            let tmp32 = wasm_fun.push_tmp(wasm::Type::I32);
-                            body.local_set_(tmp32.clone())
+                            let tmp32 = wasm_fun.checkout_tmp(wasm::Type::I32);
+
+                            body.local_set_(tmp32.get())
                                 .select(
                                     self.build_const_string("true", module),
                                     self.build_const_string("false", module),
-                                    Instruction::local_get(tmp32),
+                                    Instruction::local_get(tmp32.get()),
                                 )
                                 .call(fd_write_all, vec![]);
+
+                            wasm_fun.checkin_tmp(tmp32);
                         }
                         Type::String | Type::LiteralString(_) => {
                             body.call(fd_write_all, vec![]);
@@ -1064,9 +1126,47 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Var(var) => {
                 body.local_get(var.name());
             }
-            ExprKind::UnionTag(_) => todo!(),
-            ExprKind::UnionMemberAccess { operand, tag } => todo!(),
-            ExprKind::UnionValue { value, tag } => todo!(),
+            // Memory layout for an union value.
+            //
+            // +-----------+----------------------+
+            // | tag (i64) |  value (8 bytes) ... |
+            // +-----------+----------------------+
+            ExprKind::UnionGetTag(operand) => {
+                self.emit_expr(operand, wasm_fun, body, module);
+                body.i64_load_();
+            }
+            ExprKind::UnionMemberAccess { operand, tag } => {
+                // Get the address where an union value stands.
+                self.emit_expr(operand, wasm_fun, body, module);
+                // Load the value of an union value.
+                body.load_m_(&wasm_type(expr.ty()), MemArg::with_offset(SIZE_UNION_TAG));
+            }
+            &ExprKind::Union { value, tag } => {
+                // Convert the `value` to an `tag`ged union value with the type `expr.ty()`.
+                //
+                // 1. Write the tag and value on the "memory stack".
+                // 2. Push the SP on the "value stack".
+                // 3. Advance SP to allocate enough space for the union value.
+                let sp = wasm_fun.checkout_tmp(wasm::Type::I32);
+                let tag = u64::try_from(tag).unwrap();
+
+                // Write the tag.
+                body.global_get(SP)
+                    .local_tee_(sp.get())
+                    .i64_const(tag)
+                    .i64_store_();
+
+                // Emit the value and write it at SP + SIZE_TAG.
+                body.local_get(sp.get());
+                self.emit_expr(value, wasm_fun, body, module);
+                body.store_m_(&wasm_type(value.ty()), MemArg::with_offset(SIZE_UNION_TAG));
+
+                // Push the SP and advance SP
+                body.push(
+                    self.build_advance_sp((SIZE_UNION_TAG + SIZE_UNION_VALUE).align(ALIGN_UNION)),
+                )
+                .local_get(sp.get());
+            }
         }
     }
 
@@ -1123,6 +1223,13 @@ impl Address for u32 {
     }
 }
 
+impl Address for i32 {
+    #[inline]
+    fn align(self, alignment: u32) -> u32 {
+        u32::try_from(self).unwrap().align(alignment)
+    }
+}
+
 impl Address for usize {
     #[inline]
     fn align(self, alignment: u32) -> u32 {
@@ -1142,9 +1249,8 @@ fn wasm_type(ty: &Type) -> wasm::Type {
         Type::Boolean | Type::LiteralBoolean(_) => wasm::Type::I32,
         // Memory location (io_vec_ptr)
         Type::String | Type::LiteralString(_) => wasm::Type::I32,
-        Type::Tuple(_) => todo!(),
-        Type::Struct(_) => todo!(),
-        Type::Union(_) => todo!(),
+        // Memory location
+        Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => wasm::Type::I32,
         Type::Named(_) => todo!(),
         Type::Undetermined => todo!(),
     }

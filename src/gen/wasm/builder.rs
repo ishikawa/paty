@@ -1,6 +1,6 @@
 //! WebAssembly
 //! https://webassembly.github.io/spec/core/intro/introduction.html
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 /// Various entities in WebAssembly are classified by types.
 /// Types are checked during validation, instantiation, and
@@ -174,11 +174,24 @@ impl StringData {
 
     fn write_escape_bytes<F: fmt::Write>(&self, f: &mut F, bytes: &[u8]) -> fmt::Result {
         for &b in bytes {
-            f.write_char('\\')?;
-            let i = usize::try_from(b >> 4).unwrap();
-            f.write_char(HEX_CHARS[i])?;
-            let i = usize::try_from(0x0f & b).unwrap();
-            f.write_char(HEX_CHARS[i])?;
+            match b {
+                // "\r", "\n", "\t", "\\"
+                b'\r' => f.write_str("\\r")?,
+                b'\n' => f.write_str("\\n")?,
+                b'\t' => f.write_str("\\t")?,
+                b'\\' => f.write_str("\\\\")?,
+                // Checks if the value is an ASCII graphic character: U+0021 '!' ..= U+007E '~'.
+                b'!'..=b'~' => {
+                    f.write_char(b as char)?;
+                }
+                _ => {
+                    f.write_char('\\')?;
+                    let i = usize::try_from(b >> 4).unwrap();
+                    f.write_char(HEX_CHARS[i])?;
+                    let i = usize::try_from(0x0f & b).unwrap();
+                    f.write_char(HEX_CHARS[i])?;
+                }
+            }
         }
         Ok(())
     }
@@ -552,6 +565,8 @@ pub struct Function {
     body: Instructions,
     // Abbreviations: `(func id? (export name) ...)` can be applied repeatedly.
     exports: Vec<String>,
+    // Temporary variable pool
+    tmp_pool: HashMap<Type, Vec<Index>>,
 }
 
 impl Default for Function {
@@ -588,6 +603,7 @@ impl Function {
             locals: vec![],
             body: Instructions::new(),
             exports: vec![],
+            tmp_pool: HashMap::new(),
         }
     }
 
@@ -615,27 +631,62 @@ impl Function {
         self.exports.push(name);
     }
 
-    /// Adds a new temporary variable with the given type and
-    /// returns its index.
+    /// Gets an index that points to a temporary variable.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use paty::gen::wasm::builder::{Function, Entity, Type, Instruction, FunctionSignature};
-    /// let mut fun = Function::new();
-    /// let tmp1 = fun.push_tmp(Type::I32);
-    /// let tmp2 = fun.push_tmp(Type::I32);
-    ///
-    /// assert_eq!(fun.locals().len(), 2);
-    /// assert_ne!(tmp1, tmp2);
-    /// ```
-    pub fn push_tmp(&mut self, ty: Type) -> Index {
+    /// Adds a new temporary variable or gets an existing variable
+    /// for the given type and returns its index.
+    pub fn checkout_tmp(&mut self, ty: Type) -> TemporaryVariable {
+        // Can we checkout existing temporary variable from the pool?
+        if let Some(vars) = self.tmp_pool.get_mut(&ty) {
+            if let Some(idx) = vars.pop() {
+                return TemporaryVariable::new(ty, idx);
+            }
+        }
+
         // The index space for locals is only accessible inside a function and
         // includes the parameters of that function, which precede the local variables.
         let idx = self.signature.params().len() + self.locals.len();
+        let idx = Index::Index(u32::try_from(idx).unwrap());
 
         self.push_local(Entity::new(ty));
-        Index::Index(u32::try_from(idx).unwrap())
+        TemporaryVariable::new(ty, idx)
+    }
+
+    /// Checks temporary variable back into the pool.
+    pub fn checkin_tmp(&mut self, var: TemporaryVariable) {
+        // Can we checkout existing temporary variable from the pool?
+        if let Some(vars) = self.tmp_pool.get_mut(&var.ty) {
+            vars.push(var.index);
+        } else {
+            self.tmp_pool.insert(var.ty, vec![var.index]);
+        }
+    }
+}
+
+/// Wraps an index that points to a temporary local.
+///
+/// This struct can't be cloned nor copied. Only you can do with these values is
+/// (1) gets a copy of the index or (2) checks it back into the pool.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct TemporaryVariable {
+    ty: Type,
+    index: Index,
+}
+
+impl TemporaryVariable {
+    fn new(ty: Type, index: Index) -> Self {
+        Self { ty, index }
+    }
+
+    pub fn get(&self) -> Index {
+        self.index.clone()
+    }
+
+    pub fn ty(&self) -> &Type {
+        &self.ty
+    }
+    pub fn index(&self) -> &Index {
+        &self.index
     }
 }
 
@@ -689,23 +740,41 @@ impl Instruction {
     pub fn i32_store_m(mem: MemArg, dst: Instruction, src: Instruction) -> Self {
         Self::new(InstructionKind::I32Store(mem), vec![dst, src])
     }
+    pub fn i32_store_m_(mem: MemArg) -> Self {
+        Self::new(InstructionKind::I32Store(mem), vec![])
+    }
     pub fn i32_store8_m(mem: MemArg, dst: Instruction, src: Instruction) -> Self {
         Self::new(InstructionKind::I32Store8(mem), vec![dst, src])
     }
     pub fn i64_store(dst: Instruction, src: Instruction) -> Self {
-        Self::new(InstructionKind::I64Store(MemArg::default()), vec![dst, src])
+        Self::i64_store_m(MemArg::default(), dst, src)
+    }
+    pub fn i64_store_m(mem: MemArg, dst: Instruction, src: Instruction) -> Self {
+        Self::new(InstructionKind::I64Store(mem), vec![dst, src])
+    }
+    pub fn i64_store_() -> Self {
+        Self::i64_store_m_(MemArg::default())
+    }
+    pub fn i64_store_m_(mem: MemArg) -> Self {
+        Self::new(InstructionKind::I64Store(mem), vec![])
     }
     pub fn i32_load(src: Instruction) -> Self {
         Self::i32_load_m(MemArg::default(), src)
+    }
+    pub fn i32_load_m(mem: MemArg, src: Instruction) -> Self {
+        Self::new(InstructionKind::I32Load(mem), vec![src])
+    }
+    pub fn i32_load_() -> Self {
+        Self::i32_load_m_(MemArg::default())
+    }
+    pub fn i32_load_m_(mem: MemArg) -> Self {
+        Self::new(InstructionKind::I32Load(mem), vec![])
     }
     pub fn i32_load8_s(src: Instruction) -> Self {
         Self::i32_load8_s_m(MemArg::default(), src)
     }
     pub fn i32_load8_u(src: Instruction) -> Self {
         Self::i32_load8_u_m(MemArg::default(), src)
-    }
-    pub fn i32_load_m(mem: MemArg, src: Instruction) -> Self {
-        Self::new(InstructionKind::I32Load(mem), vec![src])
     }
     pub fn i32_load8_s_m(mem: MemArg, src: Instruction) -> Self {
         Self::new(InstructionKind::I32Load8S(mem), vec![src])
@@ -714,7 +783,16 @@ impl Instruction {
         Self::new(InstructionKind::I32Load8U(mem), vec![src])
     }
     pub fn i64_load(src: Instruction) -> Self {
-        Self::new(InstructionKind::I64Load(MemArg::default()), vec![src])
+        Self::i64_load_m(MemArg::default(), src)
+    }
+    pub fn i64_load_m(mem: MemArg, src: Instruction) -> Self {
+        Self::new(InstructionKind::I64Load(mem), vec![src])
+    }
+    pub fn i64_load_() -> Self {
+        Self::i64_load_m_(MemArg::default())
+    }
+    pub fn i64_load_m_(mem: MemArg) -> Self {
+        Self::new(InstructionKind::I64Load(mem), vec![])
     }
     pub fn i32_add(lhs: Instruction, rhs: Instruction) -> Self {
         Self::new(InstructionKind::I32Add, vec![lhs, rhs])
@@ -1051,6 +1129,9 @@ impl Instruction {
     pub fn local_tee<T: Into<Index>>(index: T, value: Instruction) -> Self {
         Self::new(InstructionKind::LocalTee(index.into()), vec![value])
     }
+    pub fn local_tee_<T: Into<Index>>(index: T) -> Self {
+        Self::new(InstructionKind::LocalTee(index.into()), vec![])
+    }
     pub fn global_get<T: Into<Index>>(index: T) -> Self {
         Self::new(InstructionKind::GlobalGet(index.into()), vec![])
     }
@@ -1235,13 +1316,20 @@ impl Instructions {
     pub fn i32_store(&mut self, dst: Instruction, src: Instruction) -> &mut Self {
         self.i32_store_m(MemArg::default(), dst, src)
     }
-    pub fn i32_store8(&mut self, dst: Instruction, src: Instruction) -> &mut Self {
-        self.i32_store8_m(MemArg::default(), dst, src)
-    }
     pub fn i32_store_m(&mut self, mem: MemArg, dst: Instruction, src: Instruction) -> &mut Self {
         self.instructions
             .push(Instruction::i32_store_m(mem, dst, src));
         self
+    }
+    pub fn i32_store_(&mut self) -> &mut Self {
+        self.i32_store_m_(MemArg::default())
+    }
+    pub fn i32_store_m_(&mut self, mem: MemArg) -> &mut Self {
+        self.instructions.push(Instruction::i32_store_m_(mem));
+        self
+    }
+    pub fn i32_store8(&mut self, dst: Instruction, src: Instruction) -> &mut Self {
+        self.i32_store8_m(MemArg::default(), dst, src)
     }
     pub fn i32_store8_m(&mut self, mem: MemArg, dst: Instruction, src: Instruction) -> &mut Self {
         self.instructions
@@ -1249,21 +1337,39 @@ impl Instructions {
         self
     }
     pub fn i64_store(&mut self, dst: Instruction, src: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i64_store(dst, src));
+        self.i64_store_m(MemArg::default(), dst, src)
+    }
+    pub fn i64_store_m(&mut self, mem: MemArg, dst: Instruction, src: Instruction) -> &mut Self {
+        self.instructions
+            .push(Instruction::i64_store_m(mem, dst, src));
+        self
+    }
+    pub fn i64_store_(&mut self) -> &mut Self {
+        self.i64_store_m_(MemArg::default())
+    }
+    pub fn i64_store_m_(&mut self, mem: MemArg) -> &mut Self {
+        self.instructions.push(Instruction::i64_store_m_(mem));
         self
     }
     pub fn i32_load(&mut self, src: Instruction) -> &mut Self {
         self.i32_load_m(MemArg::default(), src)
+    }
+    pub fn i32_load_m(&mut self, mem: MemArg, src: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i32_load_m(mem, src));
+        self
+    }
+    pub fn i32_load_(&mut self) -> &mut Self {
+        self.i32_load_m_(MemArg::default())
+    }
+    pub fn i32_load_m_(&mut self, mem: MemArg) -> &mut Self {
+        self.instructions.push(Instruction::i32_load_m_(mem));
+        self
     }
     pub fn i32_load8_s(&mut self, src: Instruction) -> &mut Self {
         self.i32_load8_s_m(MemArg::default(), src)
     }
     pub fn i32_load8_u(&mut self, src: Instruction) -> &mut Self {
         self.i32_load8_u_m(MemArg::default(), src)
-    }
-    pub fn i32_load_m(&mut self, mem: MemArg, src: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i32_load_m(mem, src));
-        self
     }
     pub fn i32_load8_s_m(&mut self, mem: MemArg, src: Instruction) -> &mut Self {
         self.instructions.push(Instruction::i32_load8_s_m(mem, src));
@@ -1274,7 +1380,17 @@ impl Instructions {
         self
     }
     pub fn i64_load(&mut self, src: Instruction) -> &mut Self {
-        self.instructions.push(Instruction::i64_load(src));
+        self.i64_load_m(MemArg::default(), src)
+    }
+    pub fn i64_load_m(&mut self, mem: MemArg, src: Instruction) -> &mut Self {
+        self.instructions.push(Instruction::i64_load_m(mem, src));
+        self
+    }
+    pub fn i64_load_(&mut self) -> &mut Self {
+        self.i64_load_m_(MemArg::default())
+    }
+    pub fn i64_load_m_(&mut self, mem: MemArg) -> &mut Self {
+        self.instructions.push(Instruction::i64_load_m_(mem));
         self
     }
     pub fn i32_add(&mut self, lhs: Instruction, rhs: Instruction) -> &mut Self {
@@ -1725,6 +1841,10 @@ impl Instructions {
         self.instructions.push(Instruction::local_tee(index, value));
         self
     }
+    pub fn local_tee_<T: Into<Index>>(&mut self, index: T) -> &mut Self {
+        self.instructions.push(Instruction::local_tee_(index));
+        self
+    }
     pub fn global_get<T: Into<Index>>(&mut self, index: T) -> &mut Self {
         self.instructions.push(Instruction::global_get(index));
         self
@@ -1794,6 +1914,24 @@ impl Instructions {
         self.instructions
             .push(Instruction::memory_copy(n, src, dst));
         self
+    }
+
+    // util: typed
+    pub fn load_m_(&mut self, ty: &Type, mem: MemArg) -> &mut Self {
+        match ty {
+            Type::I32 => self.i32_load_m_(mem),
+            Type::I64 => self.i64_load_m_(mem),
+            Type::F32 => todo!(),
+            Type::F64 => todo!(),
+        }
+    }
+    pub fn store_m_(&mut self, ty: &Type, mem: MemArg) -> &mut Self {
+        match ty {
+            Type::I32 => self.i32_store_m_(mem),
+            Type::I64 => self.i64_store_m_(mem),
+            Type::F32 => todo!(),
+            Type::F64 => todo!(),
+        }
     }
 }
 
@@ -2225,9 +2363,6 @@ impl WatBuilder {
         self.buffer.push(')');
     }
     fn emit_mem_arg(&mut self, mem: &MemArg) {
-        if mem.offset().is_some() || mem.align().is_some() {
-            self.buffer.push(' ');
-        }
         if let Some(offset) = mem.offset() {
             self.buffer.push(' ');
             self.buffer.push_str("offset=");
@@ -2783,5 +2918,91 @@ impl Visitor for WatBuilder {
     fn exit_global(&mut self, _global: &Entity<Global>) {
         self.buffer.push(')');
         self.newline();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn function_checkout_tmp() {
+        let mut fun = Function::new();
+        let tmp1 = fun.checkout_tmp(Type::I32);
+        let tmp2 = fun.checkout_tmp(Type::I32);
+        assert_eq!(fun.locals().len(), 2);
+        assert_ne!(tmp1.get(), tmp2.get());
+    }
+
+    #[test]
+    fn function_checkin_tmp() {
+        let mut fun = Function::new();
+        let tmp1 = fun.checkout_tmp(Type::I32);
+        assert_eq!(fun.locals().len(), 1);
+
+        // checks a tmp var back
+        let tmp1_idx = tmp1.get();
+        fun.checkin_tmp(tmp1);
+        // checks a tmp var out
+        let tmp2 = fun.checkout_tmp(Type::I32);
+
+        assert_eq!(fun.locals().len(), 1);
+        assert_eq!(tmp1_idx, tmp2.get());
+    }
+
+    #[test]
+    fn function_checkin_tmp_different_types() {
+        let mut fun = Function::new();
+        let tmp1 = fun.checkout_tmp(Type::I32);
+        assert_eq!(fun.locals().len(), 1);
+
+        // checks a tmp var back
+        let tmp1_idx = tmp1.get();
+        fun.checkin_tmp(tmp1);
+        // checks a tmp var out for a different type.
+        let tmp2 = fun.checkout_tmp(Type::I64);
+
+        assert_eq!(fun.locals().len(), 2, "new tmp var allocated");
+        assert_ne!(tmp1_idx, tmp2.get());
+
+        // tests tmp2
+        let tmp2_idx = tmp2.get();
+        fun.checkin_tmp(tmp2);
+        let tmp3 = fun.checkout_tmp(Type::I64);
+
+        assert_eq!(fun.locals().len(), 2, "no tmp var allocated");
+        assert_eq!(tmp2_idx, tmp3.get());
+    }
+
+    #[test]
+    fn string_data_write_escape_bytes() {
+        let mut buffer = String::new();
+
+        // raw bytes
+        let string = StringData::Bytes([0, 1, 0xFF].to_vec());
+
+        buffer.clear();
+        assert!(string.write_escape(&mut buffer).is_ok());
+        assert_eq!(&buffer, "\\00\\01\\ff");
+
+        // ASCII printable characters.
+        let string = StringData::Bytes("abc".as_bytes().to_vec());
+
+        buffer.clear();
+        assert!(string.write_escape(&mut buffer).is_ok());
+        assert_eq!(&buffer, "abc");
+
+        let string = StringData::Bytes(" !~".as_bytes().to_vec());
+
+        buffer.clear();
+        assert!(string.write_escape(&mut buffer).is_ok());
+        assert_eq!(&buffer, "\\20!~");
+
+        // Some control characters
+        let string = StringData::Bytes("\r\n\t\\".as_bytes().to_vec());
+
+        buffer.clear();
+        assert!(string.write_escape(&mut buffer).is_ok());
+        assert_eq!(&buffer, "\\r\\n\\t\\\\");
     }
 }

@@ -267,14 +267,26 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(";\n");
             }
             Stmt::Cond(cond) => {
-                if cond.var.used() > 0 {
-                    code.push_str(&c_type(cond.var.ty()));
+                if cond.var().used() > 0 {
+                    code.push_str(&c_type(cond.var().ty()));
                     code.push(' ');
-                    code.push_str(&tmp_var(cond.var));
+                    code.push_str(&tmp_var(cond.var()));
 
-                    // Initialize with zero value.
+                    // Initialize with zero value. We have to initialize PHI conditional variable before
+                    // branches are executed. Because C compiler can't determine this branches are
+                    // actually exhausted. E.g. Clang with the option `-Wsometimes-uninitialized` warns
+                    // the code below:
+                    //
+                    // ```c
+                    // int _t0;
+                    // if (n == 0) {
+                    //   _t0 = 100;
+                    // } else if (n == 1) {
+                    //   _t0 = 200;
+                    // }
+                    // ```
                     code.push_str(" = ");
-                    code.push_str(zero_value(cond.var.ty()));
+                    code.push_str(zero_value(cond.var().ty()));
 
                     code.push_str(";\n");
                 }
@@ -282,11 +294,13 @@ impl<'a, 'tcx> Emitter {
                 // Construct "if-else" statement from each branches.
                 // If a branch has only one branch and it has no condition,
                 // this loop finally generate a block statement.
-                for (i, branch) in cond.branches.iter().enumerate() {
+                for (i, branch) in cond.branches().iter().enumerate() {
                     if i > 0 {
                         code.push_str("else ");
                     }
 
+                    // We must emit all conditions to generate or-pattern that
+                    // contains binding pattern properly.
                     if let Some(condition) = branch.condition {
                         code.push_str("if (");
                         self.emit_expr(condition, code);
@@ -633,7 +647,7 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".{}", name));
             }
-            ExprKind::UnionTag(operand) => {
+            ExprKind::UnionGetTag(operand) => {
                 self.emit_expr(operand, code);
                 code.push_str(".tag");
             }
@@ -641,7 +655,7 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".u._{}", tag));
             }
-            ExprKind::UnionValue { value, tag } => {
+            ExprKind::Union { value, tag } => {
                 // Specify struct type explicitly.
                 code.push('(');
                 code.push_str(&c_type(expr.ty()));
@@ -684,8 +698,8 @@ fn c_type(ty: &Type) -> String {
     }
 }
 
-// Anything in C can be initialized with = 0; this initializes
-// numeric elements to zero and pointers null.
+// // Anything in C can be initialized with = 0; this initializes
+// // numeric elements to zero and pointers null.
 fn zero_value(ty: &Type) -> &'static str {
     match ty {
         Type::Int64

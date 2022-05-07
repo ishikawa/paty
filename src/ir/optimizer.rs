@@ -119,9 +119,9 @@ impl<'ir, 'tcx> Optimizer<'ir, 'tcx> {
             }
             Stmt::Cond(cond) => {
                 let mut branches_modified = false;
-                let mut branches = Vec::with_capacity(cond.branches.len());
+                let mut new_cond = Cond::new(cond.var());
 
-                for b in &cond.branches {
+                for b in cond.branches() {
                     let condition = b.condition.and_then(|c| {
                         self._run_function_pass_with_expr(pass, c)
                             .map(|c| {
@@ -137,14 +137,11 @@ impl<'ir, 'tcx> Optimizer<'ir, 'tcx> {
                             stmts
                         })
                         .unwrap_or_else(|| b.body.clone());
-                    branches.push(Branch { condition, body });
+                    new_cond.push_branch(Branch { condition, body });
                 }
 
                 if branches_modified {
-                    return Some(self.ctx.stmt_arena.alloc(Stmt::Cond(Cond {
-                        var: cond.var,
-                        branches,
-                    })));
+                    return Some(self.ctx.stmt_arena.alloc(Stmt::Cond(new_cond)));
                 }
             }
         }
@@ -403,9 +400,9 @@ impl<'ir, 'tcx> Optimizer<'ir, 'tcx> {
                     });
                 }
             }
-            &ExprKind::UnionTag(operand) => {
+            &ExprKind::UnionGetTag(operand) => {
                 if let Some(operand) = self._run_function_pass_with_expr(pass, operand) {
-                    return Some(ExprKind::UnionTag(operand));
+                    return Some(ExprKind::UnionGetTag(operand));
                 }
             }
             &ExprKind::UnionMemberAccess { operand, tag } => {
@@ -413,9 +410,9 @@ impl<'ir, 'tcx> Optimizer<'ir, 'tcx> {
                     return Some(ExprKind::UnionMemberAccess { operand, tag });
                 }
             }
-            &ExprKind::UnionValue { value, tag } => {
+            &ExprKind::Union { value, tag } => {
                 if let Some(value) = self._run_function_pass_with_expr(pass, value) {
-                    return Some(ExprKind::UnionValue { value, tag });
+                    return Some(ExprKind::Union { value, tag });
                 }
             }
             ExprKind::TmpVar(_)

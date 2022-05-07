@@ -106,6 +106,18 @@ assert 'true' "
 # string
 assert 'こんにちは' 'puts("こんにちは")'
 assert '\' 'puts("\\")'
+assert '2
+two' '
+  def double(n: 1 | "one")
+    case n
+    when 1
+      2
+    when "one"
+      "two"
+    end
+  end
+  puts(double(1))
+  puts(double("one"))'
 # assert '1 2 3 4' '
 #   def fruit_to_num(fruit: string)
 #     case fruit
@@ -124,5 +136,11 @@ assert '\' 'puts("\\")'
 #     fruit_to_num("Orange"),
 #     fruit_to_num("Strawberry"),
 #     fruit_to_num("Grape"))'
+# function
+assert 30 "
+  def foo(x, y)
+    x + y
+  end
+  puts(foo(10, 20))"
 
 echo OK

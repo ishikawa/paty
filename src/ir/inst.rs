@@ -426,11 +426,30 @@ impl fmt::Display for Stmt<'_, '_> {
 #[derive(Debug, Clone)]
 pub struct Cond<'a, 'tcx> {
     /// The index of temporary variable which holds the result.
-    pub var: &'a TmpVar<'a, 'tcx>,
-    pub branches: Vec<Branch<'a, 'tcx>>,
+    var: &'a TmpVar<'a, 'tcx>,
+    branches: Vec<Branch<'a, 'tcx>>,
 }
 
 impl<'a, 'tcx> Cond<'a, 'tcx> {
+    pub fn new(var: &'a TmpVar<'a, 'tcx>) -> Self {
+        Self {
+            var,
+            branches: vec![],
+        }
+    }
+
+    pub fn var(&self) -> &'a TmpVar<'a, 'tcx> {
+        self.var
+    }
+
+    pub fn branches(&self) -> &[Branch<'a, 'tcx>] {
+        self.branches.as_slice()
+    }
+
+    pub fn push_branch(&mut self, branch: Branch<'a, 'tcx>) {
+        self.branches.push(branch);
+    }
+
     fn _fmt(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         write!(f, "t{}\t(used: {}) = ", self.var.index, self.var.used())?;
         writeln!(f, "cond {{")?;
@@ -556,7 +575,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
     }
     pub fn union_tag(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
         assert!(matches!(operand.ty(), Type::Union(_)));
-        let kind = ExprKind::UnionTag(operand);
+        let kind = ExprKind::UnionGetTag(operand);
         Self::new(kind, tcx.int64())
     }
     pub fn tuple_index_access(operand: &'a Expr<'a, 'tcx>, index: usize) -> Self {
@@ -586,7 +605,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         Self::new(kind, member_ty)
     }
     pub fn union_value(value: &'a Expr<'a, 'tcx>, tag: usize, union_ty: &'tcx Type<'tcx>) -> Self {
-        let kind = ExprKind::UnionValue { value, tag };
+        let kind = ExprKind::Union { value, tag };
         Self::new(kind, union_ty)
     }
     pub fn cond_value(
@@ -649,12 +668,12 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             ExprKind::CondValue { .. } => false,
             ExprKind::Tuple(_)
             | ExprKind::StructValue(_)
-            | ExprKind::UnionValue { .. }
+            | ExprKind::Union { .. }
             | ExprKind::Call { .. }
             | ExprKind::Printf(_) => false,
             ExprKind::IndexAccess { operand, .. }
             | ExprKind::FieldAccess { operand, .. }
-            | ExprKind::UnionTag(operand)
+            | ExprKind::UnionGetTag(operand)
             | ExprKind::UnionMemberAccess { operand, .. } => operand.can_be_immediate(),
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
@@ -705,9 +724,9 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Str(_)
             | ExprKind::IndexAccess { .. }
             | ExprKind::FieldAccess { .. }
-            | ExprKind::UnionTag(_)
+            | ExprKind::UnionGetTag(_)
             | ExprKind::UnionMemberAccess { .. }
-            | ExprKind::UnionValue { .. }
+            | ExprKind::Union { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => false,
         }
@@ -783,14 +802,14 @@ pub enum ExprKind<'a, 'tcx> {
     /// Get the tag of an union type.
     /// - The operand must be an union type value.
     /// - The return value is an int value. 0 =< n < the number of union members.
-    UnionTag(&'a Expr<'a, 'tcx>),
+    UnionGetTag(&'a Expr<'a, 'tcx>),
     UnionMemberAccess {
         operand: &'a Expr<'a, 'tcx>,
         tag: usize,
     },
     /// Initialize an union value with `value` as initial value of
     /// tagged member.
-    UnionValue {
+    Union {
         value: &'a Expr<'a, 'tcx>,
         tag: usize,
     },
@@ -883,9 +902,9 @@ impl fmt::Display for ExprKind<'_, '_> {
             }
             ExprKind::IndexAccess { operand, index } => write!(f, "{}.{}", operand, index),
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
-            ExprKind::UnionTag(expr) => write!(f, "{}.tag", expr),
+            ExprKind::UnionGetTag(expr) => write!(f, "{}.tag", expr),
             ExprKind::UnionMemberAccess { operand, tag } => write!(f, "{}._u.{}", operand, tag),
-            ExprKind::UnionValue {
+            ExprKind::Union {
                 value: operand,
                 tag,
             } => write!(f, "(_u.{}){}", tag, operand),
