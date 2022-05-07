@@ -133,18 +133,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             .alloc(Expr::struct_field_access(operand, name))
     }
     #[inline]
-    fn call_c(
-        &self,
-        name: String,
-        args: Vec<&'a Expr<'a, 'tcx>>,
-        retty: &'tcx Type<'tcx>,
-    ) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Call {
-            name,
-            cc: CallingConvention::C,
-            args,
-        };
-        self.expr_arena.alloc(Expr::new(kind, retty))
+    fn strcmp(&self, s1: &'a Expr<'a, 'tcx>, s2: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::strcmp(self.tcx, s1, s2))
     }
     #[inline]
     fn int64(&self, value: i64) -> &'a Expr<'a, 'tcx> {
@@ -1185,11 +1175,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 Some(cond)
             }
             (Type::String, Type::LiteralString(s)) | (Type::LiteralString(s), Type::String) => {
-                let strcmp = self.call_c(
-                    "strcmp".to_string(),
-                    vec![target_expr, self.const_string(s)],
-                    self.tcx.native_int(),
-                );
+                let strcmp = self.strcmp(target_expr, self.const_string(s));
                 Some(self.eq(strcmp, self.native_int(0)))
             }
             (Type::Tuple(target_fs), Type::Tuple(pat_fs)) => {
@@ -1299,13 +1285,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         Some(self.bool(false))
                     }
                 } else {
-                    // Compare the value of head expression and pattern string with
-                    // POSIX `strcmp` function.
-                    let strcmp = self.call_c(
-                        "strcmp".to_string(),
-                        vec![target_expr, self.const_string(value)],
-                        self.tcx.native_int(),
-                    );
+                    let strcmp = self.strcmp(target_expr, self.const_string(value));
                     Some(self.eq(strcmp, self.native_int(0)))
                 }
             }
@@ -1717,7 +1697,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             })
             .collect();
 
-        // Constructs (?... :...) to initialize an union value.
+        // Constructs (?... :...) to initialize a union value.
         // Note, the last condition will be ignored as `else` condition because
         // the these conditions must be exhausted.
         assert!(

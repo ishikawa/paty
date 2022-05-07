@@ -103,9 +103,12 @@ assert 'true' "
   when false
     puts(false)
   end"
-# string
+# ---------------------------------
+# String
+# ---------------------------------
 assert 'こんにちは' 'puts("こんにちは")'
 assert '\' 'puts("\\")'
+# Takes a union value and returns a union value.
 assert '2
 two' '
   def double(n: 1 | "one")
@@ -118,24 +121,25 @@ two' '
   end
   puts(double(1))
   puts(double("one"))'
-# assert '1 2 3 4' '
-#   def fruit_to_num(fruit: string)
-#     case fruit
-#     when "Apple"
-#       1
-#     when "Orange"
-#       2
-#     when "Strawberry"
-#       3
-#     else
-#       4
-#     end
-#   end
-#   puts(
-#     fruit_to_num("Apple"),
-#     fruit_to_num("Orange"),
-#     fruit_to_num("Strawberry"),
-#     fruit_to_num("Grape"))'
+# Compares strings.
+assert '1 2 3 4' '
+  def fruit_to_num(fruit: string)
+    case fruit
+    when "Apple"
+      1
+    when "Orange"
+      2
+    when "Strawberry"
+      3
+    else
+      4
+    end
+  end
+  puts(
+    fruit_to_num("Apple"),
+    fruit_to_num("Orange"),
+    fruit_to_num("Strawberry"),
+    fruit_to_num("Grape"))'
 # function
 assert 30 "
   def foo(x, y)

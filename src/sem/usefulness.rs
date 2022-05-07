@@ -1002,7 +1002,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
         pat: &Pattern<'_, 'tcx>,
         context_ty: &'tcx Type<'tcx>,
     ) -> Self {
-        // If the context type is an union type, each pattern should be one/some of
+        // If the context type is a union type, each pattern should be one/some of
         // member(s) of it.
         match (pat.kind(), context_ty) {
             (PatternKind::Var(_) | PatternKind::Wildcard, _) if pat.explicit_ty().is_some() => {
@@ -1135,7 +1135,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
     ) -> Self {
         let pat_ty = explicit_ty.bottom_ty();
 
-        // If the pattern type is an union type, build an Or-pattern which contains
+        // If the pattern type is a union type, build an Or-pattern which contains
         // all patterns from union members.
         if let Type::Union(member_types) = pat_ty {
             let mut pats = vec![];
@@ -1143,7 +1143,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             for member_ty in expand_union_ty_array(member_types) {
                 let pat = Self::_from_explicit_ty(cx, member_ty, context_ty);
 
-                // If an union type includes a wildcard pattern, this pattern matches
+                // If a union type includes a wildcard pattern, this pattern matches
                 // any value for its type.
                 if pat.ctor().is_wildcard() {
                     return Self::wildcard(pat_ty);
@@ -1155,7 +1155,7 @@ impl<'p, 'tcx> DeconstructedPat<'p, 'tcx> {
             let fields = Fields::from_iter(cx, pats);
             DeconstructedPat::new(Constructor::Or, fields, pat_ty)
         }
-        // If the context type is an union type, each pattern should be one/some of
+        // If the context type is a union type, each pattern should be one/some of
         // member(s) of it.
         else if let Type::Union(context_member_types) = context_ty {
             let context_member_types = expand_union_ty_array(context_member_types);

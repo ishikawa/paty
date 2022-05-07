@@ -446,13 +446,11 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(else_value, code);
                 code.push(')');
             }
-            ExprKind::Call { name, args, cc } => {
-                if let CallingConvention::Std(signature) = cc {
-                    let mangled_name = mangle_name(signature);
-                    code.push_str(&format!("{}(", mangled_name));
-                } else {
-                    code.push_str(&format!("{}(", name));
-                }
+            ExprKind::Call { name: _, args, cc } => {
+                let CallingConvention::Std(signature) = cc;
+                let mangled_name = mangle_name(signature);
+
+                code.push_str(&format!("{}(", mangled_name));
 
                 for (i, arg) in args.iter().enumerate() {
                     self.emit_expr(arg, code);
@@ -461,6 +459,13 @@ impl<'a, 'tcx> Emitter {
                         code.push_str(", ");
                     }
                 }
+                code.push(')');
+            }
+            ExprKind::Strcmp(s1, s2) => {
+                code.push_str("strcmp(");
+                self.emit_expr(s1, code);
+                code.push_str(", ");
+                self.emit_expr(s2, code);
                 code.push(')');
             }
             ExprKind::Printf(specs) => {

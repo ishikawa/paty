@@ -1025,12 +1025,9 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(rhs, wasm_fun, body, module);
                 body.i32_or_();
             }
-            ExprKind::Call { name, cc, args } => {
-                let callee = if let CallingConvention::Std(signature) = cc {
-                    mangle_name(signature)
-                } else {
-                    name.to_string()
-                };
+            ExprKind::Call { name: _, cc, args } => {
+                let CallingConvention::Std(signature) = cc;
+                let callee = mangle_name(signature);
 
                 for arg in args {
                     self.emit_expr(arg, wasm_fun, body, module);
@@ -1044,6 +1041,7 @@ impl<'a, 'tcx> Emitter {
                 else_value,
             } => todo!(),
             ExprKind::CondAndAssign { cond, var } => todo!(),
+            ExprKind::Strcmp(s1, s2) => todo!(),
             ExprKind::Printf(args) => {
                 let mut args = args.iter().peekable();
 
@@ -1126,7 +1124,7 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Var(var) => {
                 body.local_get(var.name());
             }
-            // Memory layout for an union value.
+            // Memory layout for a union value.
             //
             // +-----------+----------------------+
             // | tag (i64) |  value (8 bytes) ... |
@@ -1136,9 +1134,9 @@ impl<'a, 'tcx> Emitter {
                 body.i64_load_();
             }
             ExprKind::UnionMemberAccess { operand, tag } => {
-                // Get the address where an union value stands.
+                // Get the address where a union value stands.
                 self.emit_expr(operand, wasm_fun, body, module);
-                // Load the value of an union value.
+                // Load the value of a union value.
                 body.load_m_(&wasm_type(expr.ty()), MemArg::with_offset(SIZE_UNION_TAG));
             }
             &ExprKind::Union { value, tag } => {

@@ -106,9 +106,12 @@ assert 'true' "
     when false
       puts(false)
     end"
-# string
+# ---------------------------------
+# String
+# ---------------------------------
 assert 'こんにちは' 'puts("こんにちは")'
 assert '\' 'puts("\\")'
+# Takes a union value and returns a union value.
 assert '2
 two' '
   def double(n: 1 | "one")
@@ -121,6 +124,7 @@ two' '
   end
   puts(double(1))
   puts(double("one"))'
+# Compares strings.
 assert '1 2 3 4' '
   def fruit_to_num(fruit: string)
     case fruit

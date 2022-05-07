@@ -573,6 +573,10 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         let kind = ExprKind::Printf(format_specs);
         Self::new(kind, tcx.int64())
     }
+    pub fn strcmp(tcx: TypeContext<'tcx>, s1: &'a Expr<'a, 'tcx>, s2: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Strcmp(s1, s2);
+        Self::new(kind, tcx.native_int())
+    }
     pub fn union_tag(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
         assert!(matches!(operand.ty(), Type::Union(_)));
         let kind = ExprKind::UnionGetTag(operand);
@@ -670,6 +674,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::StructValue(_)
             | ExprKind::Union { .. }
             | ExprKind::Call { .. }
+            | ExprKind::Strcmp(_, _)
             | ExprKind::Printf(_) => false,
             ExprKind::IndexAccess { operand, .. }
             | ExprKind::FieldAccess { operand, .. }
@@ -700,7 +705,8 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Gt(a, b)
             | ExprKind::Ge(a, b)
             | ExprKind::And(a, b)
-            | ExprKind::Or(a, b) => a.has_side_effect() || b.has_side_effect(),
+            | ExprKind::Or(a, b)
+            | ExprKind::Strcmp(a, b) => a.has_side_effect() || b.has_side_effect(),
             ExprKind::CondValue {
                 cond,
                 then_value,
@@ -741,8 +747,6 @@ impl fmt::Display for Expr<'_, '_> {
 
 #[derive(Debug, Clone)]
 pub enum CallingConvention<'tcx> {
-    /// C lang
-    C,
     /// This lang
     Std(FunctionSignature<'tcx>),
 }
@@ -779,7 +783,14 @@ pub enum ExprKind<'a, 'tcx> {
         var: &'a TmpVar<'a, 'tcx>,
     },
 
-    // Built-in procedures
+    // --- Built-in procedures
+    /// Compare two strings.
+    ///
+    /// The strcmp() function compares the string pointed to by `s1` and `s2`.
+    /// Returns an integer greater than, equal to, or less than `0`, if the string
+    /// pointed to by `s1` is greater than, equal to, or less than the string
+    /// pointed to by `s2`, respectively.
+    Strcmp(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     Printf(Vec<FormatSpec<'a, 'tcx>>),
 
     // Values
@@ -799,15 +810,15 @@ pub enum ExprKind<'a, 'tcx> {
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(Var<'tcx>),
     // -- Union type
-    /// Get the tag of an union type.
-    /// - The operand must be an union type value.
+    /// Get the tag of a union type.
+    /// - The operand must be a union type value.
     /// - The return value is an int value. 0 =< n < the number of union members.
     UnionGetTag(&'a Expr<'a, 'tcx>),
     UnionMemberAccess {
         operand: &'a Expr<'a, 'tcx>,
         tag: usize,
     },
-    /// Initialize an union value with `value` as initial value of
+    /// Initialize a union value with `value` as initial value of
     /// tagged member.
     Union {
         value: &'a Expr<'a, 'tcx>,
@@ -856,6 +867,7 @@ impl fmt::Display for ExprKind<'_, '_> {
                 }
                 write!(f, ")")
             }
+            ExprKind::Strcmp(a, b) => write!(f, "@strcmp({}, {})", a, b),
             ExprKind::Printf(args) => {
                 write!(f, "@printf(")?;
                 let mut it = args.iter().peekable();

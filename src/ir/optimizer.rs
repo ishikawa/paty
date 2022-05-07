@@ -279,6 +279,14 @@ impl<'ir, 'tcx> Optimizer<'ir, 'tcx> {
                     return Some(ExprKind::Or(a2.unwrap_or(a), b2.unwrap_or(b)));
                 }
             }
+            ExprKind::Strcmp(a, b) => {
+                let a2 = self._run_function_pass_with_expr(pass, a);
+                let b2 = self._run_function_pass_with_expr(pass, b);
+
+                if a2.is_some() || b2.is_some() {
+                    return Some(ExprKind::Strcmp(a2.unwrap_or(a), b2.unwrap_or(b)));
+                }
+            }
             ExprKind::Call { name, cc, args } => {
                 let mut new_args = Vec::with_capacity(args.len());
                 let mut modified = false;
