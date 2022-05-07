@@ -56,6 +56,7 @@ pub enum Prelude {
     FdWriteU32,
     FdDebugU8,
     AbsI64,
+    CompareStr,
 }
 
 impl Prelude {
@@ -66,6 +67,7 @@ impl Prelude {
             Self::FdWriteU32 => "@fd_write_u32",
             Self::FdDebugU8 => "@fd_debug_u8",
             Self::AbsI64 => "@abs_i64",
+            Self::CompareStr => "@compare_str",
         }
     }
 }
@@ -233,6 +235,7 @@ impl<'a, 'tcx> Emitter {
             Prelude::FdWriteU32 => self.build_prelude_fd_write_u32(module),
             Prelude::FdDebugU8 => self.build_prelude_fd_debug_u8(module),
             Prelude::AbsI64 => self.build_prelude_abs_i64(module),
+            Prelude::CompareStr => self.build_prelude_compare_str(module),
         };
         module.prepend_function(Entity::named(prelude.id(), wasm_fun));
     }
@@ -297,18 +300,18 @@ impl<'a, 'tcx> Emitter {
                 .body_mut()
                 // n_written = *n_written_ptr
                 .local_set(
-                    n_written.get(),
+                    &n_written,
                     Instruction::i32_load(Instruction::local_get(n_written_ptr)),
                 )
                 // n_left = io_vs_ptr[1] - n_written
                 .local_set(
-                    n_left.get(),
+                    &n_left,
                     Instruction::i32_sub(
                         Instruction::i32_load_m(
                             MemArg::with_offset(4),
                             Instruction::local_get(io_vs_ptr),
                         ),
-                        Instruction::local_get(n_written.get()),
+                        Instruction::local_get(&n_written),
                     ),
                 )
                 // io_vs_ptr[0] += n_written
@@ -316,22 +319,19 @@ impl<'a, 'tcx> Emitter {
                     Instruction::local_get(io_vs_ptr),
                     Instruction::i32_add(
                         Instruction::i32_load(Instruction::local_get(io_vs_ptr)),
-                        Instruction::local_get(n_written.get()),
+                        Instruction::local_get(&n_written),
                     ),
                 )
                 // io_vs_ptr[1] = n_left
                 .i32_store_m(
                     MemArg::with_offset(4),
                     Instruction::local_get(io_vs_ptr),
-                    Instruction::local_get(n_left.get()),
+                    Instruction::local_get(&n_left),
                 )
                 // continue if n_left != 0
                 .br_if(
                     0,
-                    Instruction::i32_ne(
-                        Instruction::local_get(n_left.get()),
-                        Instruction::i32_const(0),
-                    ),
+                    Instruction::i32_ne(Instruction::local_get(&n_left), Instruction::i32_const(0)),
                 );
             // TODO: return if error happened.
             // TODO: return the length of written.
@@ -422,7 +422,7 @@ impl<'a, 'tcx> Emitter {
                 )
                 // c: u8 = table[tmp_n % 10]
                 .local_set(
-                    tmp32.get(),
+                    &tmp32,
                     Instruction::i32_load8_u(Instruction::i32_add(
                         Instruction::i32_const(table_ptr),
                         Instruction::i32_rem_u(
@@ -437,7 +437,7 @@ impl<'a, 'tcx> Emitter {
                         Instruction::global_get(SP),
                         Instruction::local_get(n_columns),
                     ),
-                    Instruction::local_get(tmp32.get()),
+                    Instruction::local_get(&tmp32),
                 )
                 // tmp_n = tmp_n / 10
                 .local_tee(
@@ -574,7 +574,7 @@ impl<'a, 'tcx> Emitter {
                 )
                 // c: u8 = table[tmp_n % 10]
                 .local_set(
-                    tmp32.get(),
+                    &tmp32,
                     Instruction::i32_load8_u(Instruction::i32_add(
                         Instruction::i32_const(table_ptr),
                         Instruction::i32_wrap_i64(Instruction::i64_rem_s(
@@ -589,7 +589,7 @@ impl<'a, 'tcx> Emitter {
                         Instruction::global_get(SP),
                         Instruction::local_get(n_columns),
                     ),
-                    Instruction::local_get(tmp32.get()),
+                    Instruction::local_get(&tmp32),
                 )
                 // tmp_n = tmp_n / 10
                 .local_tee(
@@ -779,6 +779,133 @@ impl<'a, 'tcx> Emitter {
 
         // No stack used.
         //self.emit_function_epilogue(&mut wasm_fun);
+        wasm_fun
+    }
+    /// Defines `compare_str` prelude.
+    ///
+    /// ```ignore
+    /// @compare_str(s1: *io_vec, s2: *io_vec) result:i32
+    /// ```
+    fn build_prelude_compare_str(&mut self, _module: &mut Module) -> wasm::Function {
+        // locals
+        let param_s1 = "s1";
+        let param_s2 = "s2";
+        let local_s1_len = "s1_len";
+        let local_s2_len = "s2_len";
+
+        let mut wasm_fun = wasm::Function::with_signature(wasm::FunctionSignature::new(
+            vec![
+                Entity::named(param_s1, wasm::Type::I32),
+                Entity::named(param_s2, wasm::Type::I32),
+            ],
+            vec![wasm::Type::I32],
+        ));
+        wasm_fun.push_local(Entity::named(local_s1_len, wasm::Type::I32));
+        wasm_fun.push_local(Entity::named(local_s2_len, wasm::Type::I32));
+
+        wasm_fun
+            .body_mut()
+            // s1_len = strlen(s1)
+            .local_get(param_s1)
+            .i32_load_m_(MemArg::with_offset(4))
+            .local_set_(local_s1_len)
+            // s2_len = strlen(s2)
+            .local_get(param_s2)
+            .i32_load_m_(MemArg::with_offset(4))
+            .local_set_(local_s2_len);
+
+        // block {
+        //     distance = s1_len - s2_len;
+        //     if (distance == 0) break;
+        //     return distance;
+        // }
+        {
+            let mut wasm_block = wasm::BlockInstruction::new();
+            let distance = wasm_fun.checkout_tmp(wasm::Type::I32);
+
+            wasm_block
+                .body_mut()
+                .i32_sub(
+                    Instruction::local_get(local_s1_len),
+                    Instruction::local_get(local_s2_len),
+                )
+                .local_tee_(&distance)
+                .i32_eqz_()
+                .br_if_(0)
+                .local_get(&distance)
+                .r#return();
+
+            wasm_fun.checkin_tmp(distance);
+            wasm_fun.body_mut().block(wasm_block);
+        }
+
+        // i32 n = s1_len;
+        // i8 *p1 = s1.ptr, *p2 = s2.ptr;
+        // 'outer_loop loop {
+        //     block {
+        //         if (n == 0) break;
+        //         if (*p1 != *p2) break;
+        //         n -= 1;
+        //         p1 += 1;
+        //         p2 += 1;
+        //         continue 'outer_loop;
+        //     }
+        // }
+        // return n == 0 ? 0 : *p1 - *p2;
+        {
+            let n = local_s1_len;
+            let p1 = wasm_fun.checkout_tmp(wasm::Type::I32);
+            let p2 = wasm_fun.checkout_tmp(wasm::Type::I32);
+
+            wasm_fun
+                .body_mut()
+                .local_set(&p1, Instruction::i32_load(Instruction::local_get(param_s1)))
+                .local_set(&p2, Instruction::i32_load(Instruction::local_get(param_s2)));
+
+            let mut outer_loop = wasm::LoopInstruction::new();
+            let mut inner_block = wasm::BlockInstruction::new();
+
+            inner_block
+                // if (n == 0) break;
+                .body_mut()
+                .i32_eqz(Instruction::local_get(n))
+                .br_if_(0)
+                // if (*p1 != *p2) break;
+                .i32_load8_u(Instruction::local_get(&p1))
+                .i32_load8_u(Instruction::local_get(&p2))
+                .i32_ne_()
+                .br_if_(0)
+                // n -= 1;
+                .i32_sub(Instruction::local_get(n), Instruction::i32_const(1))
+                .local_set_(n)
+                // p1 += 1;
+                .i32_add(Instruction::local_get(&p1), Instruction::i32_const(1))
+                .local_set_(&p1)
+                // p2 += 1;
+                .i32_add(Instruction::local_get(&p2), Instruction::i32_const(1))
+                .local_set_(&p2)
+                // continue 'outer_loop;
+                .br(1);
+
+            outer_loop.body_mut().block(inner_block);
+            wasm_fun.body_mut().r#loop(outer_loop);
+            // return n == 0 ? 0 : *p1 - *p2;
+            wasm_fun
+                .body_mut()
+                .select(
+                    Instruction::i32_const(0),
+                    Instruction::i32_sub(
+                        Instruction::i32_load8_u(Instruction::local_get(&p1)),
+                        Instruction::i32_load8_u(Instruction::local_get(&p2)),
+                    ),
+                    Instruction::i32_eqz(Instruction::local_get(n)),
+                )
+                .r#return();
+
+            wasm_fun.checkin_tmp(p1);
+            wasm_fun.checkin_tmp(p2);
+        }
+
         wasm_fun
     }
 
@@ -1041,7 +1168,13 @@ impl<'a, 'tcx> Emitter {
                 else_value,
             } => todo!(),
             ExprKind::CondAndAssign { cond, var } => todo!(),
-            ExprKind::Strcmp(s1, s2) => todo!(),
+            ExprKind::Strcmp(s1, s2) => {
+                self.emit_expr(s1, wasm_fun, body, module);
+                self.emit_expr(s2, wasm_fun, body, module);
+
+                let compare_str = self.use_prelude(module, &Prelude::CompareStr);
+                body.call(compare_str, vec![]).i64_extend_i32_s_();
+            }
             ExprKind::Printf(args) => {
                 let mut args = args.iter().peekable();
 
@@ -1073,11 +1206,11 @@ impl<'a, 'tcx> Emitter {
                             // v == 0 ? "false" : "true"
                             let tmp32 = wasm_fun.checkout_tmp(wasm::Type::I32);
 
-                            body.local_set_(tmp32.get())
+                            body.local_set_(&tmp32)
                                 .select(
                                     self.build_const_string("true", module),
                                     self.build_const_string("false", module),
-                                    Instruction::local_get(tmp32.get()),
+                                    Instruction::local_get(&tmp32),
                                 )
                                 .call(fd_write_all, vec![]);
 
@@ -1150,12 +1283,12 @@ impl<'a, 'tcx> Emitter {
 
                 // Write the tag.
                 body.global_get(SP)
-                    .local_tee_(sp.get())
+                    .local_tee_(&sp)
                     .i64_const(tag)
                     .i64_store_();
 
                 // Emit the value and write it at SP + SIZE_TAG.
-                body.local_get(sp.get());
+                body.local_get(&sp);
                 self.emit_expr(value, wasm_fun, body, module);
                 body.store_m_(&wasm_type(value.ty()), MemArg::with_offset(SIZE_UNION_TAG));
 
@@ -1163,7 +1296,7 @@ impl<'a, 'tcx> Emitter {
                 body.push(
                     self.build_advance_sp((SIZE_UNION_TAG + SIZE_UNION_VALUE).align(ALIGN_UNION)),
                 )
-                .local_get(sp.get());
+                .local_get(&sp);
             }
         }
     }

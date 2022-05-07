@@ -678,15 +678,17 @@ impl TemporaryVariable {
         Self { ty, index }
     }
 
-    pub fn get(&self) -> Index {
-        self.index.clone()
-    }
-
     pub fn ty(&self) -> &Type {
         &self.ty
     }
     pub fn index(&self) -> &Index {
         &self.index
+    }
+}
+
+impl From<&TemporaryVariable> for Index {
+    fn from(t: &TemporaryVariable) -> Self {
+        t.index().clone()
     }
 }
 
@@ -1110,6 +1112,9 @@ impl Instruction {
     pub fn i64_extend_i32_s(operand: Instruction) -> Self {
         Self::new(InstructionKind::I64ExtendI32S, vec![operand])
     }
+    pub fn i64_extend_i32_s_() -> Self {
+        Self::new(InstructionKind::I64ExtendI32S, vec![])
+    }
     pub fn i64_extend_i32_u(operand: Instruction) -> Self {
         Self::new(InstructionKind::I64ExtendI32U, vec![operand])
     }
@@ -1278,6 +1283,10 @@ pub enum InstructionKind {
     Drop,
     // The `select` instruction selects one of its first two operands based
     // on whether its third operand is zero or not.
+    //
+    //     select(val1, val2, c)
+    //
+    // If `c` is not `0`, then: push the value `val1` back to the stack.
     Select,
     // control instructions
     Nop,
@@ -1813,6 +1822,10 @@ impl Instructions {
     pub fn i64_extend_i32_s(&mut self, operand: Instruction) -> &mut Self {
         self.instructions
             .push(Instruction::i64_extend_i32_s(operand));
+        self
+    }
+    pub fn i64_extend_i32_s_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::i64_extend_i32_s_());
         self
     }
     pub fn i64_extend_i32_u(&mut self, operand: Instruction) -> &mut Self {
@@ -2931,7 +2944,7 @@ mod tests {
         let tmp1 = fun.checkout_tmp(Type::I32);
         let tmp2 = fun.checkout_tmp(Type::I32);
         assert_eq!(fun.locals().len(), 2);
-        assert_ne!(tmp1.get(), tmp2.get());
+        assert_ne!(tmp1, tmp2);
     }
 
     #[test]
@@ -2941,13 +2954,13 @@ mod tests {
         assert_eq!(fun.locals().len(), 1);
 
         // checks a tmp var back
-        let tmp1_idx = tmp1.get();
+        let tmp1_idx = tmp1.index().clone();
         fun.checkin_tmp(tmp1);
         // checks a tmp var out
         let tmp2 = fun.checkout_tmp(Type::I32);
 
         assert_eq!(fun.locals().len(), 1);
-        assert_eq!(tmp1_idx, tmp2.get());
+        assert_eq!(&tmp1_idx, tmp2.index());
     }
 
     #[test]
@@ -2957,21 +2970,21 @@ mod tests {
         assert_eq!(fun.locals().len(), 1);
 
         // checks a tmp var back
-        let tmp1_idx = tmp1.get();
+        let tmp1_idx = tmp1.index().clone();
         fun.checkin_tmp(tmp1);
         // checks a tmp var out for a different type.
         let tmp2 = fun.checkout_tmp(Type::I64);
 
         assert_eq!(fun.locals().len(), 2, "new tmp var allocated");
-        assert_ne!(tmp1_idx, tmp2.get());
+        assert_ne!(&tmp1_idx, tmp2.index());
 
         // tests tmp2
-        let tmp2_idx = tmp2.get();
+        let tmp2_idx = tmp2.index().clone();
         fun.checkin_tmp(tmp2);
         let tmp3 = fun.checkout_tmp(Type::I64);
 
         assert_eq!(fun.locals().len(), 2, "no tmp var allocated");
-        assert_eq!(tmp2_idx, tmp3.get());
+        assert_eq!(&tmp2_idx, tmp3.index());
     }
 
     #[test]
