@@ -922,9 +922,15 @@ impl<'a, 'tcx> Emitter {
             let wasm_ty = wasm_type(param.ty());
 
             match param {
-                Parameter::TmpVar(_) => {
-                    // In WASM, we can define a parameter as unnamed.
-                    wasm_params.push(Entity::new(wasm_ty));
+                Parameter::TmpVar(var) => {
+                    if var.used() == 0 {
+                        // To suppress unused variable warning in C,
+                        // IR instruction can have "unused" parameters.
+                        // In that case, we define an unnamed parameter.
+                        wasm_params.push(Entity::new(wasm_ty));
+                    } else {
+                        wasm_params.push(Entity::named(tmp_var(var), wasm_ty));
+                    }
                 }
                 Parameter::Var(v) => {
                     wasm_params.push(Entity::named(v.name(), wasm_ty));
@@ -1290,7 +1296,18 @@ impl<'a, 'tcx> Emitter {
                 body.push(self.build_advance_sp((offset).align(ALIGN_TUPLE)))
                     .local_get(&sp);
             }
-            ExprKind::IndexAccess { operand, index } => todo!(),
+            &ExprKind::IndexAccess { operand, index } => {
+                // Calculate the offset address of the element at the `index` and
+                // emit an instruction to access it.
+                let fs = operand.ty().tuple_ty().unwrap();
+                let offset = fs
+                    .iter()
+                    .take(index)
+                    .fold(0, |size, ty| size + wasm_type(ty).size_bytes());
+
+                self.emit_expr(operand, wasm_fun, body, module);
+                body.load_m_(&wasm_type(fs[index]), MemArg::with_offset(offset));
+            }
             // Memory layout for a union value.
             //
             // +-----------+-------+

@@ -2387,9 +2387,11 @@ impl WatBuilder {
     }
     fn emit_mem_arg(&mut self, mem: &MemArg) {
         if let Some(offset) = mem.offset() {
-            self.buffer.push(' ');
-            self.buffer.push_str("offset=");
-            self.buffer.push_str(&offset.to_string());
+            if offset > 0 {
+                self.buffer.push(' ');
+                self.buffer.push_str("offset=");
+                self.buffer.push_str(&offset.to_string());
+            }
         }
         if let Some(align) = mem.align() {
             self.buffer.push(' ');
