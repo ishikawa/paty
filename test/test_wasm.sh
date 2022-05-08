@@ -140,11 +140,18 @@ assert '1 2 3 4' '
     fruit_to_num("Orange"),
     fruit_to_num("Strawberry"),
     fruit_to_num("Grape"))'
-# function
+# ---------------------------------
+# Function
+# ---------------------------------
 assert 30 "
   def foo(x, y)
     x + y
   end
   puts(foo(10, 20))"
+assert 30 "
+  def foo((x, y): (int64, int64))
+    x + y
+  end
+  puts(foo((10, 20)))"
 
 echo OK

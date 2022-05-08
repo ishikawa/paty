@@ -27,6 +27,7 @@ pub enum WasmArch {
 }
 
 // Alignment and size for various types on linear memory.
+const ALIGN_TUPLE: u32 = 4;
 const ALIGN_UNION: u32 = 4;
 const SIZE_UNION_TAG: u32 = 4;
 
@@ -1262,7 +1263,32 @@ impl<'a, 'tcx> Emitter {
             // | value | ... |
             // +-------+-----+
             ExprKind::Tuple(fs) => {
-                todo!();
+                // Emit elements of the tuple.
+                //
+                // 1. Emits values on the "memory stack".
+                // 2. Push the SP on the "value stack".
+                // 3. Advance SP to allocate enough space.
+                let sp = wasm_fun.checkout_tmp(wasm::Type::I32);
+
+                // Save SP
+                body.local_tee(&sp, Instruction::global_get(SP));
+
+                // Emit values
+                let mut offset = 0u32;
+
+                for value in fs {
+                    let wasm_val_ty = wasm_type(value.ty());
+
+                    body.local_get(&sp);
+                    self.emit_expr(value, wasm_fun, body, module);
+                    body.store_m_(&wasm_val_ty, MemArg::with_offset(offset.align(ALIGN_TUPLE)));
+
+                    offset += wasm_val_ty.size_bytes();
+                }
+
+                // Advance SP
+                body.push(self.build_advance_sp((offset).align(ALIGN_TUPLE)))
+                    .local_get(&sp);
             }
             ExprKind::IndexAccess { operand, index } => todo!(),
             // Memory layout for a union value.
