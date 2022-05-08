@@ -2,8 +2,10 @@
 use crate::ir::inst::{
     CallingConvention, Expr, ExprKind, FormatSpec, Function, Parameter, Program, Stmt, TmpVar,
 };
-use crate::ty::{expand_union_ty_array, FunctionSignature, Type};
+use crate::ty::{expand_union_ty_array, Type};
 use std::collections::HashSet;
+
+use super::util::{encode_ty, mangle_name};
 
 #[derive(Debug)]
 pub struct Emitter {}
@@ -41,17 +43,19 @@ impl<'a, 'tcx> Emitter {
         }
 
         for fun in program.functions() {
-            if !fun.is_entry_point {
-                self.emit_function_declaration(fun, &mut code);
-                code.push(';');
-                code.push('\n');
-            }
+            self.emit_function_declaration(fun, false, &mut code);
+            code.push(';');
+            code.push('\n');
         }
         code.push('\n');
 
-        // Emit functions
+        // Emit functions and the entry point
         for fun in program.functions() {
-            self.emit_function(fun, &mut code);
+            self.emit_function(fun, false, &mut code);
+            code.push('\n');
+        }
+        if let Some(fun) = &program.entry_point {
+            self.emit_function(fun, true, &mut code);
             code.push('\n');
         }
 
@@ -145,27 +149,34 @@ impl<'a, 'tcx> Emitter {
         emitted_c_types.insert(c_type_str);
     }
 
-    fn emit_function_declaration(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
-        if fun.is_entry_point {
+    fn emit_function_declaration(
+        &mut self,
+        fun: &Function<'a, 'tcx>,
+        is_entry_point: bool,
+        code: &mut String,
+    ) {
+        if is_entry_point {
             // 'main' must return 'int'
             code.push_str(&c_type(&Type::NativeInt));
-        } else if fun.retty.is_zero_sized() {
+        } else if fun.retty().is_zero_sized() {
             code.push_str("void");
         } else {
-            code.push_str(&c_type(fun.retty));
+            code.push_str(&c_type(fun.retty()));
         }
         code.push(' ');
 
         // `main` function is C function
-        if fun.is_entry_point {
-            code.push_str(&fun.name);
+        if is_entry_point {
+            code.push_str(fun.name());
         } else {
-            let mangled_name = mangle_name(&fun.signature);
+            let mangled_name = mangle_name(fun.signature());
             code.push_str(&mangled_name);
         }
 
+        let mut params = fun.params.iter().peekable();
+
         code.push('(');
-        for (i, param) in fun.params.iter().enumerate() {
+        while let Some(param) = params.next() {
             if param.ty().is_zero_sized() {
                 continue;
             }
@@ -177,15 +188,15 @@ impl<'a, 'tcx> Emitter {
                 Parameter::Var(v) => code.push_str(v.name()),
             };
 
-            if i != (fun.params.len() - 1) {
+            if params.peek().is_some() {
                 code.push_str(", ");
             }
         }
         code.push(')');
     }
 
-    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, code: &mut String) {
-        self.emit_function_declaration(fun, code);
+    fn emit_function(&mut self, fun: &Function<'a, 'tcx>, is_entry_point: bool, code: &mut String) {
+        self.emit_function_declaration(fun, is_entry_point, code);
         code.push('\n');
 
         // body
@@ -256,14 +267,26 @@ impl<'a, 'tcx> Emitter {
                 code.push_str(";\n");
             }
             Stmt::Cond(cond) => {
-                if cond.var.used() > 0 {
-                    code.push_str(&c_type(cond.var.ty()));
+                if cond.var().used() > 0 {
+                    code.push_str(&c_type(cond.var().ty()));
                     code.push(' ');
-                    code.push_str(&tmp_var(cond.var));
+                    code.push_str(&tmp_var(cond.var()));
 
-                    // Initialize with zero value.
+                    // Initialize with zero value. We have to initialize PHI conditional variable before
+                    // branches are executed. Because C compiler can't determine this branches are
+                    // actually exhausted. E.g. Clang with the option `-Wsometimes-uninitialized` warns
+                    // the code below:
+                    //
+                    // ```c
+                    // int _t0;
+                    // if (n == 0) {
+                    //   _t0 = 100;
+                    // } else if (n == 1) {
+                    //   _t0 = 200;
+                    // }
+                    // ```
                     code.push_str(" = ");
-                    code.push_str(zero_value(cond.var.ty()));
+                    code.push_str(zero_value(cond.var().ty()));
 
                     code.push_str(";\n");
                 }
@@ -271,11 +294,13 @@ impl<'a, 'tcx> Emitter {
                 // Construct "if-else" statement from each branches.
                 // If a branch has only one branch and it has no condition,
                 // this loop finally generate a block statement.
-                for (i, branch) in cond.branches.iter().enumerate() {
+                for (i, branch) in cond.branches().iter().enumerate() {
                     if i > 0 {
                         code.push_str("else ");
                     }
 
+                    // We must emit all conditions to generate or-pattern that
+                    // contains binding pattern properly.
                     if let Some(condition) = branch.condition {
                         code.push_str("if (");
                         self.emit_expr(condition, code);
@@ -421,13 +446,11 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(else_value, code);
                 code.push(')');
             }
-            ExprKind::Call { name, args, cc } => {
-                if let CallingConvention::Std(signature) = cc {
-                    let mangled_name = mangle_name(signature);
-                    code.push_str(&format!("{}(", mangled_name));
-                } else {
-                    code.push_str(&format!("{}(", name));
-                }
+            ExprKind::Call { name: _, args, cc } => {
+                let CallingConvention::Std(signature) = cc;
+                let mangled_name = mangle_name(signature);
+
+                code.push_str(&format!("{}(", mangled_name));
 
                 for (i, arg) in args.iter().enumerate() {
                     self.emit_expr(arg, code);
@@ -436,6 +459,13 @@ impl<'a, 'tcx> Emitter {
                         code.push_str(", ");
                     }
                 }
+                code.push(')');
+            }
+            ExprKind::Strcmp(s1, s2) => {
+                code.push_str("strcmp(");
+                self.emit_expr(s1, code);
+                code.push_str(", ");
+                self.emit_expr(s2, code);
                 code.push(')');
             }
             ExprKind::Printf(specs) => {
@@ -535,7 +565,7 @@ impl<'a, 'tcx> Emitter {
                 // so the behavior of negating this and assigning to a signed 64 bit integral
                 // type is implementation defined.
                 match n {
-                    // prints INT_XXX macro directory
+                    // prints INT_XXX macro directly
                     i64::MIN => code.push_str("INT64_MIN"),
                     i64::MAX => code.push_str("INT64_MAX"),
                     _ => {
@@ -622,7 +652,7 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".{}", name));
             }
-            ExprKind::UnionTag(operand) => {
+            ExprKind::UnionGetTag(operand) => {
                 self.emit_expr(operand, code);
                 code.push_str(".tag");
             }
@@ -630,7 +660,7 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, code);
                 code.push_str(&format!(".u._{}", tag));
             }
-            ExprKind::UnionValue { value, tag } => {
+            ExprKind::Union { value, tag } => {
                 // Specify struct type explicitly.
                 code.push('(');
                 code.push_str(&c_type(expr.ty()));
@@ -673,8 +703,8 @@ fn c_type(ty: &Type) -> String {
     }
 }
 
-// Anything in C can be initialized with = 0; this initializes
-// numeric elements to zero and pointers null.
+// // Anything in C can be initialized with = 0; this initializes
+// // numeric elements to zero and pointers null.
 fn zero_value(ty: &Type) -> &'static str {
     match ty {
         Type::Int64
@@ -708,195 +738,4 @@ fn escape_c_string(value: &str) -> String {
     }
 
     escaped
-}
-
-/// Encode type to C struct type name in universal way. "Universal" here means
-/// it is independent of runtime environment and machine architecture.
-///
-/// Types that are represented as the same structure in the C language must
-/// return the same string.
-///
-/// ## 64 bits Integer type
-///
-/// ```ignore
-/// +-----+
-/// | "n" |
-/// +-----+
-/// ```
-///
-/// ## Integer types
-///
-/// ```ignore
-/// +-----+-------------------------+
-/// | "i" | digits (number of bits) |
-/// +-----+-------------------------+
-/// ```
-///
-/// ## Tuple type
-///
-/// ```ignore
-/// +-----+---------------------------+---------------+
-/// | "T" | digits (number of fields) | (field types) |
-/// +-----+---------------------------+---------------+
-/// ```
-///
-/// ## Anonymous struct type
-///
-/// ```ignore
-/// +-----+---------------------------+----------------+
-/// | "S" | digits (number of fields) | (named fields) |
-/// +-----+---------------------------+----------------+
-///
-/// named field:
-/// +------+-------------------------------------------+------+
-/// | type | digits (The length of the following name) | name |
-/// +------+-------------------------------------------+------+
-///
-/// ```
-///
-/// ## Struct type
-///
-/// ```ignore
-/// +-----+-------+
-/// | "S" | name  |
-/// +-----+-------+
-/// ```
-///
-/// ## Union type
-///
-/// ```ignore
-/// +-----+---------------------------+---------------+
-/// | "U" | digits (number of fields) | (field types) |
-/// +-----+---------------------------+---------------+
-/// ```
-///
-/// ## Other types (including literal types)
-///
-/// NOTE: We don't care a type is literal type or not to make it compatible in
-/// C struct type.
-///
-/// | Type           | Format |
-/// | -------------- | ------ |
-/// | `boolean`      | `"b"`  |
-/// | `string`       | `"s"`  |
-/// | `int` (C type) | `"ni"` |
-///
-fn encode_ty(ty: &Type, buffer: &mut String) {
-    match ty {
-        Type::Int64 | Type::LiteralInt64(_) => buffer.push('n'),
-        Type::Boolean | Type::LiteralBoolean(_) => buffer.push('b'),
-        Type::String | Type::LiteralString(_) => buffer.push('s'),
-        Type::NativeInt => buffer.push_str("ni"),
-        Type::Tuple(fs) => {
-            buffer.push('T');
-            buffer.push_str(&fs.len().to_string());
-            for fty in fs {
-                encode_ty(fty, buffer);
-            }
-        }
-        Type::Union(member_types) => {
-            let member_types = expand_union_ty_array(member_types);
-
-            buffer.push('U');
-            buffer.push_str(&member_types.len().to_string());
-            for mty in member_types {
-                encode_ty(mty, buffer);
-            }
-        }
-        Type::Struct(struct_ty) => {
-            buffer.push('S');
-            if let Some(name) = struct_ty.name() {
-                buffer.push_str(name);
-            } else {
-                buffer.push_str(&struct_ty.fields().len().to_string());
-                for f in struct_ty.fields() {
-                    encode_ty(f.ty(), buffer);
-                    buffer.push_str(&f.name().len().to_string());
-                    buffer.push_str(f.name());
-                }
-            }
-        }
-        Type::Named(named_ty) => {
-            encode_ty(named_ty.expect_ty(), buffer);
-        }
-        Type::Undetermined => unreachable!("untyped code"),
-    }
-}
-
-/// Function name mangling scheme.
-///
-/// Types that are treated as different types in this programming language must
-/// return separate strings.
-///
-/// +------+-------------------------------------------+------+-----------------------------+-------------+
-/// | "_Z" | digits (The length of the following name) | name | digits (The number of args) | (arg types) |
-/// +------+-------------------------------------------+------+-----------------------------+-------------+
-///
-/// ## Literal types
-///
-/// To make function overloading work properly, we have to encode literal types.
-///
-/// ### integers
-///
-/// +-----+-----+-------------------------+-----+---------+
-/// | "L" | "i" | digits (number of bits) | "_" | integer |
-/// +-----+-----+-------------------------+-----+---------+
-///
-/// ### boolean
-///
-/// +-----+-----+-----------------------+
-/// | "L" | "b" | "0": false, "1": true |
-/// +-----+-----+-----------------------+
-///
-/// ### string
-///
-/// +-----+-----+------------------------------------+-----+-----------------------------------+
-/// | "L" | "s" | digits (The length of "b58" field) | "_" | b58 (base58 encoded string value) |
-/// +-----+-----+------------------------------------+-----+-----------------------------------+
-///
-fn mangle_name(signature: &FunctionSignature<'_>) -> String {
-    let mut buffer = format!(
-        "_Z{}{}{}",
-        signature.name().len(),
-        signature.name(),
-        signature.params().len()
-    );
-
-    for p in signature.params() {
-        let pty = p.bottom_ty();
-
-        match pty {
-            Type::LiteralInt64(n) => {
-                buffer.push('L');
-                buffer.push('i');
-                buffer.push_str("64");
-                buffer.push('_');
-                buffer.push_str(&n.to_string());
-            }
-            Type::LiteralBoolean(b) => {
-                buffer.push('L');
-                buffer.push('b');
-                if *b {
-                    buffer.push('1');
-                } else {
-                    buffer.push('0');
-                }
-            }
-            Type::LiteralString(s) => {
-                let encoded = bs58::encode(s).into_string();
-
-                buffer.push('L');
-                buffer.push('s');
-
-                // Encode literal string with base58 encoding
-                buffer.push_str(&encoded.len().to_string());
-                buffer.push('_');
-                buffer.push_str(&encoded);
-            }
-            // fall back to encode_ty()
-            _ => encode_ty(pty, &mut buffer),
-        }
-    }
-
-    buffer
 }

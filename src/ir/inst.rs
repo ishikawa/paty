@@ -8,6 +8,7 @@ const DISPLAY_INDENT: &str = "  ";
 pub struct Program<'a, 'tcx> {
     decl_types: Vec<&'tcx Type<'tcx>>,
     functions: Vec<Function<'a, 'tcx>>,
+    pub entry_point: Option<Function<'a, 'tcx>>,
 }
 
 impl<'a, 'tcx> Program<'a, 'tcx> {
@@ -80,19 +81,51 @@ impl fmt::Display for Program<'_, '_> {
         for fun in &self.functions {
             write!(f, "{}", fun)?;
         }
+        if let Some(fun) = &self.entry_point {
+            write!(f, "{}", fun)?;
+        }
         Ok(())
     }
 }
 
+/// A function instruction.
+///
+/// The function signature of the main function must be:
+///
+/// ```ignore
+/// main(void) -> int32
+/// ```
 #[derive(Debug)]
 pub struct Function<'a, 'tcx> {
-    pub name: String,
+    name: String,
+    signature: FunctionSignature<'tcx>,
+    retty: &'tcx Type<'tcx>,
     pub params: Vec<Parameter<'a, 'tcx>>,
-    pub signature: FunctionSignature<'tcx>,
     pub body: Vec<&'a Stmt<'a, 'tcx>>,
-    pub retty: &'tcx Type<'tcx>,
-    /// Whether this function is `main` or not.
-    pub is_entry_point: bool,
+}
+
+impl<'a, 'tcx> Function<'a, 'tcx> {
+    pub fn new(name: String, signature: FunctionSignature<'tcx>, retty: &'tcx Type<'tcx>) -> Self {
+        Self {
+            name,
+            signature,
+            retty,
+            params: vec![],
+            body: vec![],
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn retty(&self) -> &'tcx Type<'tcx> {
+        self.retty
+    }
+
+    pub fn signature(&self) -> &FunctionSignature<'tcx> {
+        &self.signature
+    }
 }
 
 impl fmt::Display for Function<'_, '_> {
@@ -393,11 +426,30 @@ impl fmt::Display for Stmt<'_, '_> {
 #[derive(Debug, Clone)]
 pub struct Cond<'a, 'tcx> {
     /// The index of temporary variable which holds the result.
-    pub var: &'a TmpVar<'a, 'tcx>,
-    pub branches: Vec<Branch<'a, 'tcx>>,
+    var: &'a TmpVar<'a, 'tcx>,
+    branches: Vec<Branch<'a, 'tcx>>,
 }
 
 impl<'a, 'tcx> Cond<'a, 'tcx> {
+    pub fn new(var: &'a TmpVar<'a, 'tcx>) -> Self {
+        Self {
+            var,
+            branches: vec![],
+        }
+    }
+
+    pub fn var(&self) -> &'a TmpVar<'a, 'tcx> {
+        self.var
+    }
+
+    pub fn branches(&self) -> &[Branch<'a, 'tcx>] {
+        self.branches.as_slice()
+    }
+
+    pub fn push_branch(&mut self, branch: Branch<'a, 'tcx>) {
+        self.branches.push(branch);
+    }
+
     fn _fmt(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         write!(f, "t{}\t(used: {}) = ", self.var.index, self.var.used())?;
         writeln!(f, "cond {{")?;
@@ -424,9 +476,11 @@ pub struct Branch<'a, 'tcx> {
 
 impl<'a, 'tcx> Branch<'a, 'tcx> {
     fn _fmt(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
         if let Some(condition) = self.condition {
-            write!(f, "{}", DISPLAY_INDENT.repeat(indent))?;
             write!(f, "({}) => ", condition)?;
+        } else {
+            write!(f, "_ => ")?;
         }
         writeln!(f, "{{")?;
 
@@ -519,9 +573,13 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         let kind = ExprKind::Printf(format_specs);
         Self::new(kind, tcx.int64())
     }
+    pub fn strcmp(tcx: TypeContext<'tcx>, s1: &'a Expr<'a, 'tcx>, s2: &'a Expr<'a, 'tcx>) -> Self {
+        let kind = ExprKind::Strcmp(s1, s2);
+        Self::new(kind, tcx.native_int())
+    }
     pub fn union_tag(tcx: TypeContext<'tcx>, operand: &'a Expr<'a, 'tcx>) -> Self {
         assert!(matches!(operand.ty(), Type::Union(_)));
-        let kind = ExprKind::UnionTag(operand);
+        let kind = ExprKind::UnionGetTag(operand);
         Self::new(kind, tcx.int64())
     }
     pub fn tuple_index_access(operand: &'a Expr<'a, 'tcx>, index: usize) -> Self {
@@ -551,7 +609,7 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
         Self::new(kind, member_ty)
     }
     pub fn union_value(value: &'a Expr<'a, 'tcx>, tag: usize, union_ty: &'tcx Type<'tcx>) -> Self {
-        let kind = ExprKind::UnionValue { value, tag };
+        let kind = ExprKind::Union { value, tag };
         Self::new(kind, union_ty)
     }
     pub fn cond_value(
@@ -614,12 +672,13 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             ExprKind::CondValue { .. } => false,
             ExprKind::Tuple(_)
             | ExprKind::StructValue(_)
-            | ExprKind::UnionValue { .. }
+            | ExprKind::Union { .. }
             | ExprKind::Call { .. }
+            | ExprKind::Strcmp(_, _)
             | ExprKind::Printf(_) => false,
             ExprKind::IndexAccess { operand, .. }
             | ExprKind::FieldAccess { operand, .. }
-            | ExprKind::UnionTag(operand)
+            | ExprKind::UnionGetTag(operand)
             | ExprKind::UnionMemberAccess { operand, .. } => operand.can_be_immediate(),
             ExprKind::Int64(_)
             | ExprKind::Bool(_)
@@ -646,7 +705,8 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Gt(a, b)
             | ExprKind::Ge(a, b)
             | ExprKind::And(a, b)
-            | ExprKind::Or(a, b) => a.has_side_effect() || b.has_side_effect(),
+            | ExprKind::Or(a, b)
+            | ExprKind::Strcmp(a, b) => a.has_side_effect() || b.has_side_effect(),
             ExprKind::CondValue {
                 cond,
                 then_value,
@@ -670,9 +730,9 @@ impl<'a, 'tcx> Expr<'a, 'tcx> {
             | ExprKind::Str(_)
             | ExprKind::IndexAccess { .. }
             | ExprKind::FieldAccess { .. }
-            | ExprKind::UnionTag(_)
+            | ExprKind::UnionGetTag(_)
             | ExprKind::UnionMemberAccess { .. }
-            | ExprKind::UnionValue { .. }
+            | ExprKind::Union { .. }
             | ExprKind::TmpVar(_)
             | ExprKind::Var(_) => false,
         }
@@ -687,8 +747,6 @@ impl fmt::Display for Expr<'_, '_> {
 
 #[derive(Debug, Clone)]
 pub enum CallingConvention<'tcx> {
-    /// C lang
-    C,
     /// This lang
     Std(FunctionSignature<'tcx>),
 }
@@ -725,7 +783,14 @@ pub enum ExprKind<'a, 'tcx> {
         var: &'a TmpVar<'a, 'tcx>,
     },
 
-    // Built-in procedures
+    // --- Built-in procedures
+    /// Compare two strings.
+    ///
+    /// The strcmp() function compares the string pointed to by `s1` and `s2`.
+    /// Returns an integer greater than, equal to, or less than `0`, if the string
+    /// pointed to by `s1` is greater than, equal to, or less than the string
+    /// pointed to by `s2`, respectively.
+    Strcmp(&'a Expr<'a, 'tcx>, &'a Expr<'a, 'tcx>),
     Printf(Vec<FormatSpec<'a, 'tcx>>),
 
     // Values
@@ -745,17 +810,17 @@ pub enum ExprKind<'a, 'tcx> {
     TmpVar(&'a TmpVar<'a, 'tcx>),
     Var(Var<'tcx>),
     // -- Union type
-    /// Get the tag of an union type.
-    /// - The operand must be an union type value.
+    /// Get the tag of a union type.
+    /// - The operand must be a union type value.
     /// - The return value is an int value. 0 =< n < the number of union members.
-    UnionTag(&'a Expr<'a, 'tcx>),
+    UnionGetTag(&'a Expr<'a, 'tcx>),
     UnionMemberAccess {
         operand: &'a Expr<'a, 'tcx>,
         tag: usize,
     },
-    /// Initialize an union value with `value` as initial value of
+    /// Initialize a union value with `value` as initial value of
     /// tagged member.
-    UnionValue {
+    Union {
         value: &'a Expr<'a, 'tcx>,
         tag: usize,
     },
@@ -802,6 +867,7 @@ impl fmt::Display for ExprKind<'_, '_> {
                 }
                 write!(f, ")")
             }
+            ExprKind::Strcmp(a, b) => write!(f, "@strcmp({}, {})", a, b),
             ExprKind::Printf(args) => {
                 write!(f, "@printf(")?;
                 let mut it = args.iter().peekable();
@@ -848,9 +914,12 @@ impl fmt::Display for ExprKind<'_, '_> {
             }
             ExprKind::IndexAccess { operand, index } => write!(f, "{}.{}", operand, index),
             ExprKind::FieldAccess { operand, name } => write!(f, "{}.{}", operand, name),
-            ExprKind::UnionTag(expr) => write!(f, "{}.tag", expr),
+            ExprKind::UnionGetTag(expr) => write!(f, "{}.tag", expr),
             ExprKind::UnionMemberAccess { operand, tag } => write!(f, "{}._u.{}", operand, tag),
-            ExprKind::UnionValue { value: operand, .. } => write!(f, "(union){}", operand),
+            ExprKind::Union {
+                value: operand,
+                tag,
+            } => write!(f, "(_u.{}){}", tag, operand),
             ExprKind::TmpVar(var) => var.fmt(f),
             ExprKind::Var(var) => var.fmt(f),
         }

@@ -80,7 +80,7 @@ impl<'tcx> TypeContext<'tcx> {
         self.type_arena.alloc(Type::Named(named_ty))
     }
 
-    /// Creates an union type from types. Returns the first type if types has
+    /// Creates a union type from types. Returns the first type if types has
     /// only one element.
     /// panic if member_types is empty.
     pub fn union(

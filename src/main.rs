@@ -1,20 +1,110 @@
+use clap::Parser;
 use paty::gen;
 use paty::ir;
 use paty::ir::optimizer;
 use paty::sem;
 use paty::syntax;
 use paty::ty::TypeContext;
-use std::env;
 use std::fs;
 use std::io;
 use std::io::Read;
+use std::str::FromStr;
 use typed_arena::Arena;
 
 const MAX_OPTIMIZATION_REPEAT: usize = 8;
 
+const TARGET_NAME_TO_VARIANTS: [(&str, Target); 6] = [
+    ("c", Target::C),
+    (
+        "wasm",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits32,
+            wasi: false,
+        }),
+    ),
+    (
+        "wasm32",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits32,
+            wasi: false,
+        }),
+    ),
+    (
+        "wasm64",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits64,
+            wasi: false,
+        }),
+    ),
+    (
+        "wasm32-wasi",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits32,
+            wasi: true,
+        }),
+    ),
+    (
+        "wasm64-wasi",
+        Target::Wasm(gen::wasm::EmitterOptions {
+            arch: gen::wasm::WasmArch::Bits64,
+            wasi: true,
+        }),
+    ),
+];
+
+const TARGET_OPTION_POSSIBLE_VALUES: [&str; TARGET_NAME_TO_VARIANTS.len()] = [
+    TARGET_NAME_TO_VARIANTS[0].0,
+    TARGET_NAME_TO_VARIANTS[1].0,
+    TARGET_NAME_TO_VARIANTS[2].0,
+    TARGET_NAME_TO_VARIANTS[3].0,
+    TARGET_NAME_TO_VARIANTS[4].0,
+    TARGET_NAME_TO_VARIANTS[5].0,
+];
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Target {
+    /// C language
+    C,
+    /// WebAssembly
+    Wasm(gen::wasm::EmitterOptions),
+}
+
+impl FromStr for Target {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        TARGET_NAME_TO_VARIANTS
+            .iter()
+            .find(|(name, _)| *name == s)
+            .map(|(_, target)| target.clone())
+            .ok_or_else(|| format!("Unrecognized input: {}", s))
+    }
+}
+
+#[derive(clap::Parser, Debug)]
+#[clap(version)]
+struct Args {
+    /// Choose a compile target for emitting code.
+    #[clap(
+        long,
+        default_value = TARGET_OPTION_POSSIBLE_VALUES[0],
+        possible_values=TARGET_OPTION_POSSIBLE_VALUES)]
+    target: Target,
+
+    /// Emit IR code to standard error.
+    #[clap(long)]
+    emit_ir: bool,
+
+    /// Source code file to read.
+    #[clap(required = false)]
+    file: Option<String>,
+}
+
 fn main() {
+    let args = Args::parse();
+
     // Read input: use STDIN if no positional argument to point to the file.
-    let src = if let Some(filename) = env::args().nth(1) {
+    let src = if let Some(filename) = args.file {
         fs::read_to_string(filename).expect("Read source code")
     } else {
         let mut src = String::new();
@@ -114,12 +204,24 @@ fn main() {
 
         let pass = optimizer::ConcatAdjacentPrintf::default();
         optimizer.run_function_pass(&pass, &mut program);
-        //eprintln!("--- (optimized)\n{}", program);
 
-        let mut emitter = gen::c::Emitter::new();
-        let code = emitter.emit(&program);
+        if args.emit_ir {
+            eprintln!("--- (optimized IR)\n{}", program);
+        }
 
-        //eprintln!("-----\n{}-----", code);
-        println!("{}", code);
+        match args.target {
+            Target::C => {
+                let mut emitter = gen::c::Emitter::new();
+                let code = emitter.emit(&program);
+
+                println!("{}", code);
+            }
+            Target::Wasm(options) => {
+                let mut emitter = gen::wasm::Emitter::new(options);
+                let code = emitter.emit(&program);
+
+                println!("{}", code);
+            }
+        }
     }
 }

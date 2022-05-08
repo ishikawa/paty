@@ -133,18 +133,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             .alloc(Expr::struct_field_access(operand, name))
     }
     #[inline]
-    fn call_c(
-        &self,
-        name: String,
-        args: Vec<&'a Expr<'a, 'tcx>>,
-        retty: &'tcx Type<'tcx>,
-    ) -> &'a Expr<'a, 'tcx> {
-        let kind = ExprKind::Call {
-            name,
-            cc: CallingConvention::C,
-            args,
-        };
-        self.expr_arena.alloc(Expr::new(kind, retty))
+    fn strcmp(&self, s1: &'a Expr<'a, 'tcx>, s2: &'a Expr<'a, 'tcx>) -> &'a Expr<'a, 'tcx> {
+        self.expr_arena.alloc(Expr::strcmp(self.tcx, s1, s2))
     }
     #[inline]
     fn int64(&self, value: i64) -> &'a Expr<'a, 'tcx> {
@@ -219,38 +209,30 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     }
 
     pub fn build(&self, ast: &'nd [syntax::TopLevel<'nd, 'tcx>]) -> Program<'a, 'tcx> {
+        let signature = FunctionSignature::new("main".into(), vec![]);
+        let mut main = Function::new(signature.name().into(), signature, self.tcx.native_int());
         let mut program = Program::new();
-        let mut stmts: Vec<&'a Stmt<'a, 'tcx>> = vec![];
         let mut tmp_vars = TmpVars::new(self.tmp_var_arena);
 
         // Build top level statements and function definitions.
         for top_level in ast {
             match top_level {
                 syntax::TopLevel::Declaration(decl) => {
-                    self.build_decl(decl, &mut tmp_vars, &mut program, &mut stmts);
+                    self.build_decl(decl, &mut tmp_vars, &mut program, &mut main.body);
                 }
                 syntax::TopLevel::Stmt(stmt) => {
-                    self.build_stmt(stmt, &mut tmp_vars, &mut program, &mut stmts);
+                    self.build_stmt(stmt, &mut tmp_vars, &mut program, &mut main.body);
                 }
             }
         }
 
-        // Add `return 0` statement for the entry point function if needed.
-        if !matches!(stmts.last(), Some(Stmt::Ret(_))) {
+        // An integer value to be returned from the entry point.
+        if !matches!(main.body.last(), Some(Stmt::Ret(_))) {
             let ret = Stmt::Ret(self.native_int(0));
-            stmts.push(self.stmt_arena.alloc(ret))
+            main.body.push(self.stmt_arena.alloc(ret))
         }
 
-        let signature = FunctionSignature::new("main".to_string(), vec![]);
-        let main = Function {
-            name: "main".to_string(),
-            params: vec![],
-            signature,
-            body: stmts,
-            retty: self.tcx.native_int(),
-            is_entry_point: true,
-        };
-        program.push_function(main);
+        program.entry_point = Some(main);
         program
     }
 
@@ -297,13 +279,17 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
     ) {
         match decl.kind() {
             syntax::DeclarationKind::Function(syntax_fun) => {
+                // Return value and type of the function
+                let retty = syntax_fun.retty().expect("return type");
+                program.add_decl_type(retty);
+
+                let mut fun =
+                    Function::new(syntax_fun.name().to_string(), syntax_fun.signature(), retty);
+
                 // save and reset temp var index
                 let mut scoped_tmp_vars = TmpVars::from(&*tmp_vars);
 
                 // convert parameter pattern to parameter name and assign variable.
-                let mut params = vec![];
-                let mut body_stmts = vec![];
-
                 for p in syntax_fun.params() {
                     let pat = p.pattern();
                     let ty = pat.expect_ty();
@@ -329,7 +315,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                                 param_expr,
                                 &mut scoped_tmp_vars,
                                 program,
-                                &mut body_stmts,
+                                &mut fun.body,
                             );
 
                             Parameter::TmpVar(t)
@@ -343,36 +329,22 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         }
                     };
 
-                    params.push(param);
+                    fun.params.push(param);
                 }
-
-                // Return value and type of the function
-                let retty = syntax_fun.retty().expect("return type");
-                program.add_decl_type(retty);
 
                 let last_expr = syntax_fun
                     .body()
                     .iter()
-                    .map(|stmt| {
-                        self.build_stmt(stmt, &mut scoped_tmp_vars, program, &mut body_stmts)
-                    })
+                    .map(|stmt| self.build_stmt(stmt, &mut scoped_tmp_vars, program, &mut fun.body))
                     .last()
                     .flatten();
 
                 if let Some(last_expr) = last_expr {
                     let value =
-                        self.promote_to(last_expr, retty, &mut scoped_tmp_vars, &mut body_stmts);
-                    body_stmts.push(self.stmt_arena.alloc(Stmt::Ret(value)));
+                        self.promote_to(last_expr, retty, &mut scoped_tmp_vars, &mut fun.body);
+                    fun.body.push(self.stmt_arena.alloc(Stmt::Ret(value)));
                 }
 
-                let fun = Function {
-                    name: syntax_fun.name().to_string(),
-                    params,
-                    signature: syntax_fun.signature(),
-                    body: body_stmts,
-                    retty,
-                    is_entry_point: false,
-                };
                 program.push_function(fun);
             }
             syntax::DeclarationKind::Struct(struct_def) => {
@@ -714,41 +686,39 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             } => {
                 let t = tmp_vars.next_temp_var(expr_ty);
                 let t_head = self.build_expr(head, tmp_vars, program, stmts);
+                let mut cond = Cond::new(t);
 
                 // Construct "if-else" statement from each branches.
-                let mut branches = arms
-                    .iter()
-                    .map(|arm| {
-                        // Build an condition and variable declarations from the pattern
-                        let mut branch_stmts = vec![];
+                for arm in arms {
+                    // Build an condition and variable declarations from the pattern
+                    let mut branch_stmts = vec![];
 
-                        let condition = self.build_pattern(
-                            t_head,
-                            arm.pattern(),
-                            tmp_vars,
-                            program,
-                            stmts,
-                            &mut branch_stmts,
+                    let condition = self.build_pattern(
+                        t_head,
+                        arm.pattern(),
+                        tmp_vars,
+                        program,
+                        stmts,
+                        &mut branch_stmts,
+                    );
+
+                    let mut ret = None;
+                    for stmt in arm.body() {
+                        ret = self.build_stmt(stmt, tmp_vars, program, &mut branch_stmts);
+                    }
+                    if let Some(ret) = ret {
+                        let phi = Stmt::phi(
+                            t,
+                            self.promote_to(ret, expr_ty, tmp_vars, &mut branch_stmts),
                         );
+                        branch_stmts.push(self.stmt_arena.alloc(phi));
+                    }
 
-                        let mut ret = None;
-                        for stmt in arm.body() {
-                            ret = self.build_stmt(stmt, tmp_vars, program, &mut branch_stmts);
-                        }
-                        if let Some(ret) = ret {
-                            let phi = Stmt::phi(
-                                t,
-                                self.promote_to(ret, expr_ty, tmp_vars, &mut branch_stmts),
-                            );
-                            branch_stmts.push(self.stmt_arena.alloc(phi));
-                        }
-
-                        Branch {
-                            condition,
-                            body: branch_stmts,
-                        }
-                    })
-                    .collect::<Vec<_>>();
+                    cond.push_branch(Branch {
+                        condition,
+                        body: branch_stmts,
+                    });
+                }
 
                 if let Some(else_body) = else_body {
                     let mut branch_stmts = vec![];
@@ -769,8 +739,8 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         condition: None,
                         body: branch_stmts,
                     };
-                    branches.push(branch);
-                } else if !branches.is_empty() {
+                    cond.push_branch(branch);
+                } else if !cond.branches().is_empty() {
                     // No explicit `else` arm for this `case` expression.
 
                     // TODO: the last arm of every `case` expression which was passed through usefulness
@@ -779,7 +749,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     //branches[i].condition = None;
                 }
 
-                let stmt = Stmt::Cond(Cond { branches, var: t });
+                let stmt = Stmt::Cond(cond);
                 stmts.push(self.stmt_arena.alloc(stmt));
 
                 self.expr_arena.alloc(Expr::tmp_var(t))
@@ -1089,12 +1059,12 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 let union_tag = self.push_expr(self.union_tag(arg), tmp_vars, stmts);
 
                 // generates branches
-                let mut branches = vec![];
+                let mut cond = Cond::new(t);
                 for (tag, member_ty) in member_types.iter().enumerate() {
                     let mut branch_stmts = vec![];
 
                     // check union tag
-                    let cond = self.eq(union_tag, self.usize(tag));
+                    let check_tag = self.eq(union_tag, self.usize(tag));
 
                     // print union member
                     let kind = ExprKind::UnionMemberAccess { operand: arg, tag };
@@ -1114,13 +1084,13 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                     let phi = Stmt::phi(t, ret);
                     branch_stmts.push(&*self.stmt_arena.alloc(phi));
 
-                    branches.push(Branch {
-                        condition: Some(cond),
+                    cond.push_branch(Branch {
+                        condition: Some(check_tag),
                         body: branch_stmts,
                     });
                 }
 
-                let stmt = Stmt::Cond(Cond { branches, var: t });
+                let stmt = Stmt::Cond(cond);
                 stmts.push(self.stmt_arena.alloc(stmt));
 
                 self.expr_arena.alloc(Expr::tmp_var(t))
@@ -1205,11 +1175,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                 Some(cond)
             }
             (Type::String, Type::LiteralString(s)) | (Type::LiteralString(s), Type::String) => {
-                let strcmp = self.call_c(
-                    "strcmp".to_string(),
-                    vec![target_expr, self.const_string(s)],
-                    self.tcx.native_int(),
-                );
+                let strcmp = self.strcmp(target_expr, self.const_string(s));
                 Some(self.eq(strcmp, self.native_int(0)))
             }
             (Type::Tuple(target_fs), Type::Tuple(pat_fs)) => {
@@ -1319,13 +1285,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
                         Some(self.bool(false))
                     }
                 } else {
-                    // Compare the value of head expression and pattern string with
-                    // POSIX `strcmp` function.
-                    let strcmp = self.call_c(
-                        "strcmp".to_string(),
-                        vec![target_expr, self.const_string(value)],
-                        self.tcx.native_int(),
-                    );
+                    let strcmp = self.strcmp(target_expr, self.const_string(value));
                     Some(self.eq(strcmp, self.native_int(0)))
                 }
             }
@@ -1737,7 +1697,7 @@ impl<'a, 'nd, 'tcx> Builder<'a, 'tcx> {
             })
             .collect();
 
-        // Constructs (?... :...) to initialize an union value.
+        // Constructs (?... :...) to initialize a union value.
         // Note, the last condition will be ignored as `else` condition because
         // the these conditions must be exhausted.
         assert!(

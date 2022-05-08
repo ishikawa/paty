@@ -34,6 +34,28 @@ assert() {
   i=$((i+1))
 }
 
+# print primitive value.
+assert "Hello, World!" 'puts("Hello, World!")'
+assert "12345" 'puts(12345)'
+assert "-12345" 'puts(-12345)'
+assert "true" 'puts(true)'
+assert "false" 'puts(false)'
+assert '12345
+12345
+12345
+12345' '
+  def puts_i(n: int64)
+    puts(n)
+  end
+  def puts_s(s: string)
+    puts(s)
+  end
+  n = 12345
+  s = "12345"
+  puts_i(n)
+  puts_s(s)
+  puts_i(n)
+  puts_s(s)'
 # number
 assert 20211231 "puts(20211231)"
 assert -20229116 "puts(-20229116)"
@@ -45,6 +67,8 @@ assert false "puts(10 <= 5)"
 assert true "puts(10 == 10)"
 assert false "puts(10 != 10)"
 assert true "puts(10 > 5 && 10 > 0)"
+assert true "puts(true)"
+assert false "puts(false)"
 assert true "puts(true || false)"
 assert true "puts(10 >= (5 * 2) && 100 == (300 / 3))"
 # basic arithmetic operations
@@ -82,31 +106,46 @@ assert 'true' "
     when false
       puts(false)
     end"
-# string
-assert "Hello, World!" "
-    puts(\"Hello, World!\\n\")"
+# ---------------------------------
+# String
+# ---------------------------------
 assert 'こんにちは' 'puts("こんにちは")'
 assert '\' 'puts("\\")'
-assert '1 2 3 4' "
-    def fruit_to_num(fruit: string)
-      case fruit
-      when \"Apple\"
-        1
-      when \"Orange\"
-        2
-      when \"Strawberry\"
-        3
-      else
-        4
-      end
+# Takes a union value and returns a union value.
+assert '2
+two' '
+  def double(n: 1 | "one")
+    case n
+    when 1
+      2
+    when "one"
+      "two"
     end
-    puts(
-      fruit_to_num(\"Apple\"),
-      fruit_to_num(\"Orange\"),
-      fruit_to_num(\"Strawberry\"),
-      fruit_to_num(\"Grape\")
-    )"
-# function
+  end
+  puts(double(1))
+  puts(double("one"))'
+# Compares strings.
+assert '1 2 3 4' '
+  def fruit_to_num(fruit: string)
+    case fruit
+    when "Apple"
+      1
+    when "Orange"
+      2
+    when "Strawberry"
+      3
+    else
+      4
+    end
+  end
+  puts(
+    fruit_to_num("Apple"),
+    fruit_to_num("Orange"),
+    fruit_to_num("Strawberry"),
+    fruit_to_num("Grape"))'
+# ---------------------------------
+# Function
+# ---------------------------------
 assert 30 "
   def foo(x, y)
     x + y
@@ -176,7 +215,7 @@ assert '1
   foo((1, "test 1"))
   foo((2, "test 2"))
   foo((3, "test 3"))'
-# struct
+# struct which has string member
 assert '🇯🇵
 🇬🇧
 🌎' '
@@ -194,6 +233,7 @@ assert '🇯🇵
   foo(T { name: "Tokyo" })
   foo(T { name: "London" })
   foo(T { name: "Washington, D.C." })'
+# struct which has union member
 assert '🇯🇵
 🇬🇧
 🇺🇸' '
