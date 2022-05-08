@@ -195,5 +195,22 @@ assert '1
   foo(1)
   foo(2)
   foo(100)'
+# tuple
+assert '1
+2
+(3, "test 3")' '
+  def foo(n: (int64, string))
+    case n
+    when (1, "test 1")
+      puts(1)
+    when x: (2, "test 2")
+      puts(x.0)
+    else
+      puts(n)
+    end
+  end
+  foo((1, "test 1"))
+  foo((2, "test 2"))
+  foo((3, "test 3"))'
 
 echo OK

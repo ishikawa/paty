@@ -185,11 +185,12 @@ impl StringData {
     fn write_escape_bytes<F: fmt::Write>(&self, f: &mut F, bytes: &[u8]) -> fmt::Result {
         for &b in bytes {
             match b {
-                // "\r", "\n", "\t", "\\"
+                // "\r", "\n", "\t", "\\", "\""
                 b'\r' => f.write_str("\\r")?,
                 b'\n' => f.write_str("\\n")?,
                 b'\t' => f.write_str("\\t")?,
                 b'\\' => f.write_str("\\\\")?,
+                b'\"' => f.write_str("\\\"")?,
                 // Checks if the value is an ASCII graphic character: U+0021 '!' ..= U+007E '~'.
                 b'!'..=b'~' => {
                     f.write_char(b as char)?;
@@ -3016,6 +3017,12 @@ mod tests {
         buffer.clear();
         assert!(string.write_escape(&mut buffer).is_ok());
         assert_eq!(&buffer, "abc");
+
+        let string = StringData::Bytes("\"".as_bytes().to_vec());
+
+        buffer.clear();
+        assert!(string.write_escape(&mut buffer).is_ok());
+        assert_eq!(&buffer, "\\\"");
 
         let string = StringData::Bytes(" !~".as_bytes().to_vec());
 

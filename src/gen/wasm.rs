@@ -1185,52 +1185,64 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Printf(args) => {
                 let mut args = args.iter().peekable();
 
+                let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
+                let fd_write_all = self.use_prelude(module, &Prelude::FdWriteAll);
+
                 while let Some(arg) = args.next() {
-                    // file_descriptor - 1 for stdout
-                    body.i32_const(1);
-
-                    // io_vs - The pointer to the iov array
-                    let value_ty = match arg {
+                    match arg {
                         FormatSpec::Value(value) => {
+                            body.i32_const(1); // stdout
                             self.emit_expr(value, wasm_fun, body, module);
-                            value.ty()
-                        }
-                        FormatSpec::Quoted(_) => todo!(),
-                        FormatSpec::Str(s) => {
-                            body.push(self.build_const_string(s, module));
-                            &Type::String
-                        }
-                    };
 
-                    let fd_write_i64 = self.use_prelude(module, &Prelude::FdWriteI64);
-                    let fd_write_all = self.use_prelude(module, &Prelude::FdWriteAll);
+                            match value.ty() {
+                                Type::Int64 | Type::LiteralInt64(_) | Type::NativeInt => {
+                                    body.call(fd_write_i64, vec![]);
+                                }
+                                Type::Boolean | Type::LiteralBoolean(_) => {
+                                    // v == 0 ? "false" : "true"
+                                    let tmp32 = wasm_fun.checkout_tmp(wasm::Type::I32);
 
-                    match value_ty {
-                        Type::Int64 | Type::LiteralInt64(_) | Type::NativeInt => {
-                            body.call(fd_write_i64, vec![]);
+                                    body.local_set_(&tmp32)
+                                        .select(
+                                            self.build_const_string("true", module),
+                                            self.build_const_string("false", module),
+                                            Instruction::local_get(&tmp32),
+                                        )
+                                        .call(fd_write_all, vec![]);
+
+                                    wasm_fun.checkin_tmp(tmp32);
+                                }
+                                Type::String | Type::LiteralString(_) => {
+                                    body.call(fd_write_all, vec![]);
+                                }
+                                Type::Tuple(_)
+                                | Type::Struct(_)
+                                | Type::Union(_)
+                                | Type::Named(_)
+                                | Type::Undetermined => unreachable!(),
+                            }
                         }
-                        Type::Boolean | Type::LiteralBoolean(_) => {
-                            // v == 0 ? "false" : "true"
-                            let tmp32 = wasm_fun.checkout_tmp(wasm::Type::I32);
-
-                            body.local_set_(&tmp32)
-                                .select(
-                                    self.build_const_string("true", module),
-                                    self.build_const_string("false", module),
-                                    Instruction::local_get(&tmp32),
-                                )
+                        FormatSpec::Quoted(value) => {
+                            // We print a quoted string here and continue to the next.
+                            // "\""
+                            body.i32_const(1)
+                                .push(self.build_const_string("\"", module))
+                                .call(fd_write_all, vec![])
+                                .drop();
+                            // string
+                            body.i32_const(1);
+                            self.emit_expr(value, wasm_fun, body, module);
+                            body.call(fd_write_all, vec![]).drop();
+                            // "\""
+                            body.i32_const(1)
+                                .push(self.build_const_string("\"", module))
                                 .call(fd_write_all, vec![]);
-
-                            wasm_fun.checkin_tmp(tmp32);
                         }
-                        Type::String | Type::LiteralString(_) => {
+                        FormatSpec::Str(s) => {
+                            body.i32_const(1); // stdout
+                            body.push(self.build_const_string(s, module));
                             body.call(fd_write_all, vec![]);
                         }
-                        Type::Tuple(_) => todo!(),
-                        Type::Struct(_) => todo!(),
-                        Type::Union(_) => todo!(),
-                        Type::Named(_) => todo!(),
-                        Type::Undetermined => todo!(),
                     }
 
                     if args.peek().is_some() {
@@ -1239,7 +1251,6 @@ impl<'a, 'tcx> Emitter {
                     }
                 }
 
-                // Ignore error code
                 // TODO: panic if error happened.
                 // TODO: return n_written.
                 // TODO: add int32 and use it for native int.
