@@ -153,5 +153,47 @@ assert 30 "
     x + y
   end
   puts(foo((10, 20)))"
+assert 30 "
+  def foo(_, _, z)
+    z
+  end
+  puts(foo(10, 20, 30))"
+# function - return type annotation
+assert 30 "
+  def foo(x: int64, y: int64): int64
+    x + y
+  end
+  puts(foo(10, 20))"
+# comments
+assert 30 "
+  # comment 1
+  def foo(x, y)
+    # comment 2
+    # comment 3
+    x + y
+  end
+  # comment 4
+  puts(foo(10, 20))"
+
+# ---------------------------------
+# Pattern match (case)
+# ---------------------------------
+# number
+assert '1
+2
+0' '
+  def foo(n: int64)
+    case n
+    when 1
+      puts(1)
+    when x: 2
+      puts(x)
+    else
+      puts(0)
+    end
+  end
+  foo(1)
+  foo(2)
+  foo(100)'
 
 echo OK
