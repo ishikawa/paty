@@ -27,9 +27,8 @@ pub enum WasmArch {
 }
 
 // Alignment and size for various types on linear memory.
-const ALIGN_UNION: u32 = 8;
-const SIZE_UNION_TAG: u32 = 8;
-const SIZE_UNION_VALUE: u32 = 8;
+const ALIGN_UNION: u32 = 4;
+const SIZE_UNION_TAG: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EmitterOptions {
@@ -1173,6 +1172,7 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(s2, wasm_fun, body, module);
 
                 let compare_str = self.use_prelude(module, &Prelude::CompareStr);
+                // TODO: add int32 and use it for native int.
                 body.call(compare_str, vec![]).i64_extend_i32_s_();
             }
             ExprKind::Printf(args) => {
@@ -1235,6 +1235,7 @@ impl<'a, 'tcx> Emitter {
                 // Ignore error code
                 // TODO: panic if error happened.
                 // TODO: return n_written.
+                // TODO: add int32 and use it for native int.
                 body.drop().i64_const(0);
             }
             &ExprKind::Int64(n) => {
@@ -1246,9 +1247,7 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Str(s) => {
                 body.push(self.build_const_string(s, module));
             }
-            ExprKind::Tuple(_) => todo!(),
             ExprKind::StructValue(_) => todo!(),
-            ExprKind::IndexAccess { operand, index } => todo!(),
             ExprKind::FieldAccess { operand, name } => todo!(),
             ExprKind::TmpVar(var) => {
                 let var_name = tmp_var(var);
@@ -1257,14 +1256,24 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Var(var) => {
                 body.local_get(var.name());
             }
+            // Memory layout for a tuple value.
+            //
+            // +-------+-----+
+            // | value | ... |
+            // +-------+-----+
+            ExprKind::Tuple(fs) => {
+                todo!();
+            }
+            ExprKind::IndexAccess { operand, index } => todo!(),
             // Memory layout for a union value.
             //
-            // +-----------+----------------------+
-            // | tag (i64) |  value (8 bytes) ... |
-            // +-----------+----------------------+
+            // +-----------+-------+
+            // | tag (i32) | value |
+            // +-----------+-------+
             ExprKind::UnionGetTag(operand) => {
                 self.emit_expr(operand, wasm_fun, body, module);
-                body.i64_load_();
+                // TODO: add int32 and use it for native int.
+                body.i32_load_().i64_extend_i32_s_();
             }
             ExprKind::UnionMemberAccess { operand, tag } => {
                 // Get the address where a union value stands.
@@ -1279,23 +1288,25 @@ impl<'a, 'tcx> Emitter {
                 // 2. Push the SP on the "value stack".
                 // 3. Advance SP to allocate enough space for the union value.
                 let sp = wasm_fun.checkout_tmp(wasm::Type::I32);
-                let tag = u64::try_from(tag).unwrap();
+                let tag = u32::try_from(tag).unwrap();
 
                 // Write the tag.
                 body.global_get(SP)
                     .local_tee_(&sp)
-                    .i64_const(tag)
-                    .i64_store_();
+                    .i32_const(tag)
+                    .i32_store_();
 
                 // Emit the value and write it at SP + SIZE_TAG.
+                let wasm_val_ty = wasm_type(value.ty());
+
                 body.local_get(&sp);
                 self.emit_expr(value, wasm_fun, body, module);
-                body.store_m_(&wasm_type(value.ty()), MemArg::with_offset(SIZE_UNION_TAG));
+                body.store_m_(&wasm_val_ty, MemArg::with_offset(SIZE_UNION_TAG));
 
-                // Push the SP and advance SP
-                body.push(
-                    self.build_advance_sp((SIZE_UNION_TAG + SIZE_UNION_VALUE).align(ALIGN_UNION)),
-                )
+                // Advance SP
+                body.push(self.build_advance_sp(
+                    (SIZE_UNION_TAG + wasm_val_ty.size_bytes()).align(ALIGN_UNION),
+                ))
                 .local_get(&sp);
             }
         }

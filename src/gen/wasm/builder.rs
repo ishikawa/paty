@@ -24,6 +24,16 @@ pub enum Type {
     F64,
 }
 
+impl Type {
+    /// Returns the size of this type in bytes.
+    pub fn size_bytes(&self) -> u32 {
+        match self {
+            Type::I32 | Type::F32 => 4,
+            Type::I64 | Type::F64 => 8,
+        }
+    }
+}
+
 /// Indices can be given either in raw numeric form or as symbolic identifiers
 /// when bound by a respective construct. Such identifiers are looked up in
 /// the suitable space of the identifier context _I_.
