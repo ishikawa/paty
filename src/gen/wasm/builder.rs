@@ -1170,6 +1170,9 @@ impl Instruction {
             vec![then_value, else_value, cond_value],
         )
     }
+    pub fn select_() -> Self {
+        Self::new(InstructionKind::Select, vec![])
+    }
     pub fn nop() -> Self {
         Self::new(InstructionKind::Nop, vec![])
     }
@@ -1894,6 +1897,10 @@ impl Instructions {
     ) -> &mut Self {
         self.instructions
             .push(Instruction::select(then_value, else_value, cond_value));
+        self
+    }
+    pub fn select_(&mut self) -> &mut Self {
+        self.instructions.push(Instruction::select_());
         self
     }
     pub fn nop(&mut self) -> &mut Self {

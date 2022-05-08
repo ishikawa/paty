@@ -1169,11 +1169,16 @@ impl<'a, 'tcx> Emitter {
 
                 body.call(callee, vec![]);
             }
-            ExprKind::CondValue {
+            &ExprKind::CondValue {
                 cond,
                 then_value,
                 else_value,
-            } => todo!(),
+            } => {
+                self.emit_expr(then_value, wasm_fun, body, module);
+                self.emit_expr(else_value, wasm_fun, body, module);
+                self.emit_expr(cond, wasm_fun, body, module);
+                body.select_();
+            }
             ExprKind::CondAndAssign { cond, var } => todo!(),
             ExprKind::Strcmp(s1, s2) => {
                 self.emit_expr(s1, wasm_fun, body, module);
