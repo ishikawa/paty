@@ -212,5 +212,23 @@ assert '1
   foo((1, "test 1"))
   foo((2, "test 2"))
   foo((3, "test 3"))'
+# struct
+assert '🇯🇵
+🇬🇧
+🌎' '
+  struct T { name: string }
+  def foo(t: T)
+    case t
+    when T { name: "Tokyo" }
+      puts("🇯🇵")
+    when T { name: "London" }
+      puts("🇬🇧")
+    when _: T
+      puts("🌎")
+    end
+  end
+  foo(T { name: "Tokyo" })
+  foo(T { name: "London" })
+  foo(T { name: "Washington, D.C." })'
 
 echo OK

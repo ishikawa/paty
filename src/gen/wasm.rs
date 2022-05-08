@@ -1265,8 +1265,6 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Str(s) => {
                 body.push(self.build_const_string(s, module));
             }
-            ExprKind::StructValue(_) => todo!(),
-            ExprKind::FieldAccess { operand, name } => todo!(),
             ExprKind::TmpVar(var) => {
                 let var_name = tmp_var(var);
                 body.local_get(var_name);
@@ -1288,7 +1286,7 @@ impl<'a, 'tcx> Emitter {
                 let sp = wasm_fun.checkout_tmp(wasm::Type::I32);
 
                 // Save SP
-                body.local_tee(&sp, Instruction::global_get(SP));
+                body.local_set(&sp, Instruction::global_get(SP));
 
                 // Emit values
                 let mut offset = 0u32;
@@ -1306,6 +1304,8 @@ impl<'a, 'tcx> Emitter {
                 // Advance SP
                 body.push(self.build_advance_sp((offset).align(ALIGN_TUPLE)))
                     .local_get(&sp);
+
+                wasm_fun.checkin_tmp(sp);
             }
             &ExprKind::IndexAccess { operand, index } => {
                 // Calculate the offset address of the element at the `index` and
@@ -1318,6 +1318,60 @@ impl<'a, 'tcx> Emitter {
 
                 self.emit_expr(operand, wasm_fun, body, module);
                 body.load_m_(&wasm_type(fs[index]), MemArg::with_offset(offset));
+            }
+            // Memory layout for a tuple value.
+            //
+            // +---------+---------+-----+
+            // | field 1 | field 2 | ... |
+            // +---------+---------+-----+
+            ExprKind::StructValue(fields) => {
+                // Emit values of the struct fields.
+                //
+                // 1. Emits values on the "memory stack".
+                // 2. Push the SP on the "value stack".
+                // 3. Advance SP to allocate enough space.
+                let sp = wasm_fun.checkout_tmp(wasm::Type::I32);
+
+                // Save SP
+                body.local_set(&sp, Instruction::global_get(SP));
+
+                // Emit values
+                let mut offset = 0u32;
+
+                for (_name, value) in fields {
+                    let wasm_val_ty = wasm_type(value.ty());
+
+                    body.local_get(&sp);
+                    self.emit_expr(value, wasm_fun, body, module);
+                    body.store_m_(&wasm_val_ty, MemArg::with_offset(offset.align(ALIGN_TUPLE)));
+
+                    offset += wasm_val_ty.size_bytes();
+                }
+
+                // Advance SP
+                body.push(self.build_advance_sp((offset).align(ALIGN_TUPLE)))
+                    .local_get(&sp);
+
+                wasm_fun.checkin_tmp(sp);
+            }
+            ExprKind::FieldAccess { operand, name } => {
+                // Calculate the offset address of the field named with `name` and
+                // emit an instruction to access it.
+                let struct_ty = operand.ty().struct_ty().unwrap();
+
+                let mut offset: u32 = 0;
+                let mut field = None;
+
+                for f in struct_ty.fields() {
+                    if f.name() == name {
+                        field = Some(f);
+                        break;
+                    }
+                    offset += wasm_type(f.ty()).size_bytes();
+                }
+
+                self.emit_expr(operand, wasm_fun, body, module);
+                body.load_m_(&wasm_type(field.unwrap().ty()), MemArg::with_offset(offset));
             }
             // Memory layout for a union value.
             //
@@ -1362,6 +1416,8 @@ impl<'a, 'tcx> Emitter {
                     (SIZE_UNION_TAG + wasm_val_ty.size_bytes()).align(ALIGN_UNION),
                 ))
                 .local_get(&sp);
+
+                wasm_fun.checkin_tmp(sp);
             }
         }
     }
@@ -1447,7 +1503,7 @@ fn wasm_type(ty: &Type) -> wasm::Type {
         Type::String | Type::LiteralString(_) => wasm::Type::I32,
         // Memory location
         Type::Tuple(_) | Type::Struct(_) | Type::Union(_) => wasm::Type::I32,
-        Type::Named(_) => todo!(),
+        Type::Named(named_ty) => wasm_type(named_ty.ty().unwrap()),
         Type::Undetermined => todo!(),
     }
 }
