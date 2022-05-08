@@ -215,7 +215,7 @@ assert '1
   foo((1, "test 1"))
   foo((2, "test 2"))
   foo((3, "test 3"))'
-# struct
+# struct which has string member
 assert '🇯🇵
 🇬🇧
 🌎' '
@@ -233,6 +233,7 @@ assert '🇯🇵
   foo(T { name: "Tokyo" })
   foo(T { name: "London" })
   foo(T { name: "Washington, D.C." })'
+# struct which has union member
 assert '🇯🇵
 🇬🇧
 🇺🇸' '

@@ -28,6 +28,7 @@ pub enum WasmArch {
 
 // Alignment and size for various types on linear memory.
 const ALIGN_TUPLE: u32 = 4;
+const ALIGN_STRUCT: u32 = 4;
 const ALIGN_UNION: u32 = 4;
 const SIZE_UNION_TAG: u32 = 4;
 
@@ -1280,13 +1281,18 @@ impl<'a, 'tcx> Emitter {
             ExprKind::Tuple(fs) => {
                 // Emit elements of the tuple.
                 //
-                // 1. Emits values on the "memory stack".
-                // 2. Push the SP on the "value stack".
-                // 3. Advance SP to allocate enough space.
+                // 1. Save SP and advance SP to allocate enough space to write data.
+                // 2. Write the value on the "memory stack".
+                // 3. Push the sp on the "value stack".
                 let sp = wasm_fun.checkout_tmp(wasm::Type::I32);
 
-                // Save SP
-                body.local_set(&sp, Instruction::global_get(SP));
+                // Save SP and advance SP to allocate enough space to write data.
+                let size = fs
+                    .iter()
+                    .fold(0, |size, value| size + wasm_type(value.ty()).size_bytes());
+
+                body.local_set(&sp, Instruction::global_get(SP))
+                    .push(self.build_advance_sp(size.align(ALIGN_TUPLE)));
 
                 // Emit values
                 let mut offset = 0u32;
@@ -1301,9 +1307,8 @@ impl<'a, 'tcx> Emitter {
                     offset += wasm_val_ty.size_bytes();
                 }
 
-                // Advance SP
-                body.push(self.build_advance_sp((offset).align(ALIGN_TUPLE)))
-                    .local_get(&sp);
+                // Push the sp on the "value stack".
+                body.local_get(&sp);
 
                 wasm_fun.checkin_tmp(sp);
             }
@@ -1319,7 +1324,7 @@ impl<'a, 'tcx> Emitter {
                 self.emit_expr(operand, wasm_fun, body, module);
                 body.load_m_(&wasm_type(fs[index]), MemArg::with_offset(offset));
             }
-            // Memory layout for a tuple value.
+            // Memory layout for a struct value.
             //
             // +---------+---------+-----+
             // | field 1 | field 2 | ... |
@@ -1327,15 +1332,20 @@ impl<'a, 'tcx> Emitter {
             ExprKind::StructValue(fields) => {
                 // Emit values of the struct fields.
                 //
-                // 1. Emits values on the "memory stack".
-                // 2. Push the SP on the "value stack".
-                // 3. Advance SP to allocate enough space.
+                // 1. Save SP and advance SP to allocate enough space to write data.
+                // 2. Write the value on the "memory stack".
+                // 3. Push the sp on the "value stack".
                 let sp = wasm_fun.checkout_tmp(wasm::Type::I32);
 
-                // Save SP
-                body.local_set(&sp, Instruction::global_get(SP));
+                // Save SP and advance SP to allocate enough space to write data.
+                let size = fields.iter().fold(0, |size, (_name, value)| {
+                    size + wasm_type(value.ty()).size_bytes()
+                });
 
-                // Emit values
+                body.local_set(&sp, Instruction::global_get(SP))
+                    .push(self.build_advance_sp(size.align(ALIGN_STRUCT)));
+
+                // Emit fields value.
                 let mut offset = 0u32;
 
                 for (_name, value) in fields {
@@ -1348,9 +1358,8 @@ impl<'a, 'tcx> Emitter {
                     offset += wasm_val_ty.size_bytes();
                 }
 
-                // Advance SP
-                body.push(self.build_advance_sp((offset).align(ALIGN_TUPLE)))
-                    .local_get(&sp);
+                // Push the sp on the "value stack".
+                body.local_get(&sp);
 
                 wasm_fun.checkin_tmp(sp);
             }
@@ -1392,30 +1401,28 @@ impl<'a, 'tcx> Emitter {
             &ExprKind::Union { value, tag } => {
                 // Convert the `value` to an `tag`ged union value with the type `expr.ty()`.
                 //
-                // 1. Write the tag and value on the "memory stack".
-                // 2. Push the SP on the "value stack".
-                // 3. Advance SP to allocate enough space for the union value.
+                // 1. Save SP and advance SP to allocate enough space to write data.
+                // 2. Write the tag and value on the "memory stack".
+                // 3. Push the sp on the "value stack".
                 let sp = wasm_fun.checkout_tmp(wasm::Type::I32);
                 let tag = u32::try_from(tag).unwrap();
-
-                // Write the tag.
-                body.global_get(SP)
-                    .local_tee_(&sp)
-                    .i32_const(tag)
-                    .i32_store_();
-
-                // Emit the value and write it at SP + SIZE_TAG.
                 let wasm_val_ty = wasm_type(value.ty());
 
+                // Save SP and advance SP to allocate enough space to write data.
+                body.local_tee(&sp, Instruction::global_get(SP))
+                    .i32_const(tag)
+                    .i32_store_()
+                    .push(self.build_advance_sp(
+                        (SIZE_UNION_TAG + wasm_val_ty.size_bytes()).align(ALIGN_UNION),
+                    ));
+
+                // Emit the value and write it at sp + SIZE_TAG.
                 body.local_get(&sp);
                 self.emit_expr(value, wasm_fun, body, module);
                 body.store_m_(&wasm_val_ty, MemArg::with_offset(SIZE_UNION_TAG));
 
-                // Advance SP
-                body.push(self.build_advance_sp(
-                    (SIZE_UNION_TAG + wasm_val_ty.size_bytes()).align(ALIGN_UNION),
-                ))
-                .local_get(&sp);
+                // Push the sp on the "value stack".
+                body.local_get(&sp);
 
                 wasm_fun.checkin_tmp(sp);
             }
